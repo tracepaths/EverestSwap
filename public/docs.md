@@ -208,7 +208,9 @@ When you add liquidity, you receive LP tokens representing your share of the poo
 |------|-------|
 | Network | Octra Devnet |
 | RPC URL | `https://devnet.octrascan.io/rpc` |
-| SwapFactory V2 | `octEwgKA8zRxriLdvdrTuKNeimvHTSLqt6sX6KBCUTyQfxs` |
+| SwapFactory | `oct6znV2kFvbNnVpQRWKUq3Hw2mhPEW5Yi5NCJfAVPhQrsE` |
+| SwapPool | `octSM8utNG3MLv4Fk2oY1SA2XR99o2i22QUSLbr7Te2tSM4` |
+| Router | `oct53wqh6cng95sjLTeLGdSWfNNtfnxy8W3A7H4NK9XmQzY` |
 | WOCT | `oct3taQXSQetRSmq21hfLmc1ormx7svm112cUB5uEze3oVe` |
 | OES | `oct9LgGSpkrqbpWPQpYervyryzDtbGYph2hHvcBi9ZppNvD` |
 | Wallet | [0xio Wallet](https://0xio.xyz/) |
