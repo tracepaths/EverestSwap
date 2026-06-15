@@ -18,7 +18,7 @@ function SwapPage() {
   const [reserveA, setReserveA] = useState('0');
   const [reserveB, setReserveB] = useState('0');
   const { available: indexerAvailable, prices, loading: indexerLoading } = useIndexer();
-  const chartData = prices.map(p => ({ time: Math.floor(p.time) as any, value: p.price }));
+  const chartData = prices.map(p => ({ time: Math.floor(p.time) as unknown as import('lightweight-charts').Time, value: p.price }));
   const [slippage, setSlippage] = useState(0.5);
   const [priceImpact, setPriceImpact] = useState(0);
   const [fromBalance, setFromBalance] = useState<string | null>(null);
@@ -31,6 +31,8 @@ function SwapPage() {
   const [price, setPrice] = useState('0');
   const [showFromModal, setShowFromModal] = useState(false);
   const [showToModal, setShowToModal] = useState(false);
+  // [V6-SECURITY-FIX MED-18] Price impact confirmation gate
+  const [highPriceImpactConfirmed, setHighPriceImpactConfirmed] = useState(false);
 
   const mode = fromToken.address === '' && toToken.address === WOCT_TOKEN.address ? 'wrap'
     : fromToken.address === WOCT_TOKEN.address && toToken.address === '' ? 'unwrap'
@@ -44,7 +46,7 @@ function SwapPage() {
       const reserves = await rpc.getReserves(CONTRACTS.pool);
       setReserveA(reserves.reserveA);
       setReserveB(reserves.reserveB);
-    } catch {}
+    } catch { /* noop */ }
   }, [rpc]);
 
   const getTokenBalance = useCallback(async (token: typeof OCT_TOKEN) => {
@@ -103,6 +105,7 @@ function SwapPage() {
     setProgress(0);
     setProgressLabel('Ready to confirm');
     setProgressError(false);
+    setHighPriceImpactConfirmed(false);
   }, [showConfirm]);
 
   const switchTokens = () => {
@@ -154,7 +157,14 @@ function SwapPage() {
     updateProgress(0, 'Preparing transaction...', false);
     const toastId = addToast('pending', `${actionLabel} in progress...`);
     try {
+      // [V6-SECURITY-FIX MED-15] Refresh balance before submission to prevent stale-balance failures
+      await loadBalances();
+
       const rawAmount = parseUnits(fromAmount, fromToken.decimals);
+      const currentBal = fromBalance ?? '0';
+      if (BigInt(rawAmount) > BigInt(currentBal)) {
+        throw new Error(`Insufficient ${fromToken.symbol} balance`);
+      }
 
       if (mode === 'wrap') {
         updateProgress(15, 'Preparing wrap transaction...', false);
@@ -187,11 +197,30 @@ function SwapPage() {
         updateToast(toastId, 'success', `${fromAmount} WOCT unwrapped to OCT successfully!`, txHash);
       } else {
         const sourceToken = fromToken.address === WOCT_TOKEN.address ? CONTRACTS.woct : CONTRACTS.oes;
-        const toRaw = parseUnits(toAmount || '0', toToken.decimals);
+
+        // [V6-SECURITY-FIX HIGH-6] Fetch fresh reserves at submission time instead of using stale state
+        const freshReserves = await rpc.getReserves(CONTRACTS.pool);
+        const freshReserveIn = fromToken.address === WOCT_TOKEN.address ? freshReserves.reserveA : freshReserves.reserveB;
+        const freshReserveOut = fromToken.address === WOCT_TOKEN.address ? freshReserves.reserveB : freshReserves.reserveA;
+
+        // Recalculate output from fresh reserves
+        const amountInBN = parseUnits(fromAmount, fromToken.decimals);
+        const freshOutput = calculateOutput(amountInBN, freshReserveIn, freshReserveOut);
+        const freshToAmount = formatUnits(freshOutput, toToken.decimals);
+
+        const toRaw = parseUnits(freshToAmount || '0', toToken.decimals);
         const basisPoints = Math.round(slippage * 100);
         const minOutRaw = BigInt(toRaw) * BigInt(10000 - basisPoints) / 10000n;
         const swapMethod = fromToken.address === WOCT_TOKEN.address ? 'swap_a_for_b' : 'swap_b_for_a';
-        const minOutStr = minOutRaw > 0n ? minOutRaw.toString() : '0';
+
+        // [V6-SECURITY-FIX HIGH-7] Reject swap if minOut is zero (disables slippage protection)
+        if (minOutRaw <= 0n) {
+          throw new Error('Minimum output too small — try a larger amount or adjust slippage');
+        }
+        const minOutStr = minOutRaw.toString();
+
+        // [V6-SECURITY-FIX HIGH-5] Add 5-minute deadline to prevent stale transaction execution
+        const deadline = Math.floor(Date.now() / 1000 + 300);
 
         updateProgress(15, 'Preparing swap transaction...', false);
         updateToast(toastId, 'pending', 'Approving token grant in wallet...');
@@ -211,16 +240,16 @@ function SwapPage() {
         const swapHash = await walletService.callContract({
           contract: CONTRACTS.pool,
           method: swapMethod,
-          params: [rawAmount, minOutStr, '0'],
+          params: [rawAmount, minOutStr, String(deadline)],
         });
         updateToast(toastId, 'pending', 'Waiting for swap confirmation...', swapHash);
         await rpc.waitForReceipt(swapHash);
         updateProgress(100, 'Swap completed', false);
-        updateToast(toastId, 'success', `Swap ${fromAmount} ${fromToken.symbol} → ${toAmount} ${toToken.symbol} successful!`, swapHash);
+        updateToast(toastId, 'success', `Swap ${fromAmount} ${fromToken.symbol} → ${freshToAmount} ${toToken.symbol} successful!`, swapHash);
       }
 
-      try { await loadBalances(); } catch {}
-      try { await loadReserves(); } catch {}
+      try { await loadBalances(); } catch { /* noop */ }
+      try { await loadReserves(); } catch { /* noop */ }
     } catch (e) {
       failed = true;
       const errMsg = e instanceof Error ? e.message : 'An error occurred';
@@ -451,6 +480,20 @@ function SwapPage() {
                 />
               </div>
             </div>
+            {/* [V6-SECURITY-FIX MED-18] Price impact confirmation gate */}
+            {mode === 'swap' && priceImpact > 5 && (
+              <label className="flex items-start gap-2 px-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={highPriceImpactConfirmed}
+                  onChange={e => setHighPriceImpactConfirmed(e.target.checked)}
+                  className="mt-0.5 accent-[var(--app-danger)]"
+                />
+                <span className="text-xs text-[var(--app-danger)]">
+                  I understand the price impact is {priceImpact.toFixed(2)}% and accept the risk
+                </span>
+              </label>
+            )}
             <div className="flex gap-3">
               <button
                 onClick={() => setShowConfirm(false)}
@@ -461,7 +504,7 @@ function SwapPage() {
               </button>
               <button
                 onClick={handleSwap}
-                disabled={loading}
+                disabled={loading || (mode === 'swap' && priceImpact > 5 && !highPriceImpactConfirmed)}
                 className="flex-1 py-2.5 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] rounded-xl font-medium hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:opacity-50 transition-colors"
               >
                 {loading ? `${actionLabel}...` : `Confirm ${actionLabel}`}

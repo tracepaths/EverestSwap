@@ -46,7 +46,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const isConnecting = useRef(false);
 
   useEffect(() => {
-    setIsWalletInstalled(!!(window as any).octra?.isOctra);
+    setIsWalletInstalled(!!(window as unknown as { octra?: { isOctra?: boolean } }).octra?.isOctra);
   }, []);
 
   useEffect(() => {

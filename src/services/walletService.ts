@@ -25,7 +25,7 @@ export class WalletService {
   }
 
   async isInstalled(): Promise<boolean> {
-    return !!(window as any).octra?.isOctra;
+    return !!(window as unknown as { octra?: { isOctra?: boolean } }).octra?.isOctra;
   }
 
   async connect(): Promise<string> {
@@ -64,7 +64,7 @@ export class WalletService {
   }
 
   async signMessage(message: string): Promise<{ signature: string; publicKey?: string }> {
-    const octra = (window as any).octra;
+    const octra = (window as unknown as { octra: { request: (opts: { method: string; params?: unknown }) => Promise<unknown> } }).octra;
     if (!octra) throw new Error('0xio wallet not found');
     try {
       const result = await octra.request({ method: 'octra_signMessage', params: [message] });
@@ -76,11 +76,11 @@ export class WalletService {
           return { signature: sig, publicKey: typeof pk === 'string' ? pk : undefined };
         }
       }
-    } catch {}
+    } catch { /* noop */ }
     try {
       const result = await octra.request({ method: 'octra_sign', params: { message } });
       if (typeof result === 'string') return { signature: result };
-    } catch {}
+    } catch { /* noop */ }
     throw new Error('Signing rejected or method not supported by wallet');
   }
 
@@ -92,8 +92,8 @@ export class WalletService {
         this._publicKey = info.publicKey;
         return this._publicKey;
       }
-    } catch {}
-    const octra = (window as any).octra;
+    } catch { /* noop */ }
+    const octra = (window as unknown as { octra: { request: (opts: { method: string; params?: unknown }) => Promise<unknown> } }).octra;
     if (octra) {
       try {
         const result = await octra.request({ method: 'octra_getPublicKey', params: [this._address] });
@@ -101,14 +101,14 @@ export class WalletService {
           this._publicKey = result;
           return this._publicKey;
         }
-      } catch {}
+      } catch { /* noop */ }
       try {
         const result = await octra.request({ method: 'octra_publicKey', params: [this._address] });
         if (typeof result === 'string' && result) {
           this._publicKey = result;
           return this._publicKey;
         }
-      } catch {}
+      } catch { /* noop */ }
     }
     if (this._address === DEPLOYER_ADDRESS) {
       this._publicKey = DEPLOYER_PUBLIC_KEY;
@@ -125,14 +125,15 @@ export class WalletService {
     ou?: string | number;
   }): Promise<string> {
     const result = await this.sdk.callContract(params);
-    const txHash = result.hash || result.txHash || (result as any).tx_hash;
-    if (!txHash) {
-      console.error('Contract call result:', result);
+    const txHash = (result.hash || result.txHash || (result as Record<string, unknown>).tx_hash) as string | undefined;
+    if (!txHash || typeof txHash !== 'string') {
+      // [V6-SECURITY-FIX LOW-19] Don't leak full RPC result to console
       throw new Error('Submit succeeded but no tx_hash returned');
     }
     return txHash;
   }
 
+  // [V6-SECURITY-FIX HIGH-4] Escape all control characters to prevent canonical JSON injection
   private jsonEscape(s: string): string {
     let r = '';
     for (const c of s) {
@@ -144,7 +145,14 @@ export class WalletService {
         case '\n': r += '\\n'; break;
         case '\r': r += '\\r'; break;
         case '\t': r += '\\t'; break;
-        default: r += c;
+        default: {
+          const code = c.charCodeAt(0);
+          if (code < 0x20 || code === 0x7f) {
+            r += '\\u' + code.toString(16).padStart(4, '0');
+          } else {
+            r += c;
+          }
+        }
       }
     }
     return r;
@@ -203,7 +211,7 @@ export class WalletService {
       try {
         publicKey = await rpc.getPublicKey(address);
         if (publicKey) this._publicKey = publicKey;
-      } catch {}
+      } catch { /* noop */ }
     }
 
     const signedTx: Record<string, unknown> = { ...txFields, signature };

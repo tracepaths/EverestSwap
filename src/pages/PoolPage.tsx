@@ -67,6 +67,8 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
   const [initAmountA, setInitAmountA] = useState('');
   const [initAmountB, setInitAmountB] = useState('');
   const [step, setStep] = useState<CreateStep>({ type: 'idle' });
+  // [V6-SECURITY-FIX MED-13] Double-submit guard
+  const [creating, setCreating] = useState(false);
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -109,13 +111,22 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
     if (feeTier === '0.05') return { num: 5, denom: 10000 };
     if (feeTier === '1.00') return { num: 100, denom: 10000 };
     if (feeTier === 'custom') {
-      return { num: parseInt(customNum) || 3, denom: parseInt(customDenom) || 1000 };
+      const num = parseInt(customNum, 10) || 3;
+      const denom = parseInt(customDenom, 10) || 1000;
+      // [V6-SECURITY-FIX MED-10] Validate fee params
+      if (num <= 0 || denom <= 0 || num >= denom) {
+        throw new Error('Invalid fee: numerator must be > 0 and < denominator');
+      }
+      return { num, denom };
     }
     return { num: 3, denom: 1000 };
   };
 
   const handleCreatePool = async () => {
     if (!tokenA || !tokenB) return;
+    // [V6-SECURITY-FIX MED-13] Double-submit guard
+    if (creating) return;
+    setCreating(true);
     const factoryAddr = CONTRACTS.factory;
     if (!factoryAddr) {
       setStep({ type: 'error', message: 'Factory contract not configured' });
@@ -203,10 +214,11 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
 
         setStep({ type: 'adding_liquidity' });
 
+        const deadline = Math.floor(Date.now() / 1000 + 300);
         const addHash = await walletService.callContract({
           contract: poolAddress,
           method: 'add_liquidity',
-          params: [rawInitA, rawInitB, '1', '0', '0'],
+          params: [rawInitA, rawInitB, '1', String(deadline), '0'],
         });
         await rpc.waitForReceipt(addHash, 60);
       }
@@ -220,6 +232,8 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
       if (mountedRef.current) {
         setStep({ type: 'error', message: e instanceof Error ? e.message : 'Unknown error' });
       }
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -404,7 +418,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
 
           <button
             onClick={handleCreatePool}
-            disabled={!isConnected || !isValidA || !isValidB || !hasValidPair}
+            disabled={!isConnected || !isValidA || !isValidB || !hasValidPair || creating}
             className="w-full py-3 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-xl font-medium transition-colors"
           >
             {!isConnected ? 'Connect Wallet' : isValidA && isValidB && hasValidPair && initAmountA && initAmountB ? 'Create Pool + Add Liquidity' : 'Create Pool'}
@@ -473,11 +487,11 @@ function PoolPage() {
             const oesAddr = CONTRACTS.oes || info.tokenB;
             const rewardsInfo = await rpc.getOesRewardsInfo(oesAddr);
             rewardsPerEpoch = rewardsInfo.rewardsPerEpoch;
-          } catch {}
+          } catch { /* noop */ }
           let totalLockedLp = '0';
           try {
             totalLockedLp = await rpc.getTotalLockedLp(addr);
-          } catch {}
+          } catch { /* noop */ }
           displays.push({
             address: addr,
             tokenA: info.tokenA, tokenB: info.tokenB,

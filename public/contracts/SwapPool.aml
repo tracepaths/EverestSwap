@@ -81,10 +81,16 @@ contract SwapPool {
     require(amount_a > 0 && amount_b > 0, "zero amounts")
     require(self.token_a != "" && self.token_b != "", "tokens not set")
 
+    // [V6-SECURITY-FIX MED-6] Cap lock_duration to max 365 days (525600 epochs)
+    if lock_duration > 0 {
+      require(lock_duration <= 525600, "max lock is 365 days")
+    }
+
     self.locked = true
 
-    call(self.token_a, "pull", [caller, self_addr, amount_a])
-    call(self.token_b, "pull", [caller, self_addr, amount_b])
+    // [V6-SECURITY-FIX CRIT-1] Validate call() return values
+    require(call(self.token_a, "pull", [caller, self_addr, amount_a]), "token_a pull failed")
+    require(call(self.token_b, "pull", [caller, self_addr, amount_b]), "token_b pull failed")
 
     let is_first = self.total_lp == 0
 
@@ -123,9 +129,11 @@ contract SwapPool {
           self.lp_unlock_time[caller] = unlock_epoch
         }
       }
-      self.locked = false
+
+      // [V6-SECURITY-FIX CRIT-2] Move locked=false AFTER refund transfers (not before)
       emit AddLiquidity(caller, amount_a, amount_b, lp)
       emit Sync(self.reserve_a, self.reserve_b)
+      self.locked = false
       return (lp, amount_a, amount_b)
     }
 
@@ -161,18 +169,20 @@ contract SwapPool {
         self.lp_unlock_time[caller] = unlock_epoch
       }
     }
-    self.locked = false
+
+    // [V6-SECURITY-FIX CRIT-2] CEI: all state + events before external refund transfers
     emit AddLiquidity(caller, used_a, used_b, lp_amount)
     emit Sync(self.reserve_a, self.reserve_b)
 
-    // Refund excess tokens AFTER state is fully committed
+    // Refund excess tokens AFTER state is fully committed and locked=false set
     if refund_a > 0 {
-      call(self.token_a, "transfer", [caller, refund_a])
+      require(call(self.token_a, "transfer", [caller, refund_a]), "token_a refund failed")
     }
     if refund_b > 0 {
-      call(self.token_b, "transfer", [caller, refund_b])
+      require(call(self.token_b, "transfer", [caller, refund_b]), "token_b refund failed")
     }
 
+    self.locked = false
     return (lp_amount, used_a, used_b)
   }
 
@@ -205,8 +215,9 @@ contract SwapPool {
     self.reserve_a -= amount_a
     self.reserve_b -= amount_b
 
-    call(self.token_a, "transfer", [caller, amount_a])
-    call(self.token_b, "transfer", [caller, amount_b])
+    // [V6-SECURITY-FIX CRIT-1] Validate transfer return values
+    require(call(self.token_a, "transfer", [caller, amount_a]), "token_a transfer failed")
+    require(call(self.token_b, "transfer", [caller, amount_b]), "token_b transfer failed")
 
     self.locked = false
     emit RemoveLiquidity(caller, amount_a, amount_b, lp_amount)
@@ -243,8 +254,9 @@ contract SwapPool {
     self.reserve_a -= amount_a
     self.reserve_b -= amount_b
 
-    call(self.token_a, "transfer", [caller, amount_a])
-    call(self.token_b, "transfer", [caller, amount_b])
+    // [V6-SECURITY-FIX CRIT-1] Validate transfer return values
+    require(call(self.token_a, "transfer", [caller, amount_a]), "token_a transfer failed")
+    require(call(self.token_b, "transfer", [caller, amount_b]), "token_b transfer failed")
 
     self.locked = false
     emit RemoveLiquidity(caller, amount_a, amount_b, lp_bal)
@@ -262,7 +274,8 @@ contract SwapPool {
 
     self.locked = true
 
-    call(self.token_a, "pull", [caller, self_addr, amount_in])
+    // [V6-SECURITY-FIX CRIT-1] Validate pull return value
+    require(call(self.token_a, "pull", [caller, self_addr, amount_in]), "token_a pull failed")
 
     let fee_amount = amount_in * self.fee_numerator / self.fee_denominator
     let amount_in_after_fee = amount_in - fee_amount
@@ -284,7 +297,8 @@ contract SwapPool {
     let k_after = self.reserve_a * self.reserve_b
     require(k_after >= k_before, "invariant violation")
 
-    call(self.token_b, "transfer", [caller, out])
+    // [V6-SECURITY-FIX CRIT-1] Validate transfer return value
+    require(call(self.token_b, "transfer", [caller, out]), "token_b transfer failed")
 
     self.locked = false
     emit Swap(caller, self.token_a, amount_in, out)
@@ -302,7 +316,8 @@ contract SwapPool {
 
     self.locked = true
 
-    call(self.token_b, "pull", [caller, self_addr, amount_in])
+    // [V6-SECURITY-FIX CRIT-1] Validate pull return value
+    require(call(self.token_b, "pull", [caller, self_addr, amount_in]), "token_b pull failed")
 
     let fee_amount = amount_in * self.fee_numerator / self.fee_denominator
     let amount_in_after_fee = amount_in - fee_amount
@@ -324,7 +339,8 @@ contract SwapPool {
     let k_after = self.reserve_a * self.reserve_b
     require(k_after >= k_before, "invariant violation")
 
-    call(self.token_a, "transfer", [caller, out])
+    // [V6-SECURITY-FIX CRIT-1] Validate transfer return value
+    require(call(self.token_a, "transfer", [caller, out]), "token_a transfer failed")
 
     self.locked = false
     emit Swap(caller, self.token_b, amount_in, out)
@@ -336,6 +352,7 @@ contract SwapPool {
     require(caller == self.owner, "not authorized")
     require(!self.locked, "reentrancy guard")
     self.locked = true
+    // [V6-SECURITY-FIX CRIT-1] Validate call return values
     let bal_a = call(self.token_a, "balance_of", [self_addr])
     let bal_b = call(self.token_b, "balance_of", [self_addr])
     require(bal_a >= self.reserve_a && bal_b >= self.reserve_b, "sync would reduce reserves")
@@ -363,10 +380,10 @@ contract SwapPool {
     self.fee_reserve_b = 0
 
     if amt_a > 0 {
-      call(self.token_a, "transfer", [recipient, amt_a])
+      require(call(self.token_a, "transfer", [recipient, amt_a]), "token_a fee transfer failed")
     }
     if amt_b > 0 {
-      call(self.token_b, "transfer", [recipient, amt_b])
+      require(call(self.token_b, "transfer", [recipient, amt_b]), "token_b fee transfer failed")
     }
 
     self.locked = false
@@ -419,10 +436,7 @@ contract SwapPool {
     return self.reserve_b * 1000000 / self.reserve_a
   }
 
-  view fn get_price(): int {
-    require(self.reserve_a > 0 && self.reserve_b > 0, "no liquidity")
-    return self.reserve_b * 1000000 / self.reserve_a
-  }
+  // [V6-SECURITY-FIX LOW-21] Removed duplicate get_price() — use get_price_a_in_b()
 
   view fn get_amount_out(amount_in: int, is_a_to_b: bool): int {
     require(amount_in > 0, "zero input")

@@ -50,17 +50,17 @@ function statusClass(status: string): string {
   return 'text-[var(--app-danger)] bg-[var(--app-danger)]/10 border-[var(--app-danger)]/20';
 }
 
-function getHumanReadableLabel(tx: any): string {
+function getHumanReadableLabel(tx: { message?: string; encrypted_data?: string; method?: string; amount?: string | number; to_?: string; to?: string; hash?: string }): string {
   const msg = (tx.message || '').trim();
 
   // Coba parse message sebagai JSON array untuk mendapatkan parameter panggilan kontrak
-  let args: any[] = [];
+  let args: unknown[] = [];
   let isJsonArray = false;
   if (msg.startsWith('[') && msg.endsWith(']')) {
     try {
-      args = JSON.parse(msg);
+      args = JSON.parse(msg) as unknown[];
       isJsonArray = Array.isArray(args);
-    } catch {}
+    } catch { /* noop */ }
   }
 
   const method = (tx.encrypted_data || tx.method || '').toLowerCase();
@@ -74,14 +74,14 @@ function getHumanReadableLabel(tx: any): string {
     return formatted.toLocaleString(undefined, { maximumFractionDigits: 4 });
   };
 
-  const amtStr = formatAmount(amount);
+  const amtStr = formatAmount(String(amount));
 
   // Jika nama method kosong, tebak dari tipe parameter dan alamat kontrak tujuan
   let inferredMethod = method;
   if (!inferredMethod && isJsonArray) {
-    if (args.length === 2 && args[0].startsWith('oct') && typeof args[1] === 'string' && !isNaN(Number(args[1]))) {
+    if (args.length === 2 && typeof args[0] === 'string' && args[0].startsWith('oct') && typeof args[1] === 'string' && !isNaN(Number(args[1]))) {
       inferredMethod = 'grant';
-    } else if (args.length === 2 && !isNaN(Number(args[0])) && !isNaN(Number(args[1]))) {
+    } else if (args.length === 2 && typeof args[0] === 'string' && !isNaN(Number(args[0])) && typeof args[1] === 'string' && !isNaN(Number(args[1]))) {
       inferredMethod = 'swap';
     } else if (args.length === 0) {
       if (to === CONTRACTS.woct.toLowerCase()) {
@@ -110,7 +110,7 @@ function getHumanReadableLabel(tx: any): string {
     if (args && args.length > 0) spender = String(args[0]);
     if (args && args.length > 1) grantAmt = formatAmount(String(args[1]));
 
-    let spenderName = 'Contract';
+    let spenderName: string;
     const spenderAddr = spender.toLowerCase();
     if (spenderAddr === CONTRACTS.router.toLowerCase()) spenderName = 'Router';
     else if (spenderAddr === CONTRACTS.pool.toLowerCase()) spenderName = 'Pool';

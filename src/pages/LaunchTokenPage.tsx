@@ -27,7 +27,7 @@ function LaunchTokenPage() {
   }, []);
 
   const rawSupply = (() => {
-    const s = parseInt(supply);
+    const s = parseInt(supply, 10);
     if (isNaN(s) || s <= 0) return null;
     return BigInt(s) * BigInt(10) ** BigInt(decimals);
   })();
@@ -38,7 +38,7 @@ function LaunchTokenPage() {
   if (!symbol.trim()) errors.push('Symbol is required');
   else if (symbol.trim().length > 12) errors.push('Symbol must be 12 characters or less');
   if (isNaN(decimals) || decimals < 0 || decimals > 18) errors.push('Decimals must be 0-18');
-  if (!supply.trim() || isNaN(parseInt(supply)) || parseInt(supply) <= 0) errors.push('Supply must be a positive number');
+  if (!supply.trim() || isNaN(parseInt(supply, 10)) || parseInt(supply, 10) <= 0) errors.push('Supply must be a positive number');
   if (rawSupply !== null && rawSupply > BigInt(Number.MAX_SAFE_INTEGER)) {
     errors.push('Raw supply too large — reduce supply or decimals');
   }
@@ -156,7 +156,7 @@ function LaunchTokenPage() {
                 <input
                   type="number"
                   value={decimals}
-                  onChange={e => setDecimals(parseInt(e.target.value) || 0)}
+                  onChange={e => setDecimals(parseInt(e.target.value, 10) || 0)}
                   min={0}
                   max={18}
                   className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[var(--app-blue)] transition-colors"
@@ -194,7 +194,7 @@ function LaunchTokenPage() {
                   <div>
                     <div className="font-medium">{name.trim()} ({symbol.trim().toUpperCase()})</div>
                     <div className="text-xs text-[var(--app-muted)]">
-                      Supply: {parseInt(supply)?.toLocaleString() || '0'} ({decimals} decimals)
+                      Supply: {parseInt(supply, 10)?.toLocaleString() || '0'} ({decimals} decimals)
                     </div>
                   </div>
                 </div>

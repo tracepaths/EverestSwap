@@ -100,6 +100,7 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
       }));
       setBalanceLoading(false);
     })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, isConnected, walletAddress, tokens.length]);
 
   const { myTokens, otherTokens } = useMemo(() => {
@@ -305,6 +306,9 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
             </button>
           ) : (
             <div className="space-y-2">
+              <div className="text-[10px] text-orange-400 bg-orange-400/10 rounded-lg px-3 py-1.5">
+                Imported tokens are not verified. Do your own research before trading.
+              </div>
               <div className="flex gap-2">
                 <input
                   type="text"

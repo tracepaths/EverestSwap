@@ -5,7 +5,6 @@ import { walletService } from '../services/walletService';
 import { CONTRACTS } from '../types';
 import { formatUnits, parseUnits } from '../services/swapService';
 import type { LpPosition } from '../services/octraRpc';
-import ToastContainer from '../components/Toast';
 
 interface DynamicPool {
   address: string;
@@ -121,7 +120,7 @@ function LiquidityPage() {
       const reserves = await rpc.getReserves(pool.address);
       setReserveA(reserves.reserveA);
       setReserveB(reserves.reserveB);
-    } catch {}
+    } catch { /* noop */ }
     if (isConnected && walletAddress) {
       try {
         const lp = await rpc.getLpBalance(pool.address, walletAddress);
@@ -135,7 +134,7 @@ function LiquidityPage() {
         }
         const bal = await rpc.getTokenBalance(pool.tokenA.address || CONTRACTS.woct, walletAddress);
         setTokenABalance(bal);
-      } catch {}
+      } catch { /* noop */ }
       try {
         const currentEpochRes = await rpc.call<{ epoch_id: number }>('epoch_current');
         setCurrentEpoch(currentEpochRes?.epoch_id || 0);
@@ -146,13 +145,13 @@ function LiquidityPage() {
         const oesAddr = CONTRACTS.oes || pool.tokenB.address;
         const rewardsInfo = await rpc.getOesRewardsInfo(oesAddr);
         if (mountedRef.current) setRewardsPerEpoch(rewardsInfo.rewardsPerEpoch);
-      } catch {}
+      } catch { /* noop */ }
       try {
         const locked = await rpc.getTotalLockedLp(pool.address);
         if (mountedRef.current) setTotalLockedLp(locked);
-      } catch {}
+      } catch { /* noop */ }
     }
-  }, [rpc, isConnected, walletAddress, pool]);
+  }, [rpc, isConnected, walletAddress, pool, selectedPositionId]);
 
   useEffect(() => { loadPoolInfo(); const i = setInterval(loadPoolInfo, 10000); return () => clearInterval(i); }, [loadPoolInfo]);
 
@@ -205,8 +204,28 @@ function LiquidityPage() {
       } else if (lockOption === '1y') {
         lockDuration = 365 * 24 * 60; // 525600 epochs (1 year)
       } else if (lockOption === 'custom') {
-        const days = parseInt(customLockDays) || 0;
+        // [V6-SECURITY-FIX MED-14] Validate custom lock: min 1 day, no negatives
+        const days = parseInt(customLockDays, 10) || 0;
+        if (days < 1) {
+          throw new Error('Custom lock duration must be at least 1 day');
+        }
+        if (days > 365) {
+          throw new Error('Maximum lock duration is 365 days');
+        }
         lockDuration = days * 24 * 60;
+      }
+
+      // [V6-SECURITY-FIX HIGH-8] Add 5-minute deadline
+      const deadline = Math.floor(Date.now() / 1000 + 300);
+
+      // [V6-SECURITY-FIX HIGH-8] Calculate proper min_lp with slippage (10% tolerance)
+      // First deposit: accept any LP > 0. Subsequent: estimate from reserves.
+      let minLp = '1';
+      if (totalLP !== '0' && reserveA !== '0') {
+        const lpEstimate = (BigInt(rawA) * BigInt(totalLP)) / BigInt(reserveA);
+        const slippageBps = 1000n; // 10%
+        const minLpRaw = lpEstimate - (lpEstimate * slippageBps / 10000n);
+        minLp = minLpRaw > 0n ? minLpRaw.toString() : '1';
       }
 
       updateToast(toastId, 'pending', `Approving ${validTokenA.symbol} grant in wallet...`);
@@ -231,7 +250,7 @@ function LiquidityPage() {
       const addHash = await walletService.callContract({
         contract: pool.address,
         method: 'add_liquidity',
-        params: [rawA, rawB, '1', '0', String(lockDuration)],
+        params: [rawA, rawB, minLp, String(deadline), String(lockDuration)],
       });
       updateToast(toastId, 'pending', 'Waiting for add liquidity confirmation...', addHash);
       await rpc.waitForReceipt(addHash);
@@ -267,11 +286,20 @@ function LiquidityPage() {
     setLoading(true);
     const toastId = addToast('pending', 'Remove Liquidity in progress...');
     try {
+      // [V6-SECURITY-FIX HIGH-8] Calculate proper min amounts with 10% slippage and deadline
+      const deadline = Math.floor(Date.now() / 1000 + 300);
+      const minA = removeEstimates.a !== '0'
+        ? (BigInt(parseUnits(removeEstimates.a, validTokenA.decimals)) * 9000n / 10000n).toString()
+        : '1';
+      const minB = removeEstimates.b !== '0'
+        ? (BigInt(parseUnits(removeEstimates.b, validTokenB.decimals)) * 9000n / 10000n).toString()
+        : '1';
+
       updateToast(toastId, 'pending', 'Approving remove liquidity in wallet...');
       const removeHash = await walletService.callContract({
         contract: pool.address,
         method: 'remove_liquidity',
-        params: [selectedPositionId, '1', '1', '0'],
+        params: [selectedPositionId, minA, minB, String(deadline)],
       });
       updateToast(toastId, 'pending', 'Waiting for remove liquidity confirmation...', removeHash);
       await rpc.waitForReceipt(removeHash);
@@ -479,7 +507,7 @@ function LiquidityPage() {
                     <button
                       key={opt.value}
                       type="button"
-                      onClick={() => setLockOption(opt.value as any)}
+                      onClick={() => setLockOption(opt.value as 'unlocked' | '30d' | '6m' | '1y' | 'custom')}
                       className={`flex flex-col sm:flex-row items-center justify-center gap-1 py-1.5 rounded-lg text-[10px] font-medium transition-all ${
                         isSelected
                           ? 'bg-[var(--app-blue)] text-white shadow-sm shadow-[var(--app-shadow)] font-semibold'
@@ -655,7 +683,6 @@ function LiquidityPage() {
           </div>
         </div>
     </div>
-      <ToastContainer />
     </>
   );
 }

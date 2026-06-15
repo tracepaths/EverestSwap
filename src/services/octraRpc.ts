@@ -13,17 +13,37 @@ export class OctraRpc {
 
   constructor(url: string = CONFIG_RPC_URL) {
     this.url = url || 'https://devnet.octrascan.io/rpc';
+    // [V6-SECURITY-FIX MED-11] Enforce HTTPS on RPC URL
+    if (this.url && !this.url.startsWith('https://')) {
+      throw new Error('RPC URL must use HTTPS');
+    }
   }
 
+  // [V6-SECURITY-FIX MED-10] Add fetch timeout to prevent UI hang
   async call<T = unknown>(method: string, params: unknown[] = []): Promise<T> {
-    const res = await fetch(this.url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', method, params, id: 1 }),
-    });
-    const json = await res.json();
-    if (json.error) throw new Error(json.error.message || 'RPC error');
-    return json.result as T;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    try {
+      const res = await fetch(this.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', method, params, id: 1 }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      const json = await res.json();
+      if (json.error) throw new Error(json.error.message || 'RPC error');
+      if (json.result === undefined || json.result === null) {
+        throw new Error('RPC returned null result');
+      }
+      return json.result as T;
+    } catch (e) {
+      clearTimeout(timeoutId);
+      if (e instanceof DOMException && e.name === 'AbortError') {
+        throw new Error('RPC request timed out (15s)', { cause: e });
+      }
+      throw e;
+    }
   }
 
   async getBalance(address: string): Promise<{ balance: string; balance_raw: string; nonce: number }> {
@@ -187,7 +207,7 @@ export class OctraRpc {
       if (parts.length >= 3) {
         return { id: positionId, owner: parts[0], liquidity: parts[1], unlockTime: Number(parts[2]) };
       }
-    } catch {}
+    } catch { /* noop */ }
     return { id: positionId, owner: '', liquidity: '0', unlockTime: 0 };
   }
 
@@ -238,7 +258,7 @@ export class OctraRpc {
       }
       const storage = obj.storage as Record<string, string> | undefined;
       if (storage) {
-        const poolLen = parseInt(storage.pools_len || '0');
+        const poolLen = parseInt(storage.pools_len || '0', 10);
         if (poolLen > 0) {
           const addrs: string[] = [];
           for (let i = 0; i < poolLen; i++) {
@@ -250,7 +270,7 @@ export class OctraRpc {
         const poolKeys = Object.keys(storage).filter(k => k.startsWith('pools:') && k !== 'pools_len');
         if (poolKeys.length > 0) {
           return poolKeys
-            .sort((a, b) => parseInt(a.split(':')[1]) - parseInt(b.split(':')[1]))
+            .sort((a, b) => parseInt(a.split(':')[1], 10) - parseInt(b.split(':')[1], 10))
             .map(k => storage[k]);
         }
       }
@@ -267,7 +287,7 @@ export class OctraRpc {
         if (typeof result === 'string' && result !== '' && result !== '0') return true;
       }
       if (typeof raw === 'string' && raw !== '' && raw !== '0') return true;
-    } catch {}
+    } catch { /* noop */ }
     return false;
   }
 
@@ -283,7 +303,7 @@ export class OctraRpc {
           return { numerator: num, denominator: denom, percent: `${(num / denom * 100).toFixed(2)}%` };
         }
       }
-    } catch {}
+    } catch { /* noop */ }
     return { numerator: 3, denominator: 1000, percent: '0.30%' };
   }
 
@@ -301,7 +321,7 @@ export class OctraRpc {
           return { rewardsPerEpoch: Number(arr[0] ?? 0) };
         }
       }
-    } catch {}
+    } catch { /* noop */ }
     return { rewardsPerEpoch: 0 };
   }
 
@@ -316,7 +336,7 @@ export class OctraRpc {
       }
       if (typeof raw === 'string') return raw;
       if (typeof raw === 'number') return String(raw);
-    } catch {}
+    } catch { /* noop */ }
     return '0';
   }
 
@@ -392,7 +412,7 @@ export class OctraRpc {
       } else {
         const storage = obj.storage as Record<string, string> | undefined;
         if (storage) {
-          const len = parseInt(storage.trusted_tokens_len || '0');
+          const len = parseInt(storage.trusted_tokens_len || '0', 10);
           if (len > 0) {
             const addrs: string[] = [];
             for (let i = 0; i < len; i++) {
@@ -405,7 +425,7 @@ export class OctraRpc {
             const keys = Object.keys(storage).filter(k => k.startsWith('trusted_list:') && k !== 'trusted_tokens_len');
             if (keys.length > 0) {
               result = keys
-                .sort((a, b) => parseInt(a.split(':')[1]) - parseInt(b.split(':')[1]))
+                .sort((a, b) => parseInt(a.split(':')[1], 10) - parseInt(b.split(':')[1], 10))
                 .map(k => storage[k]);
             }
           }
@@ -487,7 +507,11 @@ export class OctraRpc {
     clearTokenCache();
   }
 
+  // [V6-SECURITY-FIX HIGH-9] Fix setNetwork to actually switch RPC URLs
   setNetwork(network: 'devnet' | 'mainnet'): void {
-    this.url = CONFIG_RPC_URL || (network === 'devnet' ? 'https://devnet.octrascan.io/rpc' : '');
+    const url = network === 'devnet'
+      ? 'https://devnet.octrascan.io/rpc'
+      : 'https://octra.network/rpc';
+    this.url = CONFIG_RPC_URL && CONFIG_RPC_URL !== 'https://devnet.octrascan.io/rpc' && CONFIG_RPC_URL !== 'https://octra.network/rpc' ? CONFIG_RPC_URL : url;
   }
 }

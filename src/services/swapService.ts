@@ -11,7 +11,7 @@ export function calculateOutput(amountIn: string, reserveIn: string, reserveOut:
     if (denominator === 0n) return '0';
     return (numerator / denominator).toString();
   } catch {
-    return '0';
+    throw new Error('Failed to calculate swap output');
   }
 }
 

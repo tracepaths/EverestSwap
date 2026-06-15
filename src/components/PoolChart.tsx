@@ -36,7 +36,14 @@ export function PoolChart({ data, height = 250 }: PoolChartProps) {
         }
       };
       window.addEventListener('resize', handleResize);
-      return () => { window.removeEventListener('resize', handleResize); };
+      return () => {
+        window.removeEventListener('resize', handleResize);
+        if (chartApiRef.current) {
+          chartApiRef.current.remove();
+          chartApiRef.current = null;
+          seriesRef.current = null;
+        }
+      };
     }
   }, [height]);
 

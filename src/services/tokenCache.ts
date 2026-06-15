@@ -1,4 +1,5 @@
-const CACHE_TTL = 5 * 60 * 1000;
+// [V6-SECURITY-FIX MED-12] Reduce TTL from 5min to 60s to limit stale cache impact
+const CACHE_TTL = 60 * 1000;
 
 interface TokenMeta {
   symbol: string;
@@ -42,8 +43,13 @@ export function getCachedIsTrusted(factoryAddress: string, tokenAddress: string)
   return isFresh(entry) ? entry.data : null;
 }
 
+// [V6-SECURITY-FIX MED-12] Only cache positive trust results to allow re-checking
 export function setCachedIsTrusted(factoryAddress: string, tokenAddress: string, trusted: boolean): void {
-  isTrustedCache.set(`${factoryAddress}:${tokenAddress}`, { data: trusted, timestamp: Date.now() });
+  if (trusted) {
+    isTrustedCache.set(`${factoryAddress}:${tokenAddress}`, { data: trusted, timestamp: Date.now() });
+  } else {
+    isTrustedCache.delete(`${factoryAddress}:${tokenAddress}`);
+  }
 }
 
 export function clearTokenCache(): void {
