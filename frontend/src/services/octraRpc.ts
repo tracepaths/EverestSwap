@@ -258,19 +258,6 @@ export class OctraRpc {
     return [];
   }
 
-  async hasExistingPool(factoryAddress: string, tokenA: string, tokenB: string): Promise<boolean> {
-    try {
-      const raw: unknown = await this.contractView(factoryAddress, 'get_pool', [tokenA, tokenB]);
-      if (raw && typeof raw === 'object') {
-        const obj = raw as Record<string, unknown>;
-        const result = obj.result;
-        if (typeof result === 'string' && result !== '' && result !== '0') return true;
-      }
-      if (typeof raw === 'string' && raw !== '' && raw !== '0') return true;
-    } catch {}
-    return false;
-  }
-
   async getPoolFeeParams(poolAddress: string): Promise<{ numerator: number; denominator: number; percent: string }> {
     try {
       const raw: unknown = await this.contractView(poolAddress, 'get_pool_info', []);

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApp } from '../contexts/AppContext';
 import type { OctraRpc } from '../services/octraRpc';
-import { CONTRACTS, WOCT_TOKEN } from '../types';
+import { CONTRACTS } from '../types';
 import { formatUnits, parseUnits } from '../services/swapService';
 import { walletService } from '../services/walletService';
 import TokenTrustBadge from '../components/TokenTrustBadge';
@@ -60,7 +60,6 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
   const [trustedB, setTrustedB] = useState(false);
   const [showTokenASelect, setShowTokenASelect] = useState(false);
   const [showTokenBSelect, setShowTokenBSelect] = useState(false);
-  const [hasValidPair, setHasValidPair] = useState(false);
   const [feeTier, setFeeTier] = useState<'0.01' | '0.05' | '0.30' | '1.00' | 'custom'>('0.30');
   const [customNum, setCustomNum] = useState('3');
   const [customDenom, setCustomDenom] = useState('1000');
@@ -73,22 +72,6 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
-
-  useEffect(() => {
-    if (!tokenA || !tokenB) { setHasValidPair(false); return; }
-    let cancelled = false;
-    (async () => {
-      const factoryAddr = CONTRACTS.factory;
-      const woctAddr = WOCT_TOKEN.address;
-      const tokenAHasPool = await rpc.hasExistingPool(factoryAddr, woctAddr, tokenA);
-      if (cancelled) return;
-      if (tokenAHasPool) { setHasValidPair(true); return; }
-      const tokenBHasPool = await rpc.hasExistingPool(factoryAddr, woctAddr, tokenB);
-      if (cancelled) return;
-      setHasValidPair(tokenBHasPool);
-    })();
-    return () => { cancelled = true; };
-  }, [rpc, tokenA, tokenB]);
 
   const handleSelectTokenA = (address: string, meta: TokenMeta) => {
     setTokenA(address);
@@ -206,7 +189,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
         const addHash = await walletService.callContract({
           contract: poolAddress,
           method: 'add_liquidity',
-          params: [rawInitA, rawInitB, '1', '0', '0'],
+          params: [rawInitA, rawInitB, '1'],
         });
         await rpc.waitForReceipt(addHash, 60);
       }
@@ -396,18 +379,12 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
             </div>
           )}
 
-          {isValidA && isValidB && !hasValidPair && (
-            <div className="text-xs text-[var(--app-danger)] bg-red-400/10 rounded-lg px-3 py-2">
-              At least one token must already have a pair with WOCT
-            </div>
-          )}
-
           <button
             onClick={handleCreatePool}
-            disabled={!isConnected || !isValidA || !isValidB || !hasValidPair}
+            disabled={!isConnected || !isValidA || !isValidB}
             className="w-full py-3 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-xl font-medium transition-colors"
           >
-            {!isConnected ? 'Connect Wallet' : isValidA && isValidB && hasValidPair && initAmountA && initAmountB ? 'Create Pool + Add Liquidity' : 'Create Pool'}
+            {!isConnected ? 'Connect Wallet' : isValidA && isValidB && initAmountA && initAmountB ? 'Create Pool + Add Liquidity' : 'Create Pool'}
           </button>
         </>
       ) : (
