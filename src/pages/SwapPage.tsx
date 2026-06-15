@@ -31,6 +31,10 @@ function SwapPage() {
   const [price, setPrice] = useState('0');
   const [showFromModal, setShowFromModal] = useState(false);
   const [showToModal, setShowToModal] = useState(false);
+  const [poolAddress, setPoolAddress] = useState('');
+  const [poolTokenA, setPoolTokenA] = useState('');
+  const [poolTokenB, setPoolTokenB] = useState('');
+  const [pairError, setPairError] = useState('');
   // [V6-SECURITY-FIX MED-18] Price impact confirmation gate
   const [highPriceImpactConfirmed, setHighPriceImpactConfirmed] = useState(false);
 
@@ -38,16 +42,34 @@ function SwapPage() {
     : fromToken.address === WOCT_TOKEN.address && toToken.address === '' ? 'unwrap'
     : 'swap';
 
-  const reserveIn = mode === 'swap' ? (fromToken.address === WOCT_TOKEN.address ? reserveA : reserveB) : '0';
-  const reserveOut = mode === 'swap' ? (fromToken.address === WOCT_TOKEN.address ? reserveB : reserveA) : '0';
+  const poolIsAtoB = mode === 'swap' && poolTokenA && fromToken.address.toLowerCase() === poolTokenA.toLowerCase();
+  const poolIsBtoA = mode === 'swap' && poolTokenB && fromToken.address.toLowerCase() === poolTokenB.toLowerCase();
+  const swapDirectionValid = mode !== 'swap' || poolIsAtoB || poolIsBtoA;
+  const canSubmitPair = mode !== 'swap' || (!!poolAddress && swapDirectionValid && !pairError);
+
+  const reserveIn = mode === 'swap' ? (poolIsAtoB ? reserveA : poolIsBtoA ? reserveB : '0') : '0';
+  const reserveOut = mode === 'swap' ? (poolIsAtoB ? reserveB : poolIsBtoA ? reserveA : '0') : '0';
 
   const loadReserves = useCallback(async () => {
     try {
-      const reserves = await rpc.getReserves(CONTRACTS.pool);
+      const targetPool = mode === 'swap' ? poolAddress : '';
+      if (!targetPool) {
+        setReserveA('0');
+        setReserveB('0');
+        setPoolTokenA('');
+        setPoolTokenB('');
+        return;
+      }
+      const reserves = await rpc.getReserves(targetPool);
       setReserveA(reserves.reserveA);
       setReserveB(reserves.reserveB);
+      if (mode === 'swap') {
+        const info = await rpc.getPoolInfo(targetPool);
+        setPoolTokenA(info.tokenA);
+        setPoolTokenB(info.tokenB);
+      }
     } catch { /* noop */ }
-  }, [rpc]);
+  }, [rpc, mode, poolAddress]);
 
   const getTokenBalance = useCallback(async (token: typeof OCT_TOKEN) => {
     if (!isConnected || !walletAddress) return '0';
@@ -71,6 +93,57 @@ function SwapPage() {
     const tb = await getTokenBalance(toToken);
     setToBalance(tb);
   }, [isConnected, walletAddress, getTokenBalance, fromToken, toToken]);
+
+  useEffect(() => {
+    if (mode !== 'swap') {
+      setPoolAddress('');
+      setPoolTokenA('');
+      setPoolTokenB('');
+      setPairError('');
+      return;
+    }
+
+    const tokenA = fromToken.address;
+    const tokenB = toToken.address;
+    if (!tokenA || !tokenB || tokenA === tokenB) {
+      setPoolAddress('');
+      setPoolTokenA('');
+      setPoolTokenB('');
+      setPairError(tokenA === tokenB ? 'Select two different tokens' : 'Select both tokens');
+      return;
+    }
+
+    const isConfiguredPair = (a: string, b: string) => (
+      (a === WOCT_TOKEN.address && b === OES_TOKEN.address) ||
+      (a === OES_TOKEN.address && b === WOCT_TOKEN.address)
+    );
+    if (isConfiguredPair(tokenA, tokenB)) {
+      setPoolAddress(CONTRACTS.pool);
+      setPairError(CONTRACTS.pool ? '' : 'WOCT/OES pool is not configured');
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const foundPool = await rpc.getPoolAddress(CONTRACTS.factory, tokenA, tokenB);
+        if (cancelled) return;
+        if (foundPool) {
+          setPoolAddress(foundPool);
+          setPairError('');
+        } else {
+          setPoolAddress('');
+          setPairError(`No pool found for ${fromToken.symbol}/${toToken.symbol}`);
+        }
+      } catch {
+        if (cancelled) return;
+        setPoolAddress('');
+        setPairError(`Unable to resolve pool for ${fromToken.symbol}/${toToken.symbol}`);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [rpc, mode, fromToken.address, toToken.address, fromToken.symbol, toToken.symbol]);
 
   useEffect(() => {
     loadReserves();
@@ -151,16 +224,35 @@ function SwapPage() {
     setProgressError(isError);
   };
 
+  const actionLabel = mode === 'wrap' ? 'Wrap' : mode === 'unwrap' ? 'Unwrap' : 'Swap';
+  const parseAmountInput = (value: string, token: typeof OCT_TOKEN): string => {
+    const trimmed = value.trim();
+    if (!/^\d+(\.\d+)?$/.test(trimmed) || Number(trimmed) <= 0) {
+      throw new Error('Enter a valid amount');
+    }
+    const raw = parseUnits(trimmed, token.decimals);
+    if (raw === '0') {
+      throw new Error('Amount is too small');
+    }
+    return raw;
+  };
+
+  const getSlippageBasisPoints = (): number => {
+    if (!Number.isFinite(slippage) || slippage < 0 || slippage > 50) {
+      throw new Error('Invalid slippage');
+    }
+    return Math.max(0, Math.min(5000, Math.round(slippage * 100)));
+  };
+
   const handleSwap = async () => {
     setLoading(true);
     let failed = false;
     updateProgress(0, 'Preparing transaction...', false);
     const toastId = addToast('pending', `${actionLabel} in progress...`);
     try {
-      // [V6-SECURITY-FIX MED-15] Refresh balance before submission to prevent stale-balance failures
       await loadBalances();
 
-      const rawAmount = parseUnits(fromAmount, fromToken.decimals);
+      const rawAmount = parseAmountInput(fromAmount, fromToken);
       const currentBal = fromBalance ?? '0';
       if (BigInt(rawAmount) > BigInt(currentBal)) {
         throw new Error(`Insufficient ${fromToken.symbol} balance`);
@@ -196,49 +288,71 @@ function SwapPage() {
         updateProgress(100, 'Unwrap completed', false);
         updateToast(toastId, 'success', `${fromAmount} WOCT unwrapped to OCT successfully!`, txHash);
       } else {
-        const sourceToken = fromToken.address === WOCT_TOKEN.address ? CONTRACTS.woct : CONTRACTS.oes;
+        if (!canSubmitPair) {
+          throw new Error(pairError || 'Invalid token pair');
+        }
 
-        // [V6-SECURITY-FIX HIGH-6] Fetch fresh reserves at submission time instead of using stale state
-        const freshReserves = await rpc.getReserves(CONTRACTS.pool);
-        const freshReserveIn = fromToken.address === WOCT_TOKEN.address ? freshReserves.reserveA : freshReserves.reserveB;
-        const freshReserveOut = fromToken.address === WOCT_TOKEN.address ? freshReserves.reserveB : freshReserves.reserveA;
+        const freshReserves = await rpc.getReserves(poolAddress);
+        const freshPool = await rpc.getPoolInfo(poolAddress);
+        const fromIsTokenA = fromToken.address.toLowerCase() === freshPool.tokenA.toLowerCase();
+        const fromIsTokenB = fromToken.address.toLowerCase() === freshPool.tokenB.toLowerCase();
+        const toIsTokenB = toToken.address.toLowerCase() === freshPool.tokenB.toLowerCase();
+        const toIsTokenA = toToken.address.toLowerCase() === freshPool.tokenA.toLowerCase();
+        if (!fromIsTokenA && !fromIsTokenB) {
+          throw new Error('Selected input token is not part of the resolved pool');
+        }
+        if (!(fromIsTokenA && toIsTokenB) && !(fromIsTokenB && toIsTokenA)) {
+          throw new Error('Selected output token does not match the resolved pool pair');
+        }
 
-        // Recalculate output from fresh reserves
-        const amountInBN = parseUnits(fromAmount, fromToken.decimals);
+        const freshReserveIn = fromIsTokenA ? freshReserves.reserveA : freshReserves.reserveB;
+        const freshReserveOut = fromIsTokenA ? freshReserves.reserveB : freshReserves.reserveA;
+
+        const amountInBN = parseUnits(fromAmount.trim(), fromToken.decimals);
         const freshOutput = calculateOutput(amountInBN, freshReserveIn, freshReserveOut);
         const freshToAmount = formatUnits(freshOutput, toToken.decimals);
 
         const toRaw = parseUnits(freshToAmount || '0', toToken.decimals);
-        const basisPoints = Math.round(slippage * 100);
+        const basisPoints = getSlippageBasisPoints();
         const minOutRaw = BigInt(toRaw) * BigInt(10000 - basisPoints) / 10000n;
-        const swapMethod = fromToken.address === WOCT_TOKEN.address ? 'swap_a_for_b' : 'swap_b_for_a';
+        const swapMethod = fromIsTokenA ? 'swap_a_for_b' : 'swap_b_for_a';
 
-        // [V6-SECURITY-FIX HIGH-7] Reject swap if minOut is zero (disables slippage protection)
         if (minOutRaw <= 0n) {
           throw new Error('Minimum output too small — try a larger amount or adjust slippage');
         }
         const minOutStr = minOutRaw.toString();
-
-        // [V6-SECURITY-FIX HIGH-5] Add 5-minute deadline to prevent stale transaction execution
         const deadline = Math.floor(Date.now() / 1000 + 300);
 
         updateProgress(15, 'Preparing swap transaction...', false);
-        updateToast(toastId, 'pending', 'Approving token grant in wallet...');
+        updateToast(toastId, 'pending', `Approving ${fromToken.symbol} grant in wallet...`);
         updateProgress(35, 'Waiting for token grant approval...', false);
         const grantHash = await walletService.callContract({
-          contract: sourceToken,
+          contract: fromToken.address,
           method: 'grant',
-          params: [CONTRACTS.pool, rawAmount],
+          params: [poolAddress, rawAmount],
         });
         updateProgress(55, 'Waiting for grant confirmation...', false);
         updateToast(toastId, 'pending', 'Waiting for grant confirmation...', grantHash);
         await rpc.waitForReceipt(grantHash);
 
+        const preSwapPool = await rpc.getPoolInfo(poolAddress);
+        const preSwapFromA = fromToken.address.toLowerCase() === preSwapPool.tokenA.toLowerCase();
+        const preSwapFromB = fromToken.address.toLowerCase() === preSwapPool.tokenB.toLowerCase();
+        const preSwapToA = toToken.address.toLowerCase() === preSwapPool.tokenA.toLowerCase();
+        const preSwapToB = toToken.address.toLowerCase() === preSwapPool.tokenB.toLowerCase();
+        if (!((preSwapFromA && preSwapToB) || (preSwapFromB && preSwapToA))) {
+          throw new Error('Resolved pool pair changed before swap submission');
+        }
+        const preSwapMethod = preSwapFromA ? 'swap_a_for_b' : 'swap_b_for_a';
+        if (preSwapMethod !== swapMethod) {
+          throw new Error('Swap direction changed before submission');
+        }
+
         updateProgress(70, 'Submitting swap...', false);
         updateToast(toastId, 'pending', 'Approving swap in wallet...');
         updateProgress(85, 'Waiting for swap confirmation...', false);
         const swapHash = await walletService.callContract({
-          contract: CONTRACTS.pool,
+          contract: poolAddress,
           method: swapMethod,
           params: [rawAmount, minOutStr, String(deadline)],
         });
@@ -261,7 +375,7 @@ function SwapPage() {
     }
   };
 
-  const actionLabel = mode === 'wrap' ? 'Wrap' : mode === 'unwrap' ? 'Unwrap' : 'Swap';
+  const isAmountValid = /^\d+(\.\d+)?$/.test(fromAmount.trim()) && Number(fromAmount) > 0;
 
   return (
     <div className="max-w-lg mx-auto pt-4">
@@ -315,6 +429,12 @@ function SwapPage() {
               })}
             </div>
           </div>
+
+          {mode === 'swap' && pairError && (
+            <div className="text-xs text-[var(--app-danger)] bg-red-400/10 rounded-lg px-3 py-2">
+              {pairError}
+            </div>
+          )}
 
           <div className="flex justify-center my-3 relative z-10">
             <button
@@ -385,7 +505,10 @@ function SwapPage() {
                     <input
                       type="number"
                       value={slippage}
-                      onChange={e => setSlippage(Number(e.target.value))}
+                      onChange={e => {
+                        const value = Number(e.target.value);
+                        setSlippage(Number.isFinite(value) ? Math.max(0, Math.min(50, value)) : 0);
+                      }}
                       className="w-14 bg-[var(--app-hover)] rounded px-2 py-0.5 text-right outline-none"
                       step={0.1}
                     />
@@ -407,10 +530,10 @@ function SwapPage() {
 
           <button
             onClick={() => setShowConfirm(true)}
-            disabled={!fromAmount || Number(fromAmount) <= 0 || !isConnected}
+            disabled={!isAmountValid || !isConnected || (mode === 'swap' && !canSubmitPair)}
             className="w-full py-3 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-xl font-medium transition-colors"
           >
-            {!isConnected ? 'Connect Wallet' : !fromAmount || Number(fromAmount) <= 0 ? 'Enter Amount' : actionLabel}
+            {!isConnected ? 'Connect Wallet' : mode === 'swap' && !canSubmitPair ? pairError || 'Enter Amount' : !isAmountValid ? 'Enter Amount' : actionLabel}
           </button>
         </div>
       </div>
@@ -419,6 +542,11 @@ function SwapPage() {
         <div className="fixed inset-0 bg-black/75 backdrop-blur-xl z-50 flex items-center justify-center p-4">
           <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] max-w-md w-full p-6 space-y-4">
             <h3 className="text-lg font-semibold">Confirm {actionLabel}</h3>
+            {mode === 'swap' && pairError && (
+              <div className="text-xs text-[var(--app-danger)] bg-red-400/10 rounded-lg px-3 py-2">
+                {pairError}
+              </div>
+            )}
             <div className="space-y-3 bg-[var(--app-panel-soft)] rounded-xl p-4 text-sm">
               {mode === 'swap' ? (
                 <>
@@ -437,7 +565,7 @@ function SwapPage() {
                   <div className="flex justify-between">
                     <span className="text-[var(--app-muted)]">Min received</span>
                     <span className="font-medium">
-                      ~{(Number(toAmount) * (1 - slippage / 100)).toFixed(6)} {toToken.symbol}
+                      ~{(() => { try { const toRaw = parseUnits(toAmount || '0', toToken.decimals); const bps = Math.max(0, Math.min(5000, Math.round(slippage * 100))); const minOut = BigInt(toRaw) * BigInt(10000 - bps) / 10000n; return formatUnits(minOut.toString(), toToken.decimals); } catch { return '0'; } })()} {toToken.symbol}
                     </span>
                   </div>
                   <div className="border-t border-[var(--app-border)] my-2" />
@@ -504,7 +632,7 @@ function SwapPage() {
               </button>
               <button
                 onClick={handleSwap}
-                disabled={loading || (mode === 'swap' && priceImpact > 5 && !highPriceImpactConfirmed)}
+                disabled={loading || !canSubmitPair || (mode === 'swap' && priceImpact > 5 && !highPriceImpactConfirmed)}
                 className="flex-1 py-2.5 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] rounded-xl font-medium hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:opacity-50 transition-colors"
               >
                 {loading ? `${actionLabel}...` : `Confirm ${actionLabel}`}

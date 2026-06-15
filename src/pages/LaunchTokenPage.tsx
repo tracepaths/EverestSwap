@@ -21,6 +21,7 @@ function LaunchTokenPage() {
   const [step, setStep] = useState<LaunchStep>({ type: 'idle' });
 
   const mountedRef = useRef(true);
+  const launchingRef = useRef(false);
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
@@ -35,8 +36,10 @@ function LaunchTokenPage() {
   const errors: string[] = [];
   if (!name.trim()) errors.push('Name is required');
   else if (name.trim().length > 32) errors.push('Name must be 32 characters or less');
+  else if (!/^[a-zA-Z0-9 _.,'-]+$/.test(name.trim())) errors.push('Name contains invalid characters');
   if (!symbol.trim()) errors.push('Symbol is required');
   else if (symbol.trim().length > 12) errors.push('Symbol must be 12 characters or less');
+  else if (!/^[a-zA-Z0-9 _-]+$/.test(symbol.trim())) errors.push('Symbol must contain only letters, numbers, spaces, hyphens, or underscores');
   if (isNaN(decimals) || decimals < 0 || decimals > 18) errors.push('Decimals must be 0-18');
   if (!supply.trim() || isNaN(parseInt(supply, 10)) || parseInt(supply, 10) <= 0) errors.push('Supply must be a positive number');
   if (rawSupply !== null && rawSupply > BigInt(Number.MAX_SAFE_INTEGER)) {
@@ -47,6 +50,8 @@ function LaunchTokenPage() {
 
   const handleLaunch = async () => {
     if (!canLaunch) return;
+    if (launchingRef.current) return;
+    launchingRef.current = true;
     try {
       setStep({ type: 'compiling' });
 
@@ -66,10 +71,11 @@ function LaunchTokenPage() {
 
       setStep({ type: 'deploying' });
 
+      // [V7-SECURITY-FIX] Use string serialization to avoid BigInt→Number precision loss
       const constructorMessage = JSON.stringify([
         name.trim(),
         symbol.trim().toUpperCase(),
-        Number(rawSupply!),
+        rawSupply!.toString(),
         decimals,
       ]);
 
@@ -89,6 +95,8 @@ function LaunchTokenPage() {
       if (mountedRef.current) {
         setStep({ type: 'error', message: e instanceof Error ? e.message : 'Unknown error' });
       }
+    } finally {
+      launchingRef.current = false;
     }
   };
 

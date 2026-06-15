@@ -20,6 +20,8 @@ import {
   WOCT_TOKEN as MAIN_WOCT,
   OES_TOKEN as MAIN_OES,
   CONTRACTS as MAIN_CONTRACTS,
+  MAINNET_CONFIGURED,
+  assertMainnetConfigured,
 } from './mainnet';
 
 const network = import.meta.env.VITE_NETWORK || 'devnet';
@@ -33,3 +35,4 @@ export const OCT_TOKEN: TokenInfo = isMainnet ? MAIN_OCT : DEV_OCT;
 export const WOCT_TOKEN: TokenInfo = isMainnet ? MAIN_WOCT : DEV_WOCT;
 export const OES_TOKEN: TokenInfo = isMainnet ? MAIN_OES : DEV_OES;
 export const CONTRACTS = isMainnet ? MAIN_CONTRACTS : DEV_CONTRACTS;
+export { MAINNET_CONFIGURED, assertMainnetConfigured };

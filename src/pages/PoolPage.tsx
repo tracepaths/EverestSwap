@@ -190,8 +190,9 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
 
       await rpc.waitForReceipt(regTxHash, 60);
 
-      const rawInitA = initAmountA && parseUnits(initAmountA, metaA!.decimals);
-      const rawInitB = initAmountB && parseUnits(initAmountB, metaB!.decimals);
+      // [V7-SECURITY-FIX] Guard against null meta during initial liquidity
+      const rawInitA = initAmountA && metaA ? parseUnits(initAmountA, metaA.decimals) : null;
+      const rawInitB = initAmountB && metaB ? parseUnits(initAmountB, metaB.decimals) : null;
 
       if (rawInitA && rawInitB && BigInt(rawInitA) > 0 && BigInt(rawInitB) > 0) {
         setStep({ type: 'granting_a' });
@@ -241,9 +242,13 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
     setStep({ type: 'idle' });
     setTokenA('');
     setTokenB('');
+    setMetaA(null);
     setMetaB(null);
+    setTrustedA(false);
     setTrustedB(false);
     setFeeTier('0.30');
+    setInitAmountA('');
+    setInitAmountB('');
   };
 
   const stepLabel = (): string => {
@@ -522,7 +527,10 @@ function PoolPage() {
     return () => { mountedRef.current = false; };
   }, [loadPools]);
 
-  const totalLPAll = pools.reduce((sum, p) => sum + Number(p.totalLP), 0);
+  // [V7-SECURITY-FIX] Use BigInt to avoid precision loss on large LP values
+  const totalLPAll = pools.reduce((sum, p) => {
+    try { return sum + BigInt(p.totalLP); } catch { return sum; }
+  }, 0n);
 
   return (
     <div className="max-w-3xl mx-auto pt-4 space-y-6">

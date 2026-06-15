@@ -6,11 +6,11 @@ import ErrorBoundary from './components/ErrorBoundary'
 import './index.css'
 import App from './App'
 
-window.onerror = (_msg, _url, _line, _col, err) => {
-  console.error('[Global onerror]', err?.message);
+window.onerror = () => {
+  console.error('[EverestSwap] An error occurred');
 };
-window.addEventListener('unhandledrejection', (e) => {
-  console.error('[Unhandled Rejection]', e.reason?.message || e.reason);
+window.addEventListener('unhandledrejection', () => {
+  console.error('[EverestSwap] Unhandled promise rejection');
 });
 
 const queryClient = new QueryClient()

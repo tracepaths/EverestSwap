@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { OctraRpc } from '../services/octraRpc';
 import { walletService } from '../services/walletService';
+import { assertMainnetConfigured } from '../config';
 
 export type AppTheme = 'dark' | 'light' | 'blue';
 
@@ -37,7 +38,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [walletBalance, setWalletBalance] = useState('');
   const [network, setNetworkState] = useState<'devnet' | 'mainnet'>('devnet');
   const [theme, setThemeState] = useState<AppTheme>(() => {
-    const saved = typeof window !== 'undefined' ? localStorage.getItem('everestswap-theme') : null;
+    let saved: string | null = null;
+    try { saved = typeof window !== 'undefined' ? localStorage.getItem('everestswap-theme') : null; } catch { /* localStorage may be blocked */ }
     return saved === 'light' || saved === 'blue' || saved === 'dark' ? saved : 'dark';
   });
   const [rpc] = useState(() => new OctraRpc());
@@ -51,7 +53,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    localStorage.setItem('everestswap-theme', theme);
+    try { localStorage.setItem('everestswap-theme', theme); } catch { /* localStorage may be blocked */ }
   }, [theme]);
 
   const addToast = useCallback((type: Toast['type'], message: string, txHash?: string) => {
@@ -90,6 +92,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setNetwork = useCallback((n: 'devnet' | 'mainnet') => {
+    if (n === 'mainnet') {
+      assertMainnetConfigured();
+    }
     setNetworkState(n);
     rpc.setNetwork(n);
   }, [rpc]);

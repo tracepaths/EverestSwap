@@ -1,5 +1,5 @@
 import { RPC_URL as CONFIG_RPC_URL } from '../config';
-import { getCachedMeta, setCachedMeta, getCachedTrustedTokens, setCachedTrustedTokens, getCachedIsTrusted, setCachedIsTrusted, clearTokenCache } from './tokenCache';
+import { getCachedMeta, setCachedMeta, getCachedTrustedTokens, setCachedTrustedTokens, getCachedIsTrusted, setCachedIsTrusted, clearTokenCache, setTokenCacheNetwork } from './tokenCache';
 
 export interface LpPosition {
   id: number;
@@ -249,12 +249,14 @@ export class OctraRpc {
 
   async getAllPools(factoryAddress: string): Promise<string[]> {
     const raw: unknown = await this.contractView(factoryAddress, 'all_pools', []);
-    if (Array.isArray(raw)) return raw.map(String);
+    const normalize = (addr: string) => String(addr).trim();
+    const valid = (addr: string) => this.isValidOctraAddress(addr);
+    if (Array.isArray(raw)) return raw.map(normalize).filter(valid);
     if (raw && typeof raw === 'object') {
       const obj = raw as Record<string, unknown>;
-      if (Array.isArray(obj.result)) return obj.result.map(String);
+      if (Array.isArray(obj.result)) return obj.result.map(String).map(normalize).filter(valid);
       if (typeof obj.result === 'string' && obj.result.includes(',')) {
-        return obj.result.split(',').map(String);
+        return obj.result.split(',').map(normalize).filter(valid);
       }
       const storage = obj.storage as Record<string, string> | undefined;
       if (storage) {
@@ -263,7 +265,7 @@ export class OctraRpc {
           const addrs: string[] = [];
           for (let i = 0; i < poolLen; i++) {
             const addr = storage[`pools:${i}`];
-            if (addr) addrs.push(addr);
+            if (addr && this.isValidOctraAddress(addr)) addrs.push(addr);
           }
           if (addrs.length > 0) return addrs;
         }
@@ -271,7 +273,8 @@ export class OctraRpc {
         if (poolKeys.length > 0) {
           return poolKeys
             .sort((a, b) => parseInt(a.split(':')[1], 10) - parseInt(b.split(':')[1], 10))
-            .map(k => storage[k]);
+            .map(k => storage[k])
+            .filter((addr): addr is string => !!addr && this.isValidOctraAddress(addr));
         }
       }
     }
@@ -279,16 +282,33 @@ export class OctraRpc {
   }
 
   async hasExistingPool(factoryAddress: string, tokenA: string, tokenB: string): Promise<boolean> {
+    return (await this.getPoolAddress(factoryAddress, tokenA, tokenB)) !== '';
+  }
+
+  async getPoolAddress(factoryAddress: string, tokenA: string, tokenB: string): Promise<string> {
+    const direct = await this.callFactoryPoolAddress(factoryAddress, tokenA, tokenB);
+    if (direct && this.isValidOctraAddress(direct)) return direct;
+    if (tokenA === tokenB) return '';
+    const reversed = await this.callFactoryPoolAddress(factoryAddress, tokenB, tokenA);
+    return this.isValidOctraAddress(reversed) ? reversed : '';
+  }
+
+  private isValidOctraAddress(address: string): boolean {
+    return /^oct[1-9A-HJ-NP-Za-km-z]{43,48}$/.test(address);
+  }
+
+  private async callFactoryPoolAddress(factoryAddress: string, tokenA: string, tokenB: string): Promise<string> {
     try {
       const raw: unknown = await this.contractView(factoryAddress, 'get_pool', [tokenA, tokenB]);
       if (raw && typeof raw === 'object') {
         const obj = raw as Record<string, unknown>;
-        const result = obj.result;
-        if (typeof result === 'string' && result !== '' && result !== '0') return true;
+        if (typeof obj.result === 'string' && obj.result !== '' && obj.result !== '0') return obj.result;
+        const storage = obj.storage as Record<string, string> | undefined;
+        if (storage?.pool && storage.pool !== '' && storage.pool !== '0') return storage.pool;
       }
-      if (typeof raw === 'string' && raw !== '' && raw !== '0') return true;
+      if (typeof raw === 'string' && raw !== '' && raw !== '0') return raw;
     } catch { /* noop */ }
-    return false;
+    return '';
   }
 
   async getPoolFeeParams(poolAddress: string): Promise<{ numerator: number; denominator: number; percent: string }> {
@@ -341,6 +361,9 @@ export class OctraRpc {
   }
 
   async getPoolInfo(poolAddress: string): Promise<{ tokenA: string; tokenB: string; reserveA: string; reserveB: string; totalLP: string; active: boolean }> {
+    if (!this.isValidOctraAddress(poolAddress)) {
+      throw new Error('Invalid pool address');
+    }
     const raw: unknown = await this.contractView(poolAddress, 'get_pool_info', []);
     if (raw && typeof raw === 'object') {
       const obj = raw as Record<string, unknown>;
@@ -509,9 +532,7 @@ export class OctraRpc {
 
   // [V6-SECURITY-FIX HIGH-9] Fix setNetwork to actually switch RPC URLs
   setNetwork(network: 'devnet' | 'mainnet'): void {
-    const url = network === 'devnet'
-      ? 'https://devnet.octrascan.io/rpc'
-      : 'https://octra.network/rpc';
-    this.url = CONFIG_RPC_URL && CONFIG_RPC_URL !== 'https://devnet.octrascan.io/rpc' && CONFIG_RPC_URL !== 'https://octra.network/rpc' ? CONFIG_RPC_URL : url;
+    this.url = network === 'devnet' ? 'https://devnet.octrascan.io/rpc' : 'https://octra.network/rpc';
+    setTokenCacheNetwork(network);
   }
 }

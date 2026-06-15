@@ -24,4 +24,6 @@ export {
   WOCT_TOKEN,
   OES_TOKEN,
   CONTRACTS,
+  MAINNET_CONFIGURED,
+  assertMainnetConfigured,
 } from '../config';

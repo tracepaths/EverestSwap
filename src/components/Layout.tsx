@@ -6,7 +6,7 @@ import { SnowEffect } from './SnowEffect';
 import { useApp } from '../contexts/AppContext';
 import { walletService } from '../services/walletService';
 import { truncateAddress } from '../services/swapService';
-import { CONTRACTS } from '../config';
+import { CONTRACTS, MAINNET_CONFIGURED } from '../config';
 
 const navItems = [
   { path: '/dashboard', label: 'Dashboard', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6' },
@@ -208,6 +208,16 @@ function Layout() {
     setOpenMenu(openMenu === menu ? null : menu);
   }
 
+  function handleNetworkSelect(n: 'devnet' | 'mainnet') {
+    try {
+      setNetwork(n);
+    } catch (e) {
+      console.warn(e);
+    } finally {
+      setOpenMenu(null);
+    }
+  }
+
   return (
     <div className="h-screen flex text-[var(--app-text)] relative" style={{ zIndex: 1 }}>
       <SnowEffect />
@@ -323,12 +333,15 @@ function Layout() {
                     {networks.map(item => (
                       <button
                         key={item.value}
-                        onClick={() => { setNetwork(item.value as 'devnet' | 'mainnet'); setOpenMenu(null); }}
+                        onClick={() => handleNetworkSelect(item.value as 'devnet' | 'mainnet')}
                         className={`w-full flex items-center justify-between px-4 py-2.5 text-sm transition-colors ${
                           network === item.value ? 'bg-[var(--app-blue)]/15 text-[var(--app-blue-3)]' : 'text-[var(--app-muted)] hover:bg-[var(--app-hover)] hover:text-[var(--app-text)]'
                         }`}
                       >
                         {item.label}
+                        {!MAINNET_CONFIGURED && item.value === 'mainnet' && (
+                          <span className="text-[10px] text-[var(--app-warning)]">not configured</span>
+                        )}
                         {network === item.value && (
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />

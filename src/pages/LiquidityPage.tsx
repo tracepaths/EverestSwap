@@ -189,6 +189,17 @@ function LiquidityPage() {
 
   const handleAddLiquidity = async () => {
     if (!pool) return;
+    // [V7-SECURITY-FIX] Validate amounts before submission
+    const trimmedA = amountA.trim();
+    const trimmedB = amountB.trim();
+    if (!/^\d+(\.\d+)?$/.test(trimmedA) || Number(trimmedA) <= 0) {
+      addToast('error', 'Enter a valid amount for ' + validTokenA.symbol);
+      return;
+    }
+    if (isEmptyPool && (!/^\d+(\.\d+)?$/.test(trimmedB) || Number(trimmedB) <= 0)) {
+      addToast('error', 'Enter a valid amount for ' + validTokenB.symbol);
+      return;
+    }
     setLoading(true);
     const toastId = addToast('pending', 'Add Liquidity in progress...');
     try {
@@ -442,7 +453,7 @@ function LiquidityPage() {
                     onClick={() => {
                       if (tokenABalance && tokenABalance !== '0') {
                         const val = formatUnits(
-                          ((BigInt(parseUnits(tokenABalance, validTokenA.decimals)) * BigInt(pct)) / (BigInt(100) * BigInt(10) ** BigInt(validTokenA.decimals))).toString(),
+                          (BigInt(tokenABalance) * BigInt(pct) / 100n).toString(),
                           validTokenA.decimals
                         );
                         setAmountA(val);
@@ -540,7 +551,7 @@ function LiquidityPage() {
 
             <button
               onClick={handleAddLiquidity}
-              disabled={!amountA || Number(amountA) <= 0 || (isEmptyPool && (!amountB || Number(amountB) <= 0)) || !isConnected || loading}
+              disabled={!amountA || !/^\d+(\.\d+)?$/.test(amountA.trim()) || Number(amountA) <= 0 || (isEmptyPool && (!amountB || !/^\d+(\.\d+)?$/.test(amountB.trim()) || Number(amountB) <= 0)) || !isConnected || loading}
               className="w-full py-3 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-xl font-medium transition-colors"
             >
               {!isConnected ? 'Connect Wallet' : loading ? 'Processing...' : isEmptyPool ? 'Add Initial Liquidity' : 'Add Liquidity'}

@@ -18,6 +18,10 @@ const COMMON_TOKENS = [
   { address: OES_TOKEN.address, symbol: OES_TOKEN.symbol, name: OES_TOKEN.name, decimals: OES_TOKEN.decimals },
 ];
 
+function isValidOctraAddress(address: string): boolean {
+  return /^oct[1-9A-HJ-NP-Za-km-z]{43,48}$/.test(address);
+}
+
 interface Props {
   isOpen: boolean;
   onClose: () => void;
@@ -143,15 +147,19 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
   };
 
   const handleImport = async () => {
-    if (!importAddr || importAddr.length < 10) return;
+    if (!isValidOctraAddress(importAddr)) {
+      setImportMeta({ symbol: '???', name: 'Invalid Octra address', decimals: 6 });
+      return;
+    }
     setImporting(true);
     setImportMeta(null);
     try {
       const meta = await rpc.getTokenMeta(importAddr);
-      if (!meta.symbol || meta.symbol === '???') {
-        setImportMeta({ symbol: '???', name: 'Unknown', decimals: 6 });
+      const decimals = Number.isFinite(meta.decimals) && meta.decimals >= 0 && meta.decimals <= 18 ? meta.decimals : 6;
+      if (!meta.symbol || meta.symbol === '???' || !meta.name || meta.name === 'Unknown') {
+        setImportMeta({ symbol: '???', name: 'Unknown', decimals });
       } else {
-        setImportMeta(meta);
+        setImportMeta({ ...meta, decimals });
       }
     } catch {
       setImportMeta({ symbol: '???', name: 'Unknown', decimals: 6 });
@@ -167,7 +175,9 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
   };
 
   function formatBalance(balance: string, decimals: number): string {
-    const num = Number(balance) / 10 ** decimals;
+    // [V7-SECURITY-FIX] Clamp decimals to safe range
+    const safeDecimals = Math.max(0, Math.min(18, decimals));
+    const num = Number(balance) / 10 ** safeDecimals;
     if (num === 0) return '0';
     if (num < 0.0001) return '<0.0001';
     if (num < 1) return num.toFixed(4);
@@ -319,7 +329,7 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
                 />
                 <button
                   onClick={handleImport}
-                  disabled={importing || importAddr.length < 10}
+                  disabled={importing || !isValidOctraAddress(importAddr)}
                   className="px-3 py-1.5 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-lg text-sm font-medium transition-colors"
                 >
                   {importing ? '...' : 'Import'}
