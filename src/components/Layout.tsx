@@ -29,6 +29,14 @@ const themes = [
 
 type HeaderMenu = 'network' | 'theme' | 'activity' | null;
 
+// [V7-FIX] Get explorer URL for the current network
+// Devnet: https://devnet.octrascan.io
+// Mainnet: https://octrascan.io
+function getExplorerTxUrl(network: 'devnet' | 'mainnet', hash: string): string {
+  const base = network === 'mainnet' ? 'https://octrascan.io' : 'https://devnet.octrascan.io';
+  return `${base}/tx/${hash}`;
+}
+
 interface ActivityItem {
   hash: string;
   status: string;
@@ -474,7 +482,19 @@ function Layout() {
                             </div>
                             <div className="flex items-center justify-between gap-3 mt-2 text-[10px] text-[var(--app-muted-2)]">
                               <span className="font-mono truncate">{truncateAddress(item.hash, 8, 6)}</span>
-                              <span>{item.time}</span>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span>{item.time}</span>
+                                {/* [V7-FIX] View TX link to Octrascan explorer */}
+                                <a
+                                  href={getExplorerTxUrl(network, item.hash)}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-[var(--app-blue-3)] hover:text-[var(--app-blue)] hover:underline transition-colors"
+                                  title="View transaction on explorer"
+                                >
+                                  View TX →
+                                </a>
+                              </div>
                             </div>
                           </div>
                         ))
