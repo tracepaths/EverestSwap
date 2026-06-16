@@ -51,7 +51,17 @@ function statusClass(status: string): string {
 }
 
 function getHumanReadableLabel(tx: { message?: string; encrypted_data?: string; method?: string; amount?: string | number; to_?: string; to?: string; hash?: string }): string {
-  const msg = (tx.message || '').trim();
+  // [SECURITY] F-2: Sanitize message before processing — strip zero-width / RTL / control chars
+  // to prevent homoglyph attacks via the activity panel
+  const rawMsg = String(tx.message || '').slice(0, 2000);
+  const msg = sanitizeLabel(rawMsg).trim();
+
+  // [SECURITY] F-2: Limit message length to prevent DoS / injection
+  const methodRaw = (tx.encrypted_data || tx.method || '').toString().slice(0, 64);
+  const method = methodRaw.toLowerCase();
+  const amount = String(tx.amount || '0').slice(0, 50);
+  const toRaw = (tx.to_ || tx.to || '').toString().slice(0, 64);
+  const to = toRaw.toLowerCase();
 
   // Coba parse message sebagai JSON array untuk mendapatkan parameter panggilan kontrak
   let args: unknown[] = [];
@@ -59,35 +69,46 @@ function getHumanReadableLabel(tx: { message?: string; encrypted_data?: string; 
   if (msg.startsWith('[') && msg.endsWith(']')) {
     try {
       args = JSON.parse(msg) as unknown[];
+      // [SECURITY] FM-8: Cap args to 10 elements, each to 200 chars to prevent
+      // abuse via huge JSON arrays in transaction messages
+      if (Array.isArray(args)) {
+        args = args.slice(0, 10).map(a => {
+          if (typeof a === 'string') return a.slice(0, 200);
+          if (typeof a === 'number') return String(a).slice(0, 50);
+          return '';
+        });
+      }
       isJsonArray = Array.isArray(args);
     } catch { /* noop */ }
   }
 
-  const method = (tx.encrypted_data || tx.method || '').toLowerCase();
-  const amount = tx.amount || '0';
-  const to = (tx.to_ || tx.to || '').toLowerCase();
-
   const formatAmount = (amt: string) => {
-    const num = Number(amt);
-    if (isNaN(num) || num === 0) return '';
+    // [SECURITY] F-2: Cap Number() to safe range to prevent Infinity/NaN in display
+    let num = Number(amt);
+    if (!Number.isFinite(num)) return '';
+    num = Math.min(1e15, Math.max(-1e15, num));
+    if (num === 0) return '';
     const formatted = num / 1000000; // 6 decimals
     return formatted.toLocaleString(undefined, { maximumFractionDigits: 4 });
   };
 
-  const amtStr = formatAmount(String(amount));
+  const amtStr = formatAmount(amount);
 
   // Jika nama method kosong, tebak dari tipe parameter dan alamat kontrak tujuan
   let inferredMethod = method;
   if (!inferredMethod && isJsonArray) {
-    if (args.length === 2 && typeof args[0] === 'string' && args[0].startsWith('oct') && typeof args[1] === 'string' && !isNaN(Number(args[1]))) {
+    // [SECURITY] FM-3: Validate args are strings (not objects/arrays) before inferring
+    const isString = (x: unknown): x is string => typeof x === 'string';
+    const isNumericStr = (s: string) => /^\d+$/.test(s);
+    if (args.length === 2 && isString(args[0]) && args[0].startsWith('oct') && isString(args[1]) && isNumericStr(args[1])) {
       inferredMethod = 'grant';
-    } else if (args.length === 2 && typeof args[0] === 'string' && !isNaN(Number(args[0])) && typeof args[1] === 'string' && !isNaN(Number(args[1]))) {
+    } else if (args.length === 2 && isString(args[0]) && isNumericStr(args[0]) && isString(args[1]) && isNumericStr(args[1])) {
       inferredMethod = 'swap';
     } else if (args.length === 0) {
       if (to === CONTRACTS.woct.toLowerCase()) {
         inferredMethod = 'deposit';
       }
-    } else if (args.length === 1 && !isNaN(Number(args[0]))) {
+    } else if (args.length === 1 && isString(args[0]) && isNumericStr(args[0])) {
       if (to === CONTRACTS.woct.toLowerCase()) {
         inferredMethod = 'withdraw';
       }
@@ -107,7 +128,7 @@ function getHumanReadableLabel(tx: { message?: string; encrypted_data?: string; 
   if (inferredMethod === 'grant') {
     let spender = '';
     let grantAmt = '';
-    if (args && args.length > 0) spender = String(args[0]);
+    if (args && args.length > 0) spender = sanitizeLabel(String(args[0]).slice(0, 50));
     if (args && args.length > 1) grantAmt = formatAmount(String(args[1]));
 
     let spenderName: string;
@@ -117,7 +138,7 @@ function getHumanReadableLabel(tx: { message?: string; encrypted_data?: string; 
     else if (spenderAddr === CONTRACTS.woct.toLowerCase()) spenderName = 'WOCT';
     else spenderName = spender.substring(0, 8) + '...';
 
-    return `Approve ${spenderName} (${grantAmt || 'Unlimited'})`;
+    return sanitizeLabel(`Approve ${spenderName} (${grantAmt || 'Unlimited'})`).slice(0, 80);
   }
   if (inferredMethod === 'swap' || inferredMethod === 'swap_a_for_b' || inferredMethod === 'swap_b_for_a' || inferredMethod === 'swap_exact_tokens_for_tokens') {
     let parsedAmt = '';
@@ -136,7 +157,7 @@ function getHumanReadableLabel(tx: { message?: string; encrypted_data?: string; 
   if (inferredMethod === 'remove_liquidity') return 'Remove Liquidity';
   if (inferredMethod === 'close_position') return 'Remove All Liquidity';
   if (inferredMethod) {
-    return inferredMethod.charAt(0).toUpperCase() + inferredMethod.slice(1).replace(/_/g, ' ');
+    return sanitizeLabel(inferredMethod.charAt(0).toUpperCase() + inferredMethod.slice(1).replace(/_/g, ' ')).slice(0, 80);
   }
 
   // Fallback tambahan jika terdeteksi array berisi 2 angka tetapi metode tidak diketahui
@@ -146,14 +167,20 @@ function getHumanReadableLabel(tx: { message?: string; encrypted_data?: string; 
 
   // Jika format pesan berupa teks biasa (bukan JSON), kembalikan langsung
   if (msg && !msg.startsWith('[') && !msg.startsWith('{')) {
-    return msg;
+    return sanitizeLabel(msg).slice(0, 80);
   }
 
   if (amount !== '0' && amount !== '') {
-    return `Transfer ${amtStr || amount}`;
+    return sanitizeLabel(`Transfer ${amtStr || amount}`).slice(0, 80);
   }
 
   return tx.hash ? `Transaction ${tx.hash.substring(0, 8)}...` : 'Unknown Action';
+}
+
+// [SECURITY] F-2: Strip zero-width / RTL / control characters from text shown to user
+function sanitizeLabel(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF\u0000-\u001F\u007F]/g, '');
 }
 
 function Layout() {
@@ -182,25 +209,43 @@ function Layout() {
     }
 
     let mounted = true;
-    setActivityLoading(true);
-    walletService.getTransactionHistory(1, 10)
-      .then(history => {
-        if (!mounted) return;
-        const items = history.transactions.slice(0, 10).map(tx => ({
-          hash: tx.hash,
-          status: tx.status,
-          time: formatTime(tx.timestamp),
-          label: getHumanReadableLabel(tx),
-        }));
-        setActivity(items);
-      })
-      .catch(() => setActivity([]))
-      .finally(() => {
-        if (mounted) setActivityLoading(false);
-      });
+    const loadActivity = () => {
+      if (!mounted) return;
+      setActivityLoading(true);
+      walletService.getTransactionHistory(1, 10)
+        .then(history => {
+          if (!mounted) return;
+          // [SECURITY] F-3: Wrap getHumanReadableLabel in try/catch per-item so a single
+          // bad transaction doesn't clear the entire activity list
+          const items = history.transactions.slice(0, 10).map(tx => {
+            let label: string;
+            try {
+              label = getHumanReadableLabel(tx);
+            } catch {
+              // Fallback to a safe default label on parse failure
+              label = tx.hash ? `Transaction ${tx.hash.substring(0, 8)}...` : 'Unknown Action';
+            }
+            return {
+              hash: tx.hash,
+              status: tx.status,
+              time: formatTime(tx.timestamp),
+              label,
+            };
+          });
+          setActivity(items);
+        })
+        .catch(() => setActivity([]))
+        .finally(() => {
+          if (mounted) setActivityLoading(false);
+        });
+    };
+    loadActivity();
+    // [SECURITY] FM-1: Refresh activity every 30s so the user sees new transactions
+    const interval = setInterval(loadActivity, 30000);
 
     return () => {
       mounted = false;
+      clearInterval(interval);
     };
   }, [isConnected]);
 
@@ -211,8 +256,8 @@ function Layout() {
   function handleNetworkSelect(n: 'devnet' | 'mainnet') {
     try {
       setNetwork(n);
-    } catch (e) {
-      console.warn(e);
+    } catch {
+      console.warn('Network switch failed');
     } finally {
       setOpenMenu(null);
     }

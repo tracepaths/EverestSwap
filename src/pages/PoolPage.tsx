@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useApp } from '../contexts/AppContext';
 import type { OctraRpc } from '../services/octraRpc';
 import { CONTRACTS, WOCT_TOKEN } from '../types';
-import { formatUnits, parseUnits } from '../services/swapService';
+import { formatUnits, parseUnits, sanitizeNumericInput } from '../services/swapService';
 import { walletService } from '../services/walletService';
 import TokenTrustBadge from '../components/TokenTrustBadge';
 import TokenSelectModal from '../components/TokenSelectModal';
@@ -71,6 +71,8 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
   const [creating, setCreating] = useState(false);
 
   const mountedRef = useRef(true);
+  // [SECURITY] F-2: Synchronous submit guard (creating state is async, race exists)
+  const createSubmittingRef = useRef(false);
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
@@ -88,6 +90,25 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
       const tokenBHasPool = await rpc.hasExistingPool(factoryAddr, woctAddr, tokenB);
       if (cancelled) return;
       setHasValidPair(tokenBHasPool);
+    })();
+    return () => { cancelled = true; };
+  }, [rpc, tokenA, tokenB]);
+
+  // [SECURITY] F-4: Check if the EXACT pair (tokenA, tokenB) already has a pool.
+  // If it does, the deploy will succeed but register_pool will revert. Warn the user.
+  const [pairAlreadyExists, setPairAlreadyExists] = useState(false);
+  useEffect(() => {
+    if (!tokenA || !tokenB || tokenA === tokenB) { setPairAlreadyExists(false); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const factoryAddr = CONTRACTS.factory;
+        const poolAddr = await rpc.getPoolAddress(factoryAddr, tokenA, tokenB);
+        if (cancelled) return;
+        setPairAlreadyExists(!!poolAddr && poolAddr !== '');
+      } catch {
+        if (!cancelled) setPairAlreadyExists(false);
+      }
     })();
     return () => { cancelled = true; };
   }, [rpc, tokenA, tokenB]);
@@ -126,15 +147,32 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
     if (!tokenA || !tokenB) return;
     // [V6-SECURITY-FIX MED-13] Double-submit guard
     if (creating) return;
+    // [SECURITY] F-2: Synchronous ref guard to prevent double-click double-submit
+    if (createSubmittingRef.current) return;
+    createSubmittingRef.current = true;
     setCreating(true);
     const factoryAddr = CONTRACTS.factory;
     if (!factoryAddr) {
       setStep({ type: 'error', message: 'Factory contract not configured' });
+      setCreating(false);
       return;
     }
+    // [SECURITY] F-6: Snapshot the wallet address at the start of the flow.
+    // If the wallet disconnects/changes account mid-flow, the deploy contract
+    // address and subsequent transactions will use the wrong identity.
+    const walletSnapshot = walletService.address;
+    if (!walletSnapshot) {
+      setStep({ type: 'error', message: 'Wallet not connected' });
+      setCreating(false);
+      return;
+    }
+    // [SECURITY] FM-5: Helper to safely set step only if component is still mounted
+    const safeSetStep = (s: typeof step) => {
+      if (mountedRef.current) setStep(s);
+    };
 
     try {
-      setStep({ type: 'compiling' });
+      safeSetStep({ type: 'compiling' });
 
       const sourceResp = await fetch('/contracts/SwapPool.aml');
       const source = await sourceResp.text();
@@ -142,15 +180,19 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
       const compileResult = await rpc.compileAml(source);
       const bytecode = compileResult.bytecode;
 
-      setStep({ type: 'computing_address' });
+      safeSetStep({ type: 'computing_address' });
 
-      const balance = await rpc.call<{ balance: string; nonce: number }>('octra_balance', [walletService.address]);
+      const balance = await rpc.call<{ balance: string; nonce: number }>('octra_balance', [walletSnapshot]);
+      // [SECURITY] F-6: Re-verify wallet hasn't changed
+      if (walletService.address !== walletSnapshot) {
+        throw new Error('Wallet changed during deploy — aborting');
+      }
       const deployNonce = balance.nonce + 1;
 
       const addrResult = await rpc.computeContractAddress(bytecode, walletService.address, deployNonce);
       const poolAddress = addrResult.address;
 
-      setStep({ type: 'deploying' });
+      safeSetStep({ type: 'deploying' });
 
       const deployTxHash = await walletService.signAndSubmitDeployTx(rpc, {
         bytecode,
@@ -159,7 +201,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
 
       await rpc.waitForReceipt(deployTxHash, 60);
 
-      setStep({ type: 'setting_tokens' });
+      safeSetStep({ type: 'setting_tokens' });
 
       const tokenTxHash = await walletService.callContract({
         contract: poolAddress,
@@ -169,7 +211,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
 
       await rpc.waitForReceipt(tokenTxHash, 60);
 
-      setStep({ type: 'setting_fee' });
+      safeSetStep({ type: 'setting_fee' });
 
       const { num, denom } = getFeeParams();
       const feeTxHash = await walletService.callContract({
@@ -180,7 +222,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
 
       await rpc.waitForReceipt(feeTxHash, 60);
 
-      setStep({ type: 'registering' });
+      safeSetStep({ type: 'registering' });
 
       const regTxHash = await walletService.callContract({
         contract: factoryAddr,
@@ -195,7 +237,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
       const rawInitB = initAmountB && metaB ? parseUnits(initAmountB, metaB.decimals) : null;
 
       if (rawInitA && rawInitB && BigInt(rawInitA) > 0 && BigInt(rawInitB) > 0) {
-        setStep({ type: 'granting_a' });
+        safeSetStep({ type: 'granting_a' });
 
         const grantAHash = await walletService.callContract({
           contract: tokenA,
@@ -204,7 +246,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
         });
         await rpc.waitForReceipt(grantAHash, 60);
 
-        setStep({ type: 'granting_b' });
+        safeSetStep({ type: 'granting_b' });
 
         const grantBHash = await walletService.callContract({
           contract: tokenB,
@@ -213,7 +255,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
         });
         await rpc.waitForReceipt(grantBHash, 60);
 
-        setStep({ type: 'adding_liquidity' });
+        safeSetStep({ type: 'adding_liquidity' });
 
         const deadline = Math.floor(Date.now() / 1000 + 300);
         const addHash = await walletService.callContract({
@@ -234,6 +276,8 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
         setStep({ type: 'error', message: e instanceof Error ? e.message : 'Unknown error' });
       }
     } finally {
+      // [SECURITY] F-2: Reset ref guard
+      createSubmittingRef.current = false;
       setCreating(false);
     }
   };
@@ -391,8 +435,10 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
               <label className="text-[10px] text-[var(--app-muted-2)]">{metaA?.symbol ?? 'Token A'} Amount</label>
               <input
                 type="text"
+                inputMode="decimal"
                 value={initAmountA}
-                onChange={e => setInitAmountA(e.target.value)}
+                // [SECURITY] F-1: Sanitize input
+                onChange={e => setInitAmountA(sanitizeNumericInput(e.target.value))}
                 placeholder="0.0"
                 className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-1.5 text-sm font-mono outline-none mt-1"
               />
@@ -401,8 +447,10 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
               <label className="text-[10px] text-[var(--app-muted-2)]">{metaB?.symbol ?? 'Token B'} Amount</label>
               <input
                 type="text"
+                inputMode="decimal"
                 value={initAmountB}
-                onChange={e => setInitAmountB(e.target.value)}
+                // [SECURITY] F-1: Sanitize input
+                onChange={e => setInitAmountB(sanitizeNumericInput(e.target.value))}
                 placeholder="0.0"
                 className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-1.5 text-sm font-mono outline-none mt-1"
               />
@@ -424,6 +472,9 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
           <button
             onClick={handleCreatePool}
             disabled={!isConnected || !isValidA || !isValidB || !hasValidPair || creating}
+            // [SECURITY] F-4: Disable when pair already exists
+            // (will revert at register_pool)
+            title={pairAlreadyExists ? 'This pair already has a pool — create would fail' : undefined}
             className="w-full py-3 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-xl font-medium transition-colors"
           >
             {!isConnected ? 'Connect Wallet' : isValidA && isValidB && hasValidPair && initAmountA && initAmountB ? 'Create Pool + Add Liquidity' : 'Create Pool'}

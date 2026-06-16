@@ -117,8 +117,9 @@ const customComponents: Components = {
     </td>
   ),
   a: ({ children, href, ...props }) => (
+    // [SECURITY] L-3: Reject javascript: and data: hrefs to prevent DOM XSS via docs
     <a
-      href={href}
+      href={href && !/^(javascript|data|vbscript):/i.test(href) ? href : '#'}
       className="text-[var(--app-blue-3)] hover:text-[var(--app-blue-3)] underline underline-offset-2 transition-colors"
       target={href?.startsWith('http') ? '_blank' : undefined}
       rel={href?.startsWith('http') ? 'noopener noreferrer' : undefined}

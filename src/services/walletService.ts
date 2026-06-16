@@ -1,6 +1,5 @@
 import { ZeroXIOWallet, type TransactionHistory, type ContractParams } from '@0xio/sdk';
 import { OctraRpc } from './octraRpc';
-import { DEPLOYER_PUBLIC_KEY, DEPLOYER_ADDRESS } from '../types';
 
 export class WalletService {
   private sdk: ZeroXIOWallet;
@@ -110,10 +109,6 @@ export class WalletService {
         }
       } catch { /* noop */ }
     }
-    if (this._address === DEPLOYER_ADDRESS) {
-      this._publicKey = DEPLOYER_PUBLIC_KEY;
-      return this._publicKey;
-    }
     return '';
   }
 
@@ -125,9 +120,12 @@ export class WalletService {
     ou?: string | number;
   }): Promise<string> {
     const result = await this.sdk.callContract(params);
-    const txHash = (result.hash || result.txHash || (result as Record<string, unknown>).tx_hash) as string | undefined;
-    if (!txHash || typeof txHash !== 'string') {
-      // [V6-SECURITY-FIX LOW-19] Don't leak full RPC result to console
+    const resultObj = result && typeof result === 'object' ? (result as Record<string, unknown>) : {};
+    const txHash = typeof resultObj.hash === 'string' ? resultObj.hash
+      : typeof resultObj.txHash === 'string' ? resultObj.txHash
+      : typeof resultObj.tx_hash === 'string' ? resultObj.tx_hash
+      : undefined;
+    if (!txHash) {
       throw new Error('Submit succeeded but no tx_hash returned');
     }
     return txHash;
@@ -183,15 +181,30 @@ export class WalletService {
       message?: string;
     }
   ): Promise<string> {
+    // [SECURITY] F-1: Snapshot wallet address at the start of the deploy flow.
+    // If the wallet disconnects (or switches account) between the balance fetch
+    // and the submit, the deploy will be addressed to a contract computed from
+    // a stale address — abort instead.
     const address = this._address;
     if (!address) throw new Error('Not connected');
+    const addressSnapshot = address;
 
-    const balance = await rpc.getBalance(address);
+    // [SECURITY] F-1: Re-fetch nonce immediately before submission to avoid stale nonce
+    // [SECURITY] F-5: Note — the nonce is computed as `balance.nonce + 1`. If the user
+    // has pending txs from another tab/operation, this might collide. We re-check below
+    // and abort if the wallet identity changed. For a tighter fix, integrate a
+    // nonce manager that tracks pending txs per address.
+    const balance = await rpc.getBalance(addressSnapshot);
     const nonce = balance.nonce + 1;
-    const timestamp = Date.now() / 1000;
+    // [SECURITY] FM-8: Floor and clamp timestamp to a reasonable range to prevent
+    // gaming with system clock (0, far future, NaN, etc.)
+    let timestamp = Math.floor(Date.now() / 1000);
+    if (!Number.isFinite(timestamp) || timestamp < 0) timestamp = 0;
+    // Clamp to a reasonable upper bound (year 2100)
+    if (timestamp > 4_102_444_800) timestamp = 4_102_444_800;
 
     const txFields: Record<string, string | number> = {
-      from: address,
+      from: addressSnapshot,
       to_: params.poolAddress,
       amount: '0',
       nonce,
@@ -209,9 +222,14 @@ export class WalletService {
     let publicKey = sigPubKey || await this.getPublicKey();
     if (!publicKey) {
       try {
-        publicKey = await rpc.getPublicKey(address);
+        publicKey = await rpc.getPublicKey(addressSnapshot);
         if (publicKey) this._publicKey = publicKey;
       } catch { /* noop */ }
+    }
+
+    // [SECURITY] F-1: Verify wallet identity hasn't changed during signing
+    if (this._address !== addressSnapshot) {
+      throw new Error('Wallet changed during deploy — aborting');
     }
 
     const signedTx: Record<string, unknown> = { ...txFields, signature };

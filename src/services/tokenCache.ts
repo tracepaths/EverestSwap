@@ -1,5 +1,7 @@
 // [V6-SECURITY-FIX MED-12] Reduce TTL from 5min to 60s to limit stale cache impact
 const CACHE_TTL = 60 * 1000;
+// [SECURITY] Shorter TTL for isTrusted to limit stale trust badge after factory untrusts a token
+const TRUSTED_TTL = 10 * 1000;
 let activeNetwork = 'devnet';
 
 interface TokenMeta {
@@ -50,7 +52,12 @@ export function setCachedTrustedTokens(factoryAddress: string, tokens: string[])
 
 export function getCachedIsTrusted(factoryAddress: string, tokenAddress: string): boolean | null {
   const entry = isTrustedCache.get(cacheKey('trusted-token', factoryAddress, tokenAddress));
-  return isFresh(entry) ? entry.data : null;
+  if (entry === undefined) return null;
+  if (Date.now() - entry.timestamp >= TRUSTED_TTL) {
+    isTrustedCache.delete(cacheKey('trusted-token', factoryAddress, tokenAddress));
+    return null;
+  }
+  return entry.data;
 }
 
 // [V6-SECURITY-FIX MED-12] Only cache positive trust results to allow re-checking

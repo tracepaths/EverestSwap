@@ -39,7 +39,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [network, setNetworkState] = useState<'devnet' | 'mainnet'>('devnet');
   const [theme, setThemeState] = useState<AppTheme>(() => {
     let saved: string | null = null;
-    try { saved = typeof window !== 'undefined' ? localStorage.getItem('everestswap-theme') : null; } catch { /* localStorage may be blocked */ }
+    try { saved = typeof window !== 'undefined' ? localStorage.getItem('everestswap-theme') : null; }
+    catch (e) { console.warn('[EverestSwap] localStorage unavailable on init:', e instanceof Error ? e.message : 'unknown'); }
     return saved === 'light' || saved === 'blue' || saved === 'dark' ? saved : 'dark';
   });
   const [rpc] = useState(() => new OctraRpc());
@@ -53,11 +54,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    try { localStorage.setItem('everestswap-theme', theme); } catch { /* localStorage may be blocked */ }
+    // [SECURITY] FM-2: Log localStorage errors for diagnostics (without leaking user data)
+    try { localStorage.setItem('everestswap-theme', theme); }
+    catch (e) { console.warn('[EverestSwap] localStorage unavailable:', e instanceof Error ? e.message : 'unknown'); }
   }, [theme]);
 
+  // [SECURITY] FM-1: Use crypto.randomUUID for collision-free toast IDs
   const addToast = useCallback((type: Toast['type'], message: string, txHash?: string) => {
-    const id = Date.now().toString() + Math.random().toString(36).slice(2, 6);
+    const id = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     setToasts(prev => [...prev, { id, type, message, txHash }]);
     return id;
   }, []);
@@ -75,18 +81,39 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const connect = useCallback(async () => {
     if (isConnecting.current) return;
     isConnecting.current = true;
+    // [SECURITY] FM-1: If wallet already connected to the same address, no-op
+    if (walletAddress !== '' && walletService.address === walletAddress) {
+      isConnecting.current = false;
+      return;
+    }
+    // [SECURITY] FM-1: If different address, clear stale state before connecting
+    if (walletAddress !== '' && walletService.address !== walletAddress) {
+      setWalletAddress('');
+      setWalletBalance('');
+    }
     try {
       const address = await walletService.connect();
+      if (address !== walletService.address) {
+        // Wallet state changed during async connect, abort
+        isConnecting.current = false;
+        return;
+      }
       setWalletAddress(address);
       const balance = await walletService.getBalance();
       setWalletBalance(balance);
     } finally {
       isConnecting.current = false;
     }
-  }, []);
+  }, [walletAddress]);
 
-  const disconnect = useCallback(() => {
-    walletService.disconnect();
+  // [SECURITY] F-1: Await walletService.disconnect() to prevent race with connect()
+  const disconnect = useCallback(async () => {
+    try {
+      await walletService.disconnect();
+    } catch (e) {
+      // Log but don't fail — UI state should be cleared regardless
+      console.warn('Wallet disconnect failed:', e instanceof Error ? e.message : 'unknown');
+    }
     setWalletAddress('');
     setWalletBalance('');
   }, []);

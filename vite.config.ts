@@ -8,11 +8,10 @@ export default defineConfig({
     react(),
     tailwindcss(),
     nodePolyfills({
-      include: ['buffer', 'process', 'util', 'stream', 'events'],
+      include: ['buffer', 'util', 'stream', 'events'],
       globals: {
         Buffer: true,
         global: true,
-        process: true,
       },
     }),
   ],

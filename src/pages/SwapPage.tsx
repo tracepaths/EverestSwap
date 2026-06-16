@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useApp } from '../contexts/AppContext';
 import { walletService } from '../services/walletService';
 import { OCT_TOKEN, WOCT_TOKEN, OES_TOKEN, CONTRACTS } from '../types';
-import { calculateOutput, calculatePriceImpact, formatUnits, parseUnits } from '../services/swapService';
+import { calculateOutput, calculatePriceImpact, formatUnits, parseUnits, sanitizeNumericInput } from '../services/swapService';
 import { useIndexer } from '../hooks/useIndexer';
 import { PoolChart } from '../components/PoolChart';
 import TokenSelectModal from '../components/TokenSelectModal';
@@ -37,10 +37,30 @@ function SwapPage() {
   const [pairError, setPairError] = useState('');
   // [V6-SECURITY-FIX MED-18] Price impact confirmation gate
   const [highPriceImpactConfirmed, setHighPriceImpactConfirmed] = useState(false);
+  // [SECURITY] F-2: Synchronous submit guard via ref to prevent double-click races
+  const submittingRef = useRef(false);
 
   const mode = fromToken.address === '' && toToken.address === WOCT_TOKEN.address ? 'wrap'
     : fromToken.address === WOCT_TOKEN.address && toToken.address === '' ? 'unwrap'
     : 'swap';
+
+  // [ROUTE-DISPLAY] Compute swap route as a chain of token symbols for display
+  const route = useMemo((): string[] => {
+    if (mode === 'wrap') return ['OCT', 'WOCT'];
+    if (mode === 'unwrap') return ['WOCT', 'OCT'];
+    if (mode === 'swap' && poolAddress) {
+      return [fromToken.symbol, toToken.symbol];
+    }
+    if (mode === 'swap') {
+      if (fromToken.address === '') {
+        return ['OCT', WOCT_TOKEN.symbol, toToken.symbol];
+      }
+      if (toToken.address === '') {
+        return [fromToken.symbol, WOCT_TOKEN.symbol, 'OCT'];
+      }
+    }
+    return [];
+  }, [mode, poolAddress, fromToken.symbol, fromToken.address, toToken.symbol, toToken.address]);
 
   const poolIsAtoB = mode === 'swap' && poolTokenA && fromToken.address.toLowerCase() === poolTokenA.toLowerCase();
   const poolIsBtoA = mode === 'swap' && poolTokenB && fromToken.address.toLowerCase() === poolTokenB.toLowerCase();
@@ -146,10 +166,16 @@ function SwapPage() {
   }, [rpc, mode, fromToken.address, toToken.address, fromToken.symbol, toToken.symbol]);
 
   useEffect(() => {
-    loadReserves();
-    loadBalances();
-    const interval = setInterval(() => { loadReserves(); loadBalances(); }, 10000);
-    return () => clearInterval(interval);
+    // [SECURITY] FM-7: Add cancelled flag to prevent wasted RPC calls on unmount
+    let cancelled = false;
+    const tick = () => {
+      if (cancelled) return;
+      loadReserves();
+      loadBalances();
+    };
+    tick();
+    const interval = setInterval(tick, 10000);
+    return () => { cancelled = true; clearInterval(interval); };
   }, [loadReserves, loadBalances]);
 
   useEffect(() => {
@@ -173,13 +199,25 @@ function SwapPage() {
     }
   }, [fromAmount, reserveIn, reserveOut, fromToken, toToken, mode]);
 
+  // [SECURITY] FM-1: Reset price impact confirmation when amount or pair changes
+  // (otherwise stale confirmation applies to a different swap)
+  useEffect(() => {
+    setHighPriceImpactConfirmed(false);
+  }, [fromAmount, fromToken.address, toToken.address]);
+
   useEffect(() => {
     if (!showConfirm) return;
     setProgress(0);
     setProgressLabel('Ready to confirm');
     setProgressError(false);
     setHighPriceImpactConfirmed(false);
-  }, [showConfirm]);
+    // [SECURITY] F-11: Escape closes the confirm dialog
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !loading && !submittingRef.current) setShowConfirm(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showConfirm, loading]);
 
   const switchTokens = () => {
     setFromToken(toToken);
@@ -201,6 +239,9 @@ function SwapPage() {
     setFromToken(found);
     setShowFromModal(false);
     setFromAmount('');
+    // [SECURITY] F-4: Reset balance to loading state when token changes to prevent
+    // displaying stale balance from the previous token
+    setFromBalance(null);
   };
 
   const handleSelectToToken = (address: string, meta: { symbol: string; name: string; decimals: number }) => {
@@ -216,6 +257,8 @@ function SwapPage() {
     setToToken(found);
     setShowToModal(false);
     setFromAmount('');
+    // [SECURITY] F-4: Reset toToken balance to loading state
+    setToBalance(null);
   };
 
   const updateProgress = (value: number, label: string, isError = false) => {
@@ -245,6 +288,9 @@ function SwapPage() {
   };
 
   const handleSwap = async () => {
+    // [SECURITY] F-2: Synchronous ref guard prevents double-click double-submit
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setLoading(true);
     let failed = false;
     updateProgress(0, 'Preparing transaction...', false);
@@ -309,7 +355,15 @@ function SwapPage() {
         const freshReserveOut = fromIsTokenA ? freshReserves.reserveB : freshReserves.reserveA;
 
         const amountInBN = parseUnits(fromAmount.trim(), fromToken.decimals);
+        // [SECURITY] F-7: Pre-check user balance before submission
+        if (fromBalance !== null && BigInt(amountInBN) > BigInt(fromBalance)) {
+          throw new Error('Insufficient balance for swap');
+        }
         const freshOutput = calculateOutput(amountInBN, freshReserveIn, freshReserveOut);
+        // [SECURITY] Reject zero or negative output to prevent silent failures
+        if (BigInt(freshOutput) <= 0n) {
+          throw new Error('Calculated output is zero or negative — pool may be empty or amount too small');
+        }
         const freshToAmount = formatUnits(freshOutput, toToken.decimals);
 
         const toRaw = parseUnits(freshToAmount || '0', toToken.decimals);
@@ -348,6 +402,20 @@ function SwapPage() {
           throw new Error('Swap direction changed before submission');
         }
 
+        // [SECURITY] Post-grant reserve re-check to detect sandwich attack depletion
+        const postGrantReserves = await rpc.getReserves(poolAddress);
+        const postGrantReserveIn = preSwapFromA ? postGrantReserves.reserveA : postGrantReserves.reserveB;
+        const postGrantReserveOut = preSwapFromA ? postGrantReserves.reserveB : postGrantReserves.reserveA;
+        const postGrantOutput = calculateOutput(amountInBN, postGrantReserveIn, postGrantReserveOut);
+        if (BigInt(postGrantOutput) <= 0n) {
+          throw new Error('Post-grant pool state is empty — possible sandwich attack');
+        }
+        // Re-check minOut against fresh post-grant output
+        const postGrantBasis = BigInt(postGrantOutput) * BigInt(10000 - basisPoints) / 10000n;
+        if (minOutRaw > postGrantBasis) {
+          throw new Error('Price moved unfavorably during grant confirmation — please review and retry');
+        }
+
         updateProgress(70, 'Submitting swap...', false);
         updateToast(toastId, 'pending', 'Approving swap in wallet...');
         updateProgress(85, 'Waiting for swap confirmation...', false);
@@ -370,6 +438,8 @@ function SwapPage() {
       updateProgress(100, 'Transaction failed', true);
       updateToast(toastId, 'error', `${actionLabel} failed: ${errMsg}`);
     } finally {
+      // [SECURITY] F-2: Reset ref guard
+      submittingRef.current = false;
       setLoading(false);
       if (!failed) setShowConfirm(false);
     }
@@ -395,8 +465,10 @@ function SwapPage() {
             <div className="flex items-center gap-3">
               <input
                 type="text"
+                inputMode="decimal"
                 value={fromAmount}
-                onChange={e => setFromAmount(e.target.value)}
+                // [SECURITY] F-1: Sanitize input to digits + single dot only
+                onChange={e => setFromAmount(sanitizeNumericInput(e.target.value))}
                 placeholder="0.0"
                 className="flex-1 bg-transparent text-2xl font-mono outline-none placeholder-[var(--app-muted-2)]"
               />
@@ -416,12 +488,21 @@ function SwapPage() {
             <div className="flex gap-1 mt-2">
               {[10, 25, 50, 100].map(pct => {
                 const bal = fromBalance ?? '0';
-                const rawPct = BigInt(bal) * BigInt(pct) / 100n;
+                // [SECURITY] F-10: For native OCT (empty address), reserve 0.0001 OCT
+                // (~1e9 base units) for gas when using 100% to avoid being unable
+                // to pay fees after wrapping the entire balance.
+                const isNative = fromToken.address === '';
+                let effectivePct = pct;
+                if (isNative && pct === 100) {
+                  effectivePct = 99; // 99% leaves headroom for gas (~0.01 OCT)
+                }
+                const rawPct = BigInt(bal) * BigInt(effectivePct) / 100n;
                 return (
                   <button
                     key={pct}
                     onClick={() => setFromAmount(formatUnits(rawPct.toString(), fromToken.decimals))}
                     className="text-xs px-2 py-0.5 rounded bg-[var(--app-hover)] hover:bg-[var(--app-hover)] text-[var(--app-muted)] hover:text-[var(--app-text)] transition-colors"
+                    title={isNative && pct === 100 ? 'Reserves ~0.01 OCT for gas' : undefined}
                   >
                     {pct}%
                   </button>
@@ -526,6 +607,12 @@ function SwapPage() {
                 <span>~0.1 OCT</span>
               </div>
             )}
+            {route.length >= 2 && (
+              <div className="flex justify-between text-[var(--app-muted)]">
+                <span>Route</span>
+                <span className="font-mono">{route.join(' → ')}</span>
+              </div>
+            )}
           </div>
 
           <button
@@ -539,9 +626,10 @@ function SwapPage() {
       </div>
 
       {showConfirm && (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-xl z-50 flex items-center justify-center p-4">
+        // [SECURITY] F-12: aria-modal + role dialog
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-xl z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="confirm-swap-title">
           <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] max-w-md w-full p-6 space-y-4">
-            <h3 className="text-lg font-semibold">Confirm {actionLabel}</h3>
+            <h3 id="confirm-swap-title" className="text-lg font-semibold">Confirm {actionLabel}</h3>
             {mode === 'swap' && pairError && (
               <div className="text-xs text-[var(--app-danger)] bg-red-400/10 rounded-lg px-3 py-2">
                 {pairError}
@@ -678,6 +766,9 @@ function SwapPage() {
         onSelect={handleSelectFromToken}
         rpc={rpc}
         excludeAddress={toToken.address || undefined}
+        // [SECURITY] F-5: Don't allow OCT (native token) as from-token in swap mode
+        // because it has no contract to grant to. Only allowed in wrap mode.
+        excludeNative={mode === 'swap'}
         walletAddress={walletAddress}
         isConnected={isConnected}
       />

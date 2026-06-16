@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useApp } from '../contexts/AppContext';
 import { walletService } from '../services/walletService';
 import { CONTRACTS } from '../types';
-import { formatUnits, parseUnits } from '../services/swapService';
+import { formatUnits, parseUnits, sanitizeNumericInput } from '../services/swapService';
 import type { LpPosition } from '../services/octraRpc';
 
 interface DynamicPool {
@@ -35,6 +35,7 @@ function LiquidityPage() {
   const [positions, setPositions] = useState<LpPosition[]>([]);
   const [selectedPositionId, setSelectedPositionId] = useState<number | null>(null);
   const [tokenABalance, setTokenABalance] = useState('0');
+  const [tokenBBalance, setTokenBBalance] = useState('0');
   const [loading, setLoading] = useState(false);
   const [currentEpoch, setCurrentEpoch] = useState<number>(0);
   const [rewardsPerEpoch, setRewardsPerEpoch] = useState<number>(0);
@@ -45,6 +46,9 @@ function LiquidityPage() {
   const pool = pools[selectedPoolIdx];
   const mountedRef = useRef(true);
   const poolSearchRef = useRef<HTMLInputElement>(null);
+  // [SECURITY] F-2: Synchronous submit guards to prevent double-click races
+  const addSubmittingRef = useRef(false);
+  const removeSubmittingRef = useRef(false);
 
   useEffect(() => {
     if (showPoolSelect) {
@@ -116,39 +120,58 @@ function LiquidityPage() {
 
   const loadPoolInfo = useCallback(async () => {
     if (!pool) return;
+    // [SECURITY] F-5: Capture pool address at the start to detect if user changed
+    // pools during the async calls. Avoids state from old pool leaking into new pool.
+    const poolAddr = pool.address;
+    const tokenAAddr = pool.tokenA.address;
+    // [SECURITY] FM-9: Use a local pool snapshot for commit checks
+    const targetPoolAddr = poolAddr;
     try {
-      const reserves = await rpc.getReserves(pool.address);
+      const reserves = await rpc.getReserves(poolAddr);
+      if (pool?.address !== targetPoolAddr) return;
       setReserveA(reserves.reserveA);
       setReserveB(reserves.reserveB);
     } catch { /* noop */ }
     if (isConnected && walletAddress) {
       try {
-        const lp = await rpc.getLpBalance(pool.address, walletAddress);
+        const lp = await rpc.getLpBalance(poolAddr, walletAddress);
+        if (pool?.address !== targetPoolAddr) return;
         setLpBalance(lp);
-        const total = await rpc.getTotalLpSupply(pool.address);
+        const total = await rpc.getTotalLpSupply(poolAddr);
+        if (pool?.address !== targetPoolAddr) return;
         setTotalLP(total);
-        const userPositions = await rpc.getPositions(pool.address, walletAddress);
+        const userPositions = await rpc.getPositions(poolAddr, walletAddress);
+        if (pool?.address !== targetPoolAddr) return;
         setPositions(userPositions);
         if (userPositions.length > 0 && selectedPositionId === null) {
           setSelectedPositionId(userPositions[0].id);
         }
-        const bal = await rpc.getTokenBalance(pool.tokenA.address || CONTRACTS.woct, walletAddress);
+        const bal = await rpc.getTokenBalance(tokenAAddr || CONTRACTS.woct, walletAddress);
+        if (pool?.address !== targetPoolAddr) return;
         setTokenABalance(bal);
       } catch { /* noop */ }
       try {
+        // [SECURITY] F-8: Also fetch tokenB balance for pre-check on add liquidity
+        const tokenBAddr = pool?.tokenB?.address;
+        if (tokenBAddr) {
+          const balB = await rpc.getTokenBalance(tokenBAddr, walletAddress);
+          if (pool?.address === targetPoolAddr) setTokenBBalance(balB);
+        }
+      } catch { /* noop */ }
+      try {
         const currentEpochRes = await rpc.call<{ epoch_id: number }>('epoch_current');
-        setCurrentEpoch(currentEpochRes?.epoch_id || 0);
-      } catch (err) {
-        console.warn('Failed to fetch epoch info:', err);
+        if (pool?.address === targetPoolAddr) setCurrentEpoch(currentEpochRes?.epoch_id || 0);
+      } catch {
+        console.warn('Failed to fetch epoch info');
       }
       try {
         const oesAddr = CONTRACTS.oes || pool.tokenB.address;
         const rewardsInfo = await rpc.getOesRewardsInfo(oesAddr);
-        if (mountedRef.current) setRewardsPerEpoch(rewardsInfo.rewardsPerEpoch);
+        if (mountedRef.current && pool?.address === targetPoolAddr) setRewardsPerEpoch(rewardsInfo.rewardsPerEpoch);
       } catch { /* noop */ }
       try {
-        const locked = await rpc.getTotalLockedLp(pool.address);
-        if (mountedRef.current) setTotalLockedLp(locked);
+        const locked = await rpc.getTotalLockedLp(poolAddr);
+        if (mountedRef.current && pool?.address === targetPoolAddr) setTotalLockedLp(locked);
       } catch { /* noop */ }
     }
   }, [rpc, isConnected, walletAddress, pool, selectedPositionId]);
@@ -189,6 +212,9 @@ function LiquidityPage() {
 
   const handleAddLiquidity = async () => {
     if (!pool) return;
+    // [SECURITY] F-2: Synchronous ref guard prevents double-click
+    if (addSubmittingRef.current) return;
+    addSubmittingRef.current = true;
     // [V7-SECURITY-FIX] Validate amounts before submission
     const trimmedA = amountA.trim();
     const trimmedB = amountB.trim();
@@ -203,8 +229,11 @@ function LiquidityPage() {
     setLoading(true);
     const toastId = addToast('pending', 'Add Liquidity in progress...');
     try {
-      const rawA = parseUnits(amountA, validTokenA.decimals);
-      const rawB = parseUnits(amountB, validTokenB.decimals);
+      // [SECURITY] F-2: Use trimmed values for parseUnits to avoid silent zero on
+      // whitespace inputs (e.g., "  1.5  " would pass validation but parseUnits
+      // would return '0' because the regex doesn't match whitespace)
+      const rawA = parseUnits(trimmedA, validTokenA.decimals);
+      const rawB = parseUnits(trimmedB, validTokenB.decimals);
 
       // Calculate lock duration in epochs (1 epoch = 1 minute)
       let lockDuration = 0;
@@ -230,10 +259,22 @@ function LiquidityPage() {
       const deadline = Math.floor(Date.now() / 1000 + 300);
 
       // [V6-SECURITY-FIX HIGH-8] Calculate proper min_lp with slippage (10% tolerance)
-      // First deposit: accept any LP > 0. Subsequent: estimate from reserves.
+      // First deposit: accept any LP > 0. Subsequent: estimate from BOTH reserves
+      // (the limiting factor is whichever side is depleted)
       let minLp = '1';
-      if (totalLP !== '0' && reserveA !== '0') {
-        const lpEstimate = (BigInt(rawA) * BigInt(totalLP)) / BigInt(reserveA);
+
+      // [SECURITY] F-8: Pre-check user balances before submission
+      if (tokenABalance !== '0' && tokenABalance !== '' && BigInt(rawA) > BigInt(tokenABalance)) {
+        throw new Error(`Insufficient ${validTokenA.symbol} balance for add liquidity`);
+      }
+      if (tokenBBalance !== '0' && tokenBBalance !== '' && BigInt(rawB) > BigInt(tokenBBalance)) {
+        throw new Error(`Insufficient ${validTokenB.symbol} balance for add liquidity`);
+      }
+
+      if (totalLP !== '0' && reserveA !== '0' && reserveB !== '0') {
+        const lpFromA = (BigInt(rawA) * BigInt(totalLP)) / BigInt(reserveA);
+        const lpFromB = (BigInt(rawB) * BigInt(totalLP)) / BigInt(reserveB);
+        const lpEstimate = lpFromA < lpFromB ? lpFromA : lpFromB;
         const slippageBps = 1000n; // 10%
         const minLpRaw = lpEstimate - (lpEstimate * slippageBps / 10000n);
         minLp = minLpRaw > 0n ? minLpRaw.toString() : '1';
@@ -273,14 +314,23 @@ function LiquidityPage() {
       const errMsg = e instanceof Error ? e.message : 'An error occurred';
       updateToast(toastId, 'error', `Add Liquidity failed: ${errMsg}`);
     } finally {
+      // [SECURITY] F-2: Reset ref guard
+      addSubmittingRef.current = false;
       setLoading(false);
     }
   };
 
   const handleRemoveLiquidity = async () => {
     if (!pool || selectedPositionId === null) return;
+    // [SECURITY] F-2: Synchronous ref guard
+    if (removeSubmittingRef.current) return;
+    removeSubmittingRef.current = true;
     const selectedPosition = positions.find(p => p.id === selectedPositionId);
-    if (!selectedPosition) return;
+    // [SECURITY] F-9: Filter out zero-liquidity positions
+    if (!selectedPosition || selectedPosition.liquidity === '0') {
+      removeSubmittingRef.current = false;
+      return;
+    }
     if (selectedPosition.unlockTime > currentEpoch) {
       const remainingMinutes = selectedPosition.unlockTime - currentEpoch;
       const days = Math.floor(remainingMinutes / (24 * 60));
@@ -322,6 +372,8 @@ function LiquidityPage() {
       const errMsg = e instanceof Error ? e.message : 'An error occurred';
       updateToast(toastId, 'error', `Remove Liquidity failed: ${errMsg}`);
     } finally {
+      // [SECURITY] F-2: Reset ref guard
+      removeSubmittingRef.current = false;
       setLoading(false);
     }
   };
@@ -375,11 +427,19 @@ function LiquidityPage() {
               </svg>
             </button>
             {showPoolSelect && (
-              <div className="fixed inset-0 bg-black/75 backdrop-blur-xl z-50 flex items-center justify-center p-4" onClick={() => { setShowPoolSelect(false); setPoolQuery(''); }}>
+              <div
+                className="fixed inset-0 bg-black/75 backdrop-blur-xl z-50 flex items-center justify-center p-4"
+                onClick={() => { setShowPoolSelect(false); setPoolQuery(''); }}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="select-pool-title"
+                tabIndex={-1}
+                onKeyDown={e => { if (e.key === 'Escape') { setShowPoolSelect(false); setPoolQuery(''); } }}
+              >
                 <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] w-full max-w-sm shadow-2xl flex flex-col max-h-[70vh]" onClick={e => e.stopPropagation()}>
                   <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--app-border)]">
-                    <h3 className="text-sm font-semibold">Select Pool</h3>
-                    <button onClick={() => { setShowPoolSelect(false); setPoolQuery(''); }} className="text-[var(--app-muted)] hover:text-[var(--app-text)] transition-colors">
+                    <h3 id="select-pool-title" className="text-sm font-semibold">Select Pool</h3>
+                    <button onClick={() => { setShowPoolSelect(false); setPoolQuery(''); }} className="text-[var(--app-muted)] hover:text-[var(--app-text)] transition-colors" aria-label="Close">
                       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                       </svg>
@@ -439,8 +499,10 @@ function LiquidityPage() {
               <div className="flex items-center gap-3">
                 <input
                   type="text"
+                  inputMode="decimal"
                   value={amountA}
-                  onChange={e => setAmountA(e.target.value)}
+                  // [SECURITY] F-1: Sanitize input
+                  onChange={e => setAmountA(sanitizeNumericInput(e.target.value))}
                   placeholder="0.0"
                   className="flex-1 bg-transparent text-2xl font-mono outline-none placeholder-[var(--app-muted-2)]"
                 />
@@ -478,8 +540,10 @@ function LiquidityPage() {
               <div className="flex items-center gap-3">
                 <input
                   type="text"
+                  inputMode="decimal"
                   value={amountB}
-                  onChange={e => isEmptyPool ? setAmountB(e.target.value) : undefined}
+                  // [SECURITY] F-1: Sanitize input
+                  onChange={e => isEmptyPool ? setAmountB(sanitizeNumericInput(e.target.value)) : undefined}
                   readOnly={!isEmptyPool}
                   placeholder="0.0"
                   className="flex-1 bg-transparent text-2xl font-mono outline-none placeholder-[var(--app-muted-2)]"
@@ -573,7 +637,8 @@ function LiquidityPage() {
               </div>
             ) : (
               <div className="space-y-2">
-                {positions.map(pos => {
+                {/* [SECURITY] F-9: Filter out zero-liquidity positions from the list */}
+                {positions.filter(p => p.liquidity !== '0').map(pos => {
                   const isLocked = pos.unlockTime > currentEpoch;
                   const remaining = isLocked ? pos.unlockTime - currentEpoch : 0;
                   const days = Math.floor(remaining / (24 * 60));

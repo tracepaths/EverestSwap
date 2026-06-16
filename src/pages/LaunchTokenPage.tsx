@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApp } from '../contexts/AppContext';
 import { walletService } from '../services/walletService';
+import { sanitizeNumericInput } from '../services/swapService';
 
 type LaunchStep =
   | { type: 'idle' }
@@ -27,10 +28,48 @@ function LaunchTokenPage() {
     return () => { mountedRef.current = false; };
   }, []);
 
+  // [SECURITY] F-5: Save launch state to localStorage to allow recovery after error.
+  // Cleared on success or explicit user action.
+  useEffect(() => {
+    if (step.type === 'idle' || step.type === 'done' || step.type === 'error') {
+      try { localStorage.removeItem('launchTokenState'); } catch { /* localStorage unavailable */ }
+    } else {
+      try {
+        const snapshot = { symbol, name, decimals, supply, step: step.type };
+        localStorage.setItem('launchTokenState', JSON.stringify(snapshot));
+      } catch { /* localStorage unavailable */ }
+    }
+  }, [step.type, symbol, name, decimals, supply]);
+
+  // [SECURITY] F-5: On mount, check for an interrupted launch and offer to resume.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('launchTokenState');
+      if (saved) {
+        const parsed = JSON.parse(saved) as { symbol?: string; name?: string; decimals?: number; supply?: string; step?: string };
+        if (parsed.step && parsed.step !== 'idle' && parsed.step !== 'done') {
+          setStep({ type: 'error', message: `Previous launch interrupted at step: ${parsed.step}. Please review and try again.` });
+        }
+        try { localStorage.removeItem('launchTokenState'); } catch { /* noop */ }
+      }
+    } catch { /* noop */ }
+  }, []);
+
   const rawSupply = (() => {
-    const s = parseInt(supply, 10);
-    if (isNaN(s) || s <= 0) return null;
-    return BigInt(s) * BigInt(10) ** BigInt(decimals);
+    // [SECURITY] FM-5: Use BigInt for parsing to avoid silent truncation to 2^31-1
+    // from parseInt. Validate that the value fits safely.
+    const trimmed = supply.trim();
+    if (!trimmed || !/^\d+$/.test(trimmed)) return null;
+    try {
+      const s = BigInt(trimmed);
+      if (s <= 0n) return null;
+      // Cap supply at 2^63 to avoid BigInt overflow in the AML compiler
+      const MAX = BigInt(Number.MAX_SAFE_INTEGER);
+      if (s > MAX) return null;
+      return s * BigInt(10) ** BigInt(decimals);
+    } catch {
+      return null;
+    }
   })();
 
   const errors: string[] = [];
@@ -41,7 +80,7 @@ function LaunchTokenPage() {
   else if (symbol.trim().length > 12) errors.push('Symbol must be 12 characters or less');
   else if (!/^[a-zA-Z0-9 _-]+$/.test(symbol.trim())) errors.push('Symbol must contain only letters, numbers, spaces, hyphens, or underscores');
   if (isNaN(decimals) || decimals < 0 || decimals > 18) errors.push('Decimals must be 0-18');
-  if (!supply.trim() || isNaN(parseInt(supply, 10)) || parseInt(supply, 10) <= 0) errors.push('Supply must be a positive number');
+  if (!supply.trim() || !/^\d+$/.test(supply.trim()) || rawSupply === null) errors.push('Supply must be a positive integer');
   if (rawSupply !== null && rawSupply > BigInt(Number.MAX_SAFE_INTEGER)) {
     errors.push('Raw supply too large — reduce supply or decimals');
   }
@@ -52,6 +91,15 @@ function LaunchTokenPage() {
     if (!canLaunch) return;
     if (launchingRef.current) return;
     launchingRef.current = true;
+    // [SECURITY] F-4: Snapshot the wallet address at the start of the flow.
+    // If the wallet disconnects/changes account mid-flow, the deploy contract
+    // address will be derived from the wrong identity.
+    const walletSnapshot = walletService.address;
+    if (!walletSnapshot) {
+      setStep({ type: 'error', message: 'Wallet not connected' });
+      launchingRef.current = false;
+      return;
+    }
     try {
       setStep({ type: 'compiling' });
 
@@ -63,10 +111,17 @@ function LaunchTokenPage() {
 
       setStep({ type: 'computing_address' });
 
-      const balance = await rpc.call<{ balance: string; nonce: number }>('octra_balance', [walletService.address]);
+      // [SECURITY] F-4: Re-verify wallet hasn't changed and use the snapshot
+      if (walletService.address !== walletSnapshot) {
+        throw new Error('Wallet changed during launch — aborting');
+      }
+      const balance = await rpc.call<{ balance: string; nonce: number }>('octra_balance', [walletSnapshot]);
+      if (walletService.address !== walletSnapshot) {
+        throw new Error('Wallet changed during launch — aborting');
+      }
       const deployNonce = balance.nonce + 1;
 
-      const addrResult = await rpc.computeContractAddress(bytecode, walletService.address, deployNonce);
+      const addrResult = await rpc.computeContractAddress(bytecode, walletSnapshot, deployNonce);
       const tokenAddress = addrResult.address;
 
       setStep({ type: 'deploying' });
@@ -164,7 +219,7 @@ function LaunchTokenPage() {
                 <input
                   type="number"
                   value={decimals}
-                  onChange={e => setDecimals(parseInt(e.target.value, 10) || 0)}
+                  onChange={e => setDecimals(Math.max(0, Math.min(18, parseInt(e.target.value, 10) || 0)))}
                   min={0}
                   max={18}
                   className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[var(--app-blue)] transition-colors"
@@ -175,7 +230,7 @@ function LaunchTokenPage() {
                 <input
                   type="text"
                   value={supply}
-                  onChange={e => setSupply(e.target.value.replace(/[^0-9]/g, ''))}
+                  onChange={e => setSupply(sanitizeNumericInput(e.target.value))}
                   placeholder="1000000"
                   className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[var(--app-blue)] transition-colors"
                 />

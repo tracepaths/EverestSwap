@@ -47,8 +47,12 @@ export function formatUnits(raw: string, decimals: number): string {
 
 export function parseUnits(human: string, decimals: number): string {
   if (!human || human === '0') return '0';
+  // [SECURITY] FM-5: Reject scientific notation and non-numeric characters
+  if (!/^\d+(\.\d+)?$/.test(human)) return '0';
   try {
+    // [SECURITY] FM-6: Validate that fractional part doesn't exceed token decimals
     const [intPart, fracPart = ''] = human.split('.');
+    if (fracPart.length > decimals) return '0';
     const paddedFrac = fracPart.padEnd(decimals, '0').slice(0, decimals);
     const cleaned = intPart.replace(/^0+/, '');
     const combined = cleaned + paddedFrac;
@@ -62,4 +66,19 @@ export function parseUnits(human: string, decimals: number): string {
 export function truncateAddress(address: string, start = 6, end = 4): string {
   if (address.length <= start + end) return address;
   return `${address.slice(0, start)}...${address.slice(-end)}`;
+}
+
+// [SECURITY] F-1: Sanitize numeric input — allow only digits and at most one dot.
+// Reject scientific notation, multiple dots, leading operators, whitespace, and
+// Unicode digits. Returns the cleaned string, or empty if input is empty.
+export function sanitizeNumericInput(input: string): string {
+  if (!input) return '';
+  // Strip everything except digits and '.'
+  let cleaned = input.replace(/[^0-9.]/g, '');
+  // Keep only the first '.'
+  const firstDot = cleaned.indexOf('.');
+  if (firstDot !== -1) {
+    cleaned = cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, '');
+  }
+  return cleaned;
 }

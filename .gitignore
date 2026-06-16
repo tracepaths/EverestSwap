@@ -2,3 +2,7 @@ node_modules/
 dist/
 .env
 *.log
+# Local tooling config (contains API key)
+opencode.json
+# TUI dump file
+35.save

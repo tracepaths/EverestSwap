@@ -97,7 +97,17 @@ function DashboardPage() {
 
   return (
     <div className="max-w-5xl mx-auto">
-      <h2 className="text-xl font-semibold mb-6">Dashboard</h2>
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-xl font-semibold">Dashboard</h2>
+        <button
+          onClick={fetchStats}
+          disabled={statsLoading}
+          // [SECURITY] FM-13: Manual refresh button for users who want immediate update
+          className="text-xs px-3 py-1.5 rounded-lg bg-[var(--app-panel-soft)] hover:bg-[var(--app-hover)] text-[var(--app-muted)] hover:text-[var(--app-text)] transition-colors disabled:opacity-50"
+        >
+          {statsLoading ? 'Refreshing...' : 'Refresh'}
+        </button>
+      </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <StatCard title="OCT Balance" value={isConnected ? displayOCT : '-'} loading={statsLoading} />

@@ -11,6 +11,8 @@ export function PoolChart({ data, height = 250 }: PoolChartProps) {
   const chartApiRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ReturnType<ReturnType<typeof createChart>['addSeries']> | null>(null);
   const lastLenRef = useRef(0);
+  // [SECURITY] FM-4: Track the time of the last data point to detect out-of-order replacements
+  const lastTimeRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!chartRef.current) return;
@@ -50,7 +52,13 @@ export function PoolChart({ data, height = 250 }: PoolChartProps) {
   useEffect(() => {
     if (!seriesRef.current || data.length === 0) return;
     const series = seriesRef.current;
-    if (lastLenRef.current === 0) {
+    // [SECURITY] FM-4: Reset chart if data is a full replacement (first time, length
+    // dropped, or first timestamp went backward — out-of-order replacement)
+    const firstTime = data[0]?.time as number | undefined;
+    const isReplacement = lastLenRef.current === 0
+      || data.length < lastLenRef.current
+      || (firstTime != null && lastTimeRef.current != null && firstTime < lastTimeRef.current);
+    if (isReplacement) {
       series.setData(data);
     } else {
       for (let i = lastLenRef.current; i < data.length; i++) {
@@ -58,6 +66,7 @@ export function PoolChart({ data, height = 250 }: PoolChartProps) {
       }
     }
     lastLenRef.current = data.length;
+    if (firstTime != null) lastTimeRef.current = firstTime;
   }, [data]);
 
   return <div ref={chartRef} style={{ height }} />;

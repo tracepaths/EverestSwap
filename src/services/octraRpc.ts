@@ -1,6 +1,22 @@
 import { RPC_URL as CONFIG_RPC_URL } from '../config';
 import { getCachedMeta, setCachedMeta, getCachedTrustedTokens, setCachedTrustedTokens, getCachedIsTrusted, setCachedIsTrusted, clearTokenCache, setTokenCacheNetwork } from './tokenCache';
 
+// [SECURITY] F-3: Exported helper to validate an Octra address. Applies NFKC normalization
+// and strips zero-width / RTL characters to prevent homoglyph attacks.
+export function isValidOctraAddress(address: string): boolean {
+  if (!address || typeof address !== 'string') return false;
+  const normalized = address.normalize('NFKC').replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, '');
+  return /^oct[1-9A-HJ-NP-Za-km-z]{43,48}$/.test(normalized);
+}
+
+// [SECURITY] F-7: Sanitize RPC error messages to prevent injection via compromised responses
+function sanitizeErrorMessage(msg: string): string {
+  return String(msg)
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, '')
+    .slice(0, 200);
+}
+
 export interface LpPosition {
   id: number;
   owner: string;
@@ -31,8 +47,18 @@ export class OctraRpc {
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
-      const json = await res.json();
-      if (json.error) throw new Error(json.error.message || 'RPC error');
+      // [SECURITY] F-7: Sanitize RPC error messages before they reach the UI to prevent
+      // injection from compromised RPC responses. Cap length, strip control chars.
+      let json: { result?: unknown; error?: { message?: string } };
+      try {
+        json = await res.json();
+      } catch {
+        throw new Error('RPC returned invalid JSON');
+      }
+      if (json.error) {
+        const safeMsg = sanitizeErrorMessage(json.error.message || 'RPC error');
+        throw new Error(safeMsg);
+      }
       if (json.result === undefined || json.result === null) {
         throw new Error('RPC returned null result');
       }
@@ -100,7 +126,9 @@ export class OctraRpc {
         return { reserveA: parts[0], reserveB: parts[1] };
       }
     }
-    return { reserveA: '0', reserveB: '0' };
+    // [SECURITY] FM-2: Throw on parse failure instead of silently returning '0' which
+    // could trick the user into adding liquidity to an already-existing pool
+    throw new Error('Failed to parse reserves for pool ' + poolAddress);
   }
 
   async getPrice(poolAddress: string): Promise<string> {
@@ -125,13 +153,22 @@ export class OctraRpc {
 
   async getPositionCount(poolAddress: string, userAddress: string): Promise<number> {
     const raw: unknown = await this.contractView(poolAddress, 'get_position_count', [userAddress]);
+    // [SECURITY] F-3: Throw on parse failure instead of silently returning 0
     if (raw && typeof raw === 'object') {
       const obj = raw as Record<string, unknown>;
-      if (obj.result != null) return Number(obj.result);
+      if (obj.result != null) {
+        const n = Number(obj.result);
+        if (Number.isFinite(n)) return n;
+        throw new Error('Invalid position count from RPC');
+      }
     }
     if (typeof raw === 'number') return raw;
-    if (typeof raw === 'string') return Number(raw);
-    return 0;
+    if (typeof raw === 'string') {
+      const n = Number(raw);
+      if (Number.isFinite(n)) return n;
+      throw new Error('Invalid position count from RPC');
+    }
+    throw new Error('Position count not available from pool ' + poolAddress);
   }
 
   async getUnlockedLiquidity(poolAddress: string, userAddress: string): Promise<string> {
@@ -199,7 +236,7 @@ export class OctraRpc {
       while (i < s.length) {
         const hashIdx = s.indexOf('#', i);
         if (hashIdx === -1) break;
-        const len = parseInt(s.substring(i, hashIdx));
+        const len = parseInt(s.substring(i, hashIdx), 10);
         const value = s.substring(hashIdx + 1, hashIdx + 1 + len);
         parts.push(value);
         i = hashIdx + 1 + len;
@@ -211,11 +248,16 @@ export class OctraRpc {
     return { id: positionId, owner: '', liquidity: '0', unlockTime: 0 };
   }
 
+  // [SECURITY] F-1: Cap loops to prevent DoS via huge nextId/count from malicious pool
+  // Max 1000 positions iterated per call
   async getPositions(poolAddress: string, userAddress: string): Promise<LpPosition[]> {
     const count = await this.getPositionCount(poolAddress, userAddress);
     const nextId = await this.getNextPositionId(poolAddress);
     const positions: LpPosition[] = [];
-    for (let id = 1; id < nextId && positions.length < count; id++) {
+    // [SECURITY] FM-8: Skip position 0 (contract doesn't have position 0)
+    // Cap iterations to prevent malicious pool from causing thousands of RPC calls
+    const maxIterations = Math.min(Math.max(nextId, 1), 1000);
+    for (let id = 1; id < maxIterations && positions.length < count; id++) {
       const position = await this.getPosition(poolAddress, id);
       if (position.owner === userAddress && position.liquidity !== '0') {
         positions.push(position);
@@ -226,13 +268,22 @@ export class OctraRpc {
 
   async getNextPositionId(poolAddress: string): Promise<number> {
     const raw: unknown = await this.contractView(poolAddress, 'get_next_position_id', []);
+    // [SECURITY] F-3: Throw on parse failure instead of silently returning 1
     if (raw && typeof raw === 'object') {
       const obj = raw as Record<string, unknown>;
-      if (obj.result != null) return Number(obj.result);
+      if (obj.result != null) {
+        const n = Number(obj.result);
+        if (Number.isFinite(n)) return n;
+        throw new Error('Invalid next position ID from RPC');
+      }
     }
     if (typeof raw === 'number') return raw;
-    if (typeof raw === 'string') return Number(raw);
-    return 1;
+    if (typeof raw === 'string') {
+      const n = Number(raw);
+      if (Number.isFinite(n)) return n;
+      throw new Error('Invalid next position ID from RPC');
+    }
+    throw new Error('Next position ID not available from pool ' + poolAddress);
   }
 
   async getTotalLpSupply(poolAddress: string): Promise<string> {
@@ -263,7 +314,9 @@ export class OctraRpc {
         const poolLen = parseInt(storage.pools_len || '0', 10);
         if (poolLen > 0) {
           const addrs: string[] = [];
-          for (let i = 0; i < poolLen; i++) {
+          // [SECURITY] F-2: Cap loop at 1000 to prevent DoS via huge pools_len
+          const cappedPoolLen = Math.min(poolLen, 1000);
+          for (let i = 0; i < cappedPoolLen; i++) {
             const addr = storage[`pools:${i}`];
             if (addr && this.isValidOctraAddress(addr)) addrs.push(addr);
           }
@@ -271,7 +324,9 @@ export class OctraRpc {
         }
         const poolKeys = Object.keys(storage).filter(k => k.startsWith('pools:') && k !== 'pools_len');
         if (poolKeys.length > 0) {
+          // [SECURITY] F-2: Cap key list to 1000 to prevent DoS
           return poolKeys
+            .slice(0, 1000)
             .sort((a, b) => parseInt(a.split(':')[1], 10) - parseInt(b.split(':')[1], 10))
             .map(k => storage[k])
             .filter((addr): addr is string => !!addr && this.isValidOctraAddress(addr));
@@ -293,8 +348,8 @@ export class OctraRpc {
     return this.isValidOctraAddress(reversed) ? reversed : '';
   }
 
-  private isValidOctraAddress(address: string): boolean {
-    return /^oct[1-9A-HJ-NP-Za-km-z]{43,48}$/.test(address);
+  isValidOctraAddress(address: string): boolean {
+    return isValidOctraAddress(address);
   }
 
   private async callFactoryPoolAddress(factoryAddress: string, tokenA: string, tokenB: string): Promise<string> {
@@ -418,6 +473,10 @@ export class OctraRpc {
   }
 
   async computeContractAddress(bytecode: string, deployer: string, nonce: number): Promise<{ address: string }> {
+    // [SECURITY] L-1: Validate bytecode is non-empty
+    if (!bytecode || typeof bytecode !== 'string' || bytecode.length === 0) {
+      throw new Error('computeContractAddress: bytecode is required');
+    }
     return this.call('octra_computeContractAddress', [bytecode, deployer, nonce]);
   }
 
@@ -438,7 +497,9 @@ export class OctraRpc {
           const len = parseInt(storage.trusted_tokens_len || '0', 10);
           if (len > 0) {
             const addrs: string[] = [];
-            for (let i = 0; i < len; i++) {
+            // [SECURITY] F-3: Cap loop at 1000 to prevent DoS via huge trusted_tokens_len
+            const cappedLen = Math.min(len, 1000);
+            for (let i = 0; i < cappedLen; i++) {
               const addr = storage[`trusted_list:${i}`];
               if (addr) addrs.push(addr);
             }
@@ -448,6 +509,7 @@ export class OctraRpc {
             const keys = Object.keys(storage).filter(k => k.startsWith('trusted_list:') && k !== 'trusted_tokens_len');
             if (keys.length > 0) {
               result = keys
+                .slice(0, 1000)
                 .sort((a, b) => parseInt(a.split(':')[1], 10) - parseInt(b.split(':')[1], 10))
                 .map(k => storage[k]);
             }
@@ -483,6 +545,25 @@ export class OctraRpc {
     }
   }
 
+  // [SECURITY] Safely extract string result from RPC response
+  private extractString(raw: unknown): string {
+    if (raw && typeof raw === 'object') {
+      const obj = raw as Record<string, unknown>;
+      const val = obj.result;
+      if (val != null && typeof val !== 'object') return String(val).trim();
+    }
+    if (raw != null && typeof raw !== 'object') return String(raw).trim();
+    return '';
+  }
+
+  // [SECURITY] Safely extract number result from RPC response
+  private extractNumber(raw: unknown, defaultVal: number): number {
+    const s = this.extractString(raw);
+    if (!s) return defaultVal;
+    const n = parseInt(s, 10);
+    return isNaN(n) ? defaultVal : n;
+  }
+
   async getTokenMeta(tokenAddress: string): Promise<{ symbol: string; name: string; decimals: number }> {
     if (!tokenAddress) return { symbol: '???', name: 'Unknown', decimals: 6 };
     const cached = getCachedMeta(tokenAddress);
@@ -490,13 +571,18 @@ export class OctraRpc {
     const defaultMeta = { symbol: tokenAddress.slice(0, 6), name: 'Unknown', decimals: 6 };
     try {
       const symRaw: unknown = await this.contractView(tokenAddress, 'get_symbol', []);
-      const symbol = (symRaw && typeof symRaw === 'object' ? String((symRaw as Record<string, unknown>).result ?? '') : String(symRaw ?? ''));
+      let symbol = this.extractString(symRaw);
       if (!symbol) return defaultMeta;
+      // [SECURITY] Clamp symbol length to prevent layout breakage
+      if (symbol.length > 12) symbol = symbol.slice(0, 12);
       const nameRaw: unknown = await this.contractView(tokenAddress, 'get_name', []);
-      const name = (nameRaw && typeof nameRaw === 'object' ? String((nameRaw as Record<string, unknown>).result ?? '') : String(nameRaw ?? ''));
+      let name = this.extractString(nameRaw);
+      if (name.length > 40) name = name.slice(0, 40);
       const decRaw: unknown = await this.contractView(tokenAddress, 'decimals', []);
-      const decimals = parseInt(decRaw && typeof decRaw === 'object' ? String((decRaw as Record<string, unknown>).result ?? '6') : String(decRaw ?? '6'));
-      const meta = { symbol: symbol.trim(), name: name.trim(), decimals: isNaN(decimals) ? 6 : decimals };
+      let decimals = this.extractNumber(decRaw, 6);
+      // [SECURITY] Clamp decimals to 0-18 range
+      decimals = Math.max(0, Math.min(18, decimals));
+      const meta = { symbol, name, decimals };
       setCachedMeta(tokenAddress, meta);
       return meta;
     } catch {
@@ -504,8 +590,12 @@ export class OctraRpc {
     }
   }
 
-  async waitForReceipt(txHash: string, maxRetries = 30): Promise<{ status: string; result: unknown; success: boolean }> {
+  // [SECURITY] FM-3: Accept an optional AbortSignal to cancel polling on unmount
+  async waitForReceipt(txHash: string, maxRetries = 30, signal?: AbortSignal): Promise<{ status: string; result: unknown; success: boolean }> {
     for (let i = 0; i < maxRetries; i++) {
+      if (signal?.aborted) {
+        throw new Error('Receipt polling aborted');
+      }
       try {
         const receipt = await this.call<{ status: string; result: unknown; error?: string; success?: boolean }>('contract_receipt', [txHash]);
         if (receipt && receipt.status !== 'pending') {
@@ -521,7 +611,15 @@ export class OctraRpc {
           throw e;
         }
       }
-      await new Promise(r => setTimeout(r, 2000));
+      // Sleep with abort awareness
+      await new Promise<void>((resolve, reject) => {
+        const t = setTimeout(resolve, 2000);
+        if (signal) {
+          const onAbort = () => { clearTimeout(t); reject(new Error('Receipt polling aborted')); };
+          if (signal.aborted) onAbort();
+          else signal.addEventListener('abort', onAbort, { once: true });
+        }
+      });
     }
     throw new Error('Transaction timeout - not confirmed after 60s');
   }
