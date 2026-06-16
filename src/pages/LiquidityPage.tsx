@@ -202,15 +202,17 @@ function LiquidityPage() {
     : 0;
 
   const selectedPosition = positions.find(p => p.id === selectedPositionId);
-  const selectedPositionLp = selectedPosition?.liquidity || lpBalance;
+  // [V7-FIX] Don't fallback to lpBalance (total of all positions) — that gives
+  // wrong "to receive" estimates. Show "—" when position is loading.
+  const selectedPositionLp: string | null = selectedPosition ? selectedPosition.liquidity : null;
 
   const removeEstimates = {
-    a: totalLP !== '0' && selectedPositionLp !== '0'
+    a: totalLP !== '0' && selectedPositionLp !== null && selectedPositionLp !== '0'
       ? formatUnits(((BigInt(reserveA) * BigInt(selectedPositionLp)) / BigInt(totalLP)).toString(), validTokenA.decimals)
-      : '0',
-    b: totalLP !== '0' && selectedPositionLp !== '0'
+      : '—',
+    b: totalLP !== '0' && selectedPositionLp !== null && selectedPositionLp !== '0'
       ? formatUnits(((BigInt(reserveB) * BigInt(selectedPositionLp)) / BigInt(totalLP)).toString(), validTokenB.decimals)
-      : '0',
+      : '—',
   };
 
   const handleAddLiquidity = async () => {
@@ -273,12 +275,21 @@ function LiquidityPage() {
       let minLp = '1001';
 
       // [SECURITY] F-8: Pre-check user balances before submission
-      if (tokenABalance !== '0' && tokenABalance !== '' && BigInt(rawA) > BigInt(tokenABalance)) {
-        throw new Error(`Insufficient ${validTokenA.symbol} balance for add liquidity`);
-      }
-      if (tokenBBalance !== '0' && tokenBBalance !== '' && BigInt(rawB) > BigInt(tokenBBalance)) {
-        throw new Error(`Insufficient ${validTokenB.symbol} balance for add liquidity`);
-      }
+      // [V7-FIX] Subtract gas buffer (0.01 OCT equivalent = 10000 base units) to
+      // account for tx fees that may deduct balance between this check and
+      // the on-chain pull. Without this, with minimal balance the pull
+      // would revert on the contract side.
+      const GAS_BUFFER = 10000n;
+      const checkBalance = (raw: bigint, bal: string, symbol: string, isNative: boolean) => {
+        if (bal === '0' || bal === '') return;
+        const balBN = BigInt(bal);
+        const safeBal = isNative && balBN > GAS_BUFFER ? balBN - GAS_BUFFER : balBN;
+        if (raw > safeBal) {
+          throw new Error(`Insufficient ${symbol} balance (accounting for gas)`);
+        }
+      };
+      checkBalance(BigInt(rawA), tokenABalance, validTokenA.symbol, validTokenA.address === '');
+      checkBalance(BigInt(rawB), tokenBBalance, validTokenB.symbol, validTokenB.address === '');
 
       if (totalLP !== '0' && reserveA !== '0' && reserveB !== '0') {
         const lpFromA = (BigInt(rawA) * BigInt(totalLP)) / BigInt(reserveA);

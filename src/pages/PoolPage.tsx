@@ -304,7 +304,18 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
       }
     } catch (e) {
       if (mountedRef.current) {
-        setStep({ type: 'error', message: e instanceof Error ? e.message : 'Unknown error' });
+        const errMsg = e instanceof Error ? e.message : 'Unknown error';
+        // [V7-FIX] Check if failure is due to duplicate pool (race condition)
+        if (errMsg.includes('pool already exists') && mountedRef.current) {
+          try {
+            const existing = await rpc.getPoolAddress(CONTRACTS.factory, tokenA, tokenB);
+            safeSetStep({ type: 'error', message: `Pool already exists at ${existing}. Try a different pair.` });
+          } catch {
+            safeSetStep({ type: 'error', message: errMsg });
+          }
+        } else {
+          safeSetStep({ type: 'error', message: errMsg });
+        }
       }
     } finally {
       // [SECURITY] F-2: Reset ref guard

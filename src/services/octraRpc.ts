@@ -249,15 +249,16 @@ export class OctraRpc {
   }
 
   // [SECURITY] F-1: Cap loops to prevent DoS via huge nextId/count from malicious pool
-  // Max 1000 positions iterated per call
+  // [V7-FIX] Use user's actual count (not nextId) to bound loop. nextId can be
+  // much larger than user's count if many other users have positions.
+  // Cap at 5000 (reasonable upper bound for active user positions).
   async getPositions(poolAddress: string, userAddress: string): Promise<LpPosition[]> {
     const count = await this.getPositionCount(poolAddress, userAddress);
-    const nextId = await this.getNextPositionId(poolAddress);
+    // Bound loop by user's count * safety factor (allow some deleted positions)
+    const maxIterations = Math.min(Math.max(count * 2, 1), 5000);
     const positions: LpPosition[] = [];
     // [SECURITY] FM-8: Skip position 0 (contract doesn't have position 0)
-    // Cap iterations to prevent malicious pool from causing thousands of RPC calls
-    const maxIterations = Math.min(Math.max(nextId, 1), 1000);
-    for (let id = 1; id < maxIterations && positions.length < count; id++) {
+    for (let id = 1; id <= maxIterations && positions.length < count; id++) {
       const position = await this.getPosition(poolAddress, id);
       if (position.owner === userAddress && position.liquidity !== '0') {
         positions.push(position);
@@ -518,12 +519,18 @@ export class OctraRpc {
       }
     }
 
-    // Filter untuk hanya menyertakan token tepercaya yang berstatus aktif saat ini
+    // [V7-FIX] Use bounded concurrency to avoid N sequential RPC calls (UI freeze
+    // with 20+ tokens). Process in batches of 5.
     const filtered: string[] = [];
-    for (const t of result) {
-      if (t) {
-        const ok = await this.isTrustedToken(factoryAddress, t);
-        if (ok) filtered.push(t);
+    const CONCURRENCY = 5;
+    const tokens = result.filter((t): t is string => !!t);
+    for (let i = 0; i < tokens.length; i += CONCURRENCY) {
+      const batch = tokens.slice(i, i + CONCURRENCY);
+      const checks = await Promise.all(
+        batch.map(async t => ({ token: t, ok: await this.isTrustedToken(factoryAddress, t) }))
+      );
+      for (const { token, ok } of checks) {
+        if (ok) filtered.push(token);
       }
     }
 
