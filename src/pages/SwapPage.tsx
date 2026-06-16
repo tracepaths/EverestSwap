@@ -20,7 +20,7 @@ function getTokenLabel(address: string): string {
 }
 
 function SwapPage() {
-  const { rpc, isConnected, walletAddress, addToast, updateToast } = useApp();
+  const { rpc, isConnected, walletAddress, addToast, updateToast, connect } = useApp();
   const [fromAmount, setFromAmount] = useState('');
   const [fromToken, setFromToken] = useState(WOCT_TOKEN);
   const [toToken, setToToken] = useState(OES_TOKEN);
@@ -794,8 +794,13 @@ function SwapPage() {
           </div>
 
           <button
-            onClick={() => setShowConfirm(true)}
-            disabled={!isAmountValid || !isConnected || (mode === 'swap' && !canSubmitPair)}
+            onClick={() => {
+              // [V7-FIX] If not connected, actually call connect() instead of
+              // opening confirm modal (which would silently do nothing)
+              if (!isConnected) { connect(); return; }
+              setShowConfirm(true);
+            }}
+            disabled={!isConnected ? false : (!isAmountValid || (mode === 'swap' && !canSubmitPair))}
             className="w-full py-3 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-xl font-medium transition-colors"
           >
             {!isConnected ? 'Connect Wallet' : mode === 'swap' && !canSubmitPair ? pairError || 'Enter Amount' : !isAmountValid ? 'Enter Amount' : actionLabel}

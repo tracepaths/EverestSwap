@@ -46,10 +46,11 @@ type CreateStep =
   | { type: 'done'; poolAddress: string }
   | { type: 'error'; message: string };
 
-function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
+function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect }: {
   rpc: OctraRpc;
   isConnected: boolean;
   onPoolCreated: () => void;
+  connect: () => void | Promise<void>;
 }) {
   const navigate = useNavigate();
   const [tokenA, setTokenA] = useState('');
@@ -528,9 +529,14 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
           )}
 
           <button
-            onClick={handleCreatePool}
+            onClick={() => {
+              // [V7-FIX] If not connected, actually call connect() instead of
+              // silently triggering handleCreatePool (which would fail)
+              if (!isConnected) { connect(); return; }
+              handleCreatePool();
+            }}
             // [V7-FIX] Disable when pair already exists — would revert at register_pool
-            disabled={!isConnected || !isValidA || !isValidB || !hasValidPair || creating || pairAlreadyExists}
+            disabled={!isConnected ? false : (!isValidA || !isValidB || !hasValidPair || creating || pairAlreadyExists)}
             className="w-full py-3 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-xl font-medium transition-colors"
             title={pairAlreadyExists ? 'This pair already has a pool — create would fail' : undefined}
           >
@@ -569,7 +575,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
 }
 
 function PoolPage() {
-  const { rpc, isConnected } = useApp();
+  const { rpc, isConnected, connect } = useApp();
   const navigate = useNavigate();
   const [pools, setPools] = useState<PoolDisplay[]>([]);
   const [loading, setLoading] = useState(true);
@@ -661,6 +667,7 @@ function PoolPage() {
           rpc={rpc}
           isConnected={isConnected}
           onPoolCreated={loadPools}
+          connect={connect}
         />
       )}
 

@@ -18,7 +18,7 @@ const UNKNOWN_TOKEN = { address: '', symbol: '???', name: 'Unknown', decimals: 6
 type Tab = 'add' | 'remove';
 
 function LiquidityPage() {
-  const { rpc, isConnected, walletAddress, addToast, updateToast } = useApp();
+  const { rpc, isConnected, walletAddress, addToast, updateToast, connect } = useApp();
   const [searchParams] = useSearchParams();
   const [tab, setTab] = useState<Tab>('add');
   const [pools, setPools] = useState<DynamicPool[]>([]);
@@ -659,8 +659,13 @@ function LiquidityPage() {
             </div>
 
             <button
-              onClick={handleAddLiquidity}
-              disabled={!amountA || !/^\d+(\.\d+)?$/.test(amountA.trim()) || Number(amountA) <= 0 || (isEmptyPool && (!amountB || !/^\d+(\.\d+)?$/.test(amountB.trim()) || Number(amountB) <= 0)) || !isConnected || loading}
+              onClick={() => {
+                // [V7-FIX] If not connected, actually call connect() instead of
+                // silently triggering handleAddLiquidity (which would fail)
+                if (!isConnected) { connect(); return; }
+                handleAddLiquidity();
+              }}
+              disabled={!isConnected ? false : (!amountA || !/^\d+(\.\d+)?$/.test(amountA.trim()) || Number(amountA) <= 0 || (isEmptyPool && (!amountB || !/^\d+(\.\d+)?$/.test(amountB.trim()) || Number(amountB) <= 0)) || loading)}
               className="w-full py-3 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-xl font-medium transition-colors"
             >
               {!isConnected ? 'Connect Wallet' : loading ? 'Processing...' : isEmptyPool ? 'Add Initial Liquidity' : 'Add Liquidity'}

@@ -13,7 +13,7 @@ type LaunchStep =
   | { type: 'error'; message: string };
 
 function LaunchTokenPage() {
-  const { rpc, isConnected, network } = useApp();
+  const { rpc, isConnected, network, connect } = useApp();
   const navigate = useNavigate();
   const [name, setName] = useState('');
   const [symbol, setSymbol] = useState('');
@@ -290,8 +290,13 @@ function LaunchTokenPage() {
           )}
 
           <button
-            onClick={handleLaunch}
-            disabled={!canLaunch}
+            onClick={() => {
+              // [V7-FIX] If not connected, actually call connect() instead of
+              // silently triggering handleLaunch (which would fail)
+              if (!isConnected) { connect(); return; }
+              handleLaunch();
+            }}
+            disabled={!isConnected ? false : !canLaunch}
             className="w-full py-3 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:from-[var(--app-muted-2)] disabled:to-[var(--app-muted-2)] disabled:text-[var(--app-muted-2)] rounded-xl font-medium transition-all"
           >
             {!isConnected ? 'Connect Wallet' : 'Launch Token'}
