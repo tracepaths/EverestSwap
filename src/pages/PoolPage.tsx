@@ -151,9 +151,15 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
     if (createSubmittingRef.current) return;
     createSubmittingRef.current = true;
     setCreating(true);
+    // [SECURITY] FM-5: Helper to safely set step only if component is still mounted
+    const safeSetStep = (s: typeof step) => {
+      if (mountedRef.current) setStep(s);
+    };
     const factoryAddr = CONTRACTS.factory;
     if (!factoryAddr) {
-      setStep({ type: 'error', message: 'Factory contract not configured' });
+      safeSetStep({ type: 'error', message: 'Factory contract not configured' });
+      // [V7-FIX] Reset ref guard on early return to prevent permanent button death
+      createSubmittingRef.current = false;
       setCreating(false);
       return;
     }
@@ -162,14 +168,12 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
     // address and subsequent transactions will use the wrong identity.
     const walletSnapshot = walletService.address;
     if (!walletSnapshot) {
-      setStep({ type: 'error', message: 'Wallet not connected' });
+      safeSetStep({ type: 'error', message: 'Wallet not connected' });
+      // [V7-FIX] Reset ref guard on early return
+      createSubmittingRef.current = false;
       setCreating(false);
       return;
     }
-    // [SECURITY] FM-5: Helper to safely set step only if component is still mounted
-    const safeSetStep = (s: typeof step) => {
-      if (mountedRef.current) setStep(s);
-    };
 
     // [V7-FIX] Pre-check balance before starting — pool creation costs
     // ~1+ OCT for deploy + 5 init txs. Fail fast with clear message.
@@ -186,6 +190,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
     } catch (e) {
       if (e instanceof Error && e.message.startsWith('Insufficient')) {
         safeSetStep({ type: 'error', message: e.message });
+        // [V7-FIX] Reset ref guard on early return
         createSubmittingRef.current = false;
         setCreating(false);
         return;

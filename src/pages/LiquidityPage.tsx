@@ -218,20 +218,23 @@ function LiquidityPage() {
     // [SECURITY] F-2: Synchronous ref guard prevents double-click
     if (addSubmittingRef.current) return;
     addSubmittingRef.current = true;
-    // [V7-SECURITY-FIX] Validate amounts before submission
-    const trimmedA = amountA.trim();
-    const trimmedB = amountB.trim();
-    if (!/^\d+(\.\d+)?$/.test(trimmedA) || Number(trimmedA) <= 0) {
-      addToast('error', 'Enter a valid amount for ' + validTokenA.symbol);
-      return;
-    }
-    if (isEmptyPool && (!/^\d+(\.\d+)?$/.test(trimmedB) || Number(trimmedB) <= 0)) {
-      addToast('error', 'Enter a valid amount for ' + validTokenB.symbol);
-      return;
-    }
-    setLoading(true);
-    const toastId = addToast('pending', 'Add Liquidity in progress...');
+    // [V7-FIX] Declare outside try so catch can reference
+    let toastId = '';
     try {
+      // [V7-SECURITY-FIX] Validate amounts before submission
+      const trimmedA = amountA.trim();
+      const trimmedB = amountB.trim();
+      if (!/^\d+(\.\d+)?$/.test(trimmedA) || Number(trimmedA) <= 0) {
+        addToast('error', 'Enter a valid amount for ' + validTokenA.symbol);
+        return;
+      }
+      if (isEmptyPool && (!/^\d+(\.\d+)?$/.test(trimmedB) || Number(trimmedB) <= 0)) {
+        addToast('error', 'Enter a valid amount for ' + validTokenB.symbol);
+        return;
+      }
+      setLoading(true);
+      toastId = addToast('pending', 'Add Liquidity in progress...');
+
       // [SECURITY] F-2: Use trimmed values for parseUnits to avoid silent zero on
       // whitespace inputs (e.g., "  1.5  " would pass validation but parseUnits
       // would return '0' because the regex doesn't match whitespace)
@@ -318,7 +321,8 @@ function LiquidityPage() {
       loadPoolInfo();
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : 'An error occurred';
-      updateToast(toastId, 'error', `Add Liquidity failed: ${errMsg}`);
+      if (toastId) updateToast(toastId, 'error', `Add Liquidity failed: ${errMsg}`);
+      else addToast('error', `Add Liquidity failed: ${errMsg}`);
     } finally {
       // [SECURITY] F-2: Reset ref guard
       addSubmittingRef.current = false;
@@ -331,28 +335,29 @@ function LiquidityPage() {
     // [SECURITY] F-2: Synchronous ref guard
     if (removeSubmittingRef.current) return;
     removeSubmittingRef.current = true;
-    const selectedPosition = positions.find(p => p.id === selectedPositionId);
-    // [SECURITY] F-9: Filter out zero-liquidity positions
-    if (!selectedPosition || selectedPosition.liquidity === '0') {
-      removeSubmittingRef.current = false;
-      return;
-    }
-    if (selectedPosition.unlockTime > currentEpoch) {
-      const remainingMinutes = selectedPosition.unlockTime - currentEpoch;
-      const days = Math.floor(remainingMinutes / (24 * 60));
-      const hours = Math.floor((remainingMinutes % (24 * 60)) / 60);
-      const mins = remainingMinutes % 60;
-      let timeStr = '';
-      if (days > 0) timeStr += `${days}d `;
-      if (hours > 0) timeStr += `${hours}h `;
-      timeStr += `${mins}m`;
-      addToast('error', `Cannot remove position #${selectedPosition.id}: locked for another ${timeStr.trim()}.`);
-      return;
-    }
-
-    setLoading(true);
-    const toastId = addToast('pending', 'Remove Liquidity in progress...');
+    // [V7-FIX] Declare outside try so catch can reference
+    let toastId = '';
     try {
+      const selectedPosition = positions.find(p => p.id === selectedPositionId);
+      // [SECURITY] F-9: Filter out zero-liquidity positions
+      if (!selectedPosition || selectedPosition.liquidity === '0') {
+        return;
+      }
+      if (selectedPosition.unlockTime > currentEpoch) {
+        const remainingMinutes = selectedPosition.unlockTime - currentEpoch;
+        const days = Math.floor(remainingMinutes / (24 * 60));
+        const hours = Math.floor((remainingMinutes % (24 * 60)) / 60);
+        const mins = remainingMinutes % 60;
+        let timeStr = '';
+        if (days > 0) timeStr += `${days}d `;
+        if (hours > 0) timeStr += `${hours}h `;
+        timeStr += `${mins}m`;
+        addToast('error', `Cannot remove position #${selectedPosition.id}: locked for another ${timeStr.trim()}.`);
+        return;
+      }
+
+      setLoading(true);
+      toastId = addToast('pending', 'Remove Liquidity in progress...');
       // [V7-FIX] Use chain epoch (not unix timestamp) for deadline
       const epochInfo = await rpc.call<{ epoch_id: number }>('epoch_current');
       const deadline = (epochInfo?.epoch_id || 0) + 300;
@@ -377,7 +382,8 @@ function LiquidityPage() {
       loadPoolInfo();
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : 'An error occurred';
-      updateToast(toastId, 'error', `Remove Liquidity failed: ${errMsg}`);
+      if (toastId) updateToast(toastId, 'error', `Remove Liquidity failed: ${errMsg}`);
+      else addToast('error', `Remove Liquidity failed: ${errMsg}`);
     } finally {
       // [SECURITY] F-2: Reset ref guard
       removeSubmittingRef.current = false;
