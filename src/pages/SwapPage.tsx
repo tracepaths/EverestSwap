@@ -153,11 +153,16 @@ function SwapPage() {
 
     const tokenA = fromToken.address;
     const tokenB = toToken.address;
-    if (!tokenA || !tokenB || tokenA === tokenB) {
+    // [V7-FIX] OCT token has address = '' (empty string for native token).
+    // The check `!tokenA` is `true` for empty string in JS, so the previous
+    // check incorrectly fired 'Select both tokens' when user selected OCT.
+    // Both fromToken and toToken are always set (default WOCT/OES), so the
+    // only invalid case is when user selected the same token for both.
+    if (fromToken === toToken) {
       setPoolAddress('');
       setPoolTokenA('');
       setPoolTokenB('');
-      setPairError(tokenA === tokenB ? 'Select two different tokens' : 'Select both tokens');
+      setPairError('Select two different tokens');
       return;
     }
 
