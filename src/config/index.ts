@@ -9,6 +9,8 @@ import {
   WOCT_TOKEN as DEV_WOCT,
   OES_TOKEN as DEV_OES,
   CONTRACTS as DEV_CONTRACTS,
+  EXPLORER_URL as DEV_EXPLORER_URL,
+  EXPLORER_TX_PATH as DEV_EXPLORER_TX_PATH,
 } from './devnet';
 
 import {
@@ -20,6 +22,8 @@ import {
   WOCT_TOKEN as MAIN_WOCT,
   OES_TOKEN as MAIN_OES,
   CONTRACTS as MAIN_CONTRACTS,
+  EXPLORER_URL as MAIN_EXPLORER_URL,
+  EXPLORER_TX_PATH as MAIN_EXPLORER_TX_PATH,
   MAINNET_CONFIGURED,
   assertMainnetConfigured,
 } from './mainnet';
@@ -35,4 +39,7 @@ export const OCT_TOKEN: TokenInfo = isMainnet ? MAIN_OCT : DEV_OCT;
 export const WOCT_TOKEN: TokenInfo = isMainnet ? MAIN_WOCT : DEV_WOCT;
 export const OES_TOKEN: TokenInfo = isMainnet ? MAIN_OES : DEV_OES;
 export const CONTRACTS = isMainnet ? MAIN_CONTRACTS : DEV_CONTRACTS;
+// [V7-FIX] Network-aware explorer URL config
+export const EXPLORER_URL: string = isMainnet ? MAIN_EXPLORER_URL : DEV_EXPLORER_URL;
+export const EXPLORER_TX_PATH: string = isMainnet ? MAIN_EXPLORER_TX_PATH : DEV_EXPLORER_TX_PATH;
 export { MAINNET_CONFIGURED, assertMainnetConfigured };

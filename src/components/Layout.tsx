@@ -6,7 +6,8 @@ import { SnowEffect } from './SnowEffect';
 import { useApp } from '../contexts/AppContext';
 import { walletService } from '../services/walletService';
 import { truncateAddress } from '../services/swapService';
-import { CONTRACTS, MAINNET_CONFIGURED } from '../config';
+// [V7-FIX] Import env-based explorer URL config
+import { CONTRACTS, MAINNET_CONFIGURED, EXPLORER_URL, EXPLORER_TX_PATH } from '../config';
 
 const navItems = [
   { path: '/dashboard', label: 'Dashboard', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6' },
@@ -29,12 +30,11 @@ const themes = [
 
 type HeaderMenu = 'network' | 'theme' | 'activity' | null;
 
-// [V7-FIX] Get explorer URL for the current network
-// Devnet: https://devnet.octrascan.io
-// Mainnet: https://octrascan.io
-function getExplorerTxUrl(network: 'devnet' | 'mainnet', hash: string): string {
-  const base = network === 'mainnet' ? 'https://octrascan.io' : 'https://devnet.octrascan.io';
-  return `${base}/tx/${hash}`;
+// [V7-FIX] Get explorer URL using env-based config
+// Format: {EXPLORER_URL}{EXPLORER_TX_PATH}{hash}
+// Default: https://devnet.octrascan.io/tx/<hash> or https://octrascan.io/tx/<hash>
+function getExplorerTxUrl(hash: string): string {
+  return `${EXPLORER_URL}${EXPLORER_TX_PATH}${hash}`;
 }
 
 interface ActivityItem {
@@ -486,7 +486,7 @@ function Layout() {
                                 <span>{item.time}</span>
                                 {/* [V7-FIX] View TX link to Octrascan explorer */}
                                 <a
-                                  href={getExplorerTxUrl(network, item.hash)}
+                                  href={getExplorerTxUrl(item.hash)}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className="text-[var(--app-blue-3)] hover:text-[var(--app-blue)] hover:underline transition-colors"

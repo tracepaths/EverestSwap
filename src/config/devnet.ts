@@ -36,3 +36,9 @@ export const CONTRACTS = {
   oes: 'oct9LgGSpkrqbpWPQpYervyryzDtbGYph2hHvcBi9ZppNvD',
   woct: 'octE7bttbCKJLQskNzHs8MiqCXDjuF2k1JdADv44axxA8LK',
 } as const;
+
+// [V7-FIX] Explorer URL fully configurable via env vars
+// Default devnet: https://devnet.octrascan.io with /tx/<hash> path
+// Override with VITE_EXPLORER_URL_DEVNET and VITE_EXPLORER_TX_PATH
+export const EXPLORER_URL = import.meta.env.VITE_EXPLORER_URL_DEVNET || 'https://devnet.octrascan.io';
+export const EXPLORER_TX_PATH = import.meta.env.VITE_EXPLORER_TX_PATH || '/tx/';

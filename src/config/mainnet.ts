@@ -49,6 +49,12 @@ export const CONTRACTS = {
   woct: import.meta.env.VITE_MAINNET_WOCT_ADDRESS || '',
 } as const;
 
+// [V7-FIX] Mainnet explorer URL fully configurable via env vars
+// Default mainnet: https://octrascan.io with /tx/<hash> path
+// Override with VITE_EXPLORER_URL_MAINNET and VITE_EXPLORER_TX_PATH
+export const EXPLORER_URL = import.meta.env.VITE_EXPLORER_URL_MAINNET || 'https://octrascan.io';
+export const EXPLORER_TX_PATH = import.meta.env.VITE_EXPLORER_TX_PATH || '/tx/';
+
 export function assertMainnetConfigured(): void {
   if (!MAINNET_CONFIGURED) {
     throw new Error('Mainnet is not configured');
