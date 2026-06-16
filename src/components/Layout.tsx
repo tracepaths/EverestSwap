@@ -247,7 +247,8 @@ function Layout() {
       mounted = false;
       clearInterval(interval);
     };
-  }, [isConnected]);
+    // [V7-FIX] Re-run when network changes to clear stale activity from other network
+  }, [isConnected, network]);
 
   function toggleMenu(menu: HeaderMenu) {
     setOpenMenu(openMenu === menu ? null : menu);

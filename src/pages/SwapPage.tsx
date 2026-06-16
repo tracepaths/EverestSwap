@@ -306,6 +306,9 @@ function SwapPage() {
     setPoolTokenB('');
     setPairError('');
     setHighPriceImpactConfirmed(false);
+    // [V7-FIX] Reset balances to loading state to avoid stale display
+    setFromBalance(null);
+    setToBalance(null);
   };
 
   const handleSelectFromToken = (address: string, meta: { symbol: string; name: string; decimals: number }) => {

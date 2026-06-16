@@ -247,16 +247,22 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
   function formatBalance(balance: string, decimals: number): string {
     // [V7-SECURITY-FIX] Clamp decimals to safe range
     const safeDecimals = Math.max(0, Math.min(18, decimals));
-    // [SECURITY] Guard against Number() overflow to Infinity
-    const balanceNum = Number(balance);
-    if (!Number.isFinite(balanceNum) || balanceNum > 1e308) return '>1e308';
-    const num = balanceNum / 10 ** safeDecimals;
-    if (!Number.isFinite(num)) return '>1e308';
-    if (num === 0) return '0';
-    if (num < 0.0001) return '<0.0001';
-    if (num < 1) return num.toFixed(4);
-    if (num < 1000) return num.toFixed(2);
-    return num.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    // [V7-FIX] Use BigInt for precision to handle large balances correctly
+    try {
+      const balanceBN = BigInt(balance);
+      if (balanceBN === 0n) return '0';
+      const divisor = 10n ** BigInt(safeDecimals);
+      const integerPart = balanceBN / divisor;
+      const fractionalPart = balanceBN % divisor;
+      const num = Number(integerPart) + Number(fractionalPart) / Number(divisor);
+      if (!Number.isFinite(num) || num > 1e15) return '>1e15';
+      if (num < 0.0001) return '<0.0001';
+      if (num < 1) return num.toFixed(4);
+      if (num < 1000) return num.toFixed(2);
+      return num.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    } catch {
+      return balance;  // fallback to raw string on parse error
+    }
   }
 
   function TokenRow({ item }: { item: TokenItem }) {

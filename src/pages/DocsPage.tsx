@@ -166,6 +166,8 @@ function DocsPage() {
     (async () => {
       try {
         const res = await fetch('/docs.md');
+        // [V7-FIX] Check res.ok before parsing — 404 returns HTML error page as text
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
         const text = await res.text();
         setContent(text);
       } catch {

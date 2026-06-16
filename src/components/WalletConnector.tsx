@@ -77,7 +77,12 @@ function WalletConnector() {
                 </div>
               )}
               <button
-                onClick={() => { disconnect(); setDropdownOpen(false); }}
+                onClick={() => {
+                  // [V7-FIX] Wrap disconnect in try/catch — if user uninstalled
+                  // the extension or the call fails, still close the dropdown.
+                  try { disconnect(); } catch { /* noop */ }
+                  setDropdownOpen(false);
+                }}
                 className="w-full text-left px-4 py-2.5 text-sm text-[var(--app-danger)] hover:bg-[var(--app-panel)] transition-colors"
               >
                 Disconnect

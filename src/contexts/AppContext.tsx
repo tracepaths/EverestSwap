@@ -54,14 +54,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setIsWalletInstalled(!!(window as unknown as { octra?: { isOctra?: boolean } }).octra?.isOctra);
   }, []);
 
-  // [V7-FIX] Auto-expire stuck pending toasts after 60s (they should normally
-  // transition to success/error quickly, but if a tx hangs, don't pile them up)
+  // [V7-FIX] Auto-expire stuck pending toasts after 60s. Convert to error state
+  // with timeout message so user knows the tx status is uncertain.
   useEffect(() => {
     const interval = setInterval(() => {
       const now = Date.now();
-      setToasts(prev => prev.filter(t => {
-        if (t.type !== 'pending') return true;
-        return t.addedAt ? (now - t.addedAt) < 60_000 : true;
+      setToasts(prev => prev.map(t => {
+        if (t.type !== 'pending') return t;
+        if (t.addedAt && (now - t.addedAt) >= 60_000) {
+          return { ...t, type: 'error', message: t.message + ' (timeout - check status)' };
+        }
+        return t;
       }));
     }, 10_000);
     return () => clearInterval(interval);
@@ -93,6 +96,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const isConnected = walletAddress !== '';
+
+  // [V7-FIX] Poll wallet connection to detect external disconnect (user locks
+  // extension, uninstalls, etc.). React state doesn't auto-update.
+  useEffect(() => {
+    if (!isConnected) return;
+    const i = setInterval(() => {
+      if (walletService.address === '' && walletAddress !== '') {
+        setWalletAddress('');
+        setWalletBalance('');
+      }
+    }, 5000);
+    return () => clearInterval(i);
+  }, [isConnected, walletAddress]);
 
   const connect = useCallback(async () => {
     if (isConnecting.current) return;
