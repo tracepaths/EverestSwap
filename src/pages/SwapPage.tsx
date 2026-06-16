@@ -49,6 +49,16 @@ function SwapPage() {
     if (mode === 'wrap') return ['OCT', 'WOCT'];
     if (mode === 'unwrap') return ['WOCT', 'OCT'];
     if (mode === 'swap' && poolAddress) {
+      // [V7-FIX] For OCT pairs, show multi-hop route even though poolAddress is set
+      if (fromToken.address === '' || toToken.address === '') {
+        if (fromToken.address === '' && toToken.address === '') {
+          return ['OCT', WOCT_TOKEN.symbol, 'OCT']; // weird but valid
+        }
+        if (fromToken.address === '') {
+          return ['OCT', WOCT_TOKEN.symbol, toToken.symbol];
+        }
+        return [fromToken.symbol, WOCT_TOKEN.symbol, 'OCT'];
+      }
       return [fromToken.symbol, toToken.symbol];
     }
     if (mode === 'swap') {
@@ -62,8 +72,10 @@ function SwapPage() {
     return [];
   }, [mode, poolAddress, fromToken.symbol, fromToken.address, toToken.symbol, toToken.address]);
 
-  const poolIsAtoB = mode === 'swap' && poolTokenA && fromToken.address.toLowerCase() === poolTokenA.toLowerCase();
-  const poolIsBtoA = mode === 'swap' && poolTokenB && fromToken.address.toLowerCase() === poolTokenB.toLowerCase();
+  // [V7-FIX] For OCT pairs, the actual pool token is WOCT (after auto-wrap)
+  const effectiveFromAddress = fromToken.address === '' ? WOCT_TOKEN.address : fromToken.address;
+  const poolIsAtoB = mode === 'swap' && poolTokenA && effectiveFromAddress.toLowerCase() === poolTokenA.toLowerCase();
+  const poolIsBtoA = mode === 'swap' && poolTokenB && effectiveFromAddress.toLowerCase() === poolTokenB.toLowerCase();
   const swapDirectionValid = mode !== 'swap' || poolIsAtoB || poolIsBtoA;
   const canSubmitPair = mode !== 'swap' || (!!poolAddress && swapDirectionValid && !pairError);
 
@@ -137,6 +149,19 @@ function SwapPage() {
       (a === WOCT_TOKEN.address && b === OES_TOKEN.address) ||
       (a === OES_TOKEN.address && b === WOCT_TOKEN.address)
     );
+    // [V7-FIX] OCT (empty address) pairs are routed via WOCT auto-wrap
+    const isOctConfiguredPair = (a: string, b: string) => (
+      (a === '' && b === WOCT_TOKEN.address) ||
+      (a === WOCT_TOKEN.address && b === '') ||
+      (a === '' && b === OES_TOKEN.address) ||
+      (a === OES_TOKEN.address && b === '')
+    );
+    if (isOctConfiguredPair(tokenA, tokenB)) {
+      // OCT pairs always route through the WOCT/OES pool
+      setPoolAddress(CONTRACTS.pool);
+      setPairError(CONTRACTS.pool ? '' : 'WOCT/OES pool is not configured');
+      return;
+    }
     if (isConfiguredPair(tokenA, tokenB)) {
       setPoolAddress(CONTRACTS.pool);
       setPairError(CONTRACTS.pool ? '' : 'WOCT/OES pool is not configured');
@@ -334,29 +359,58 @@ function SwapPage() {
         updateProgress(100, 'Unwrap completed', false);
         updateToast(toastId, 'success', `${fromAmount} WOCT unwrapped to OCT successfully!`, txHash);
       } else {
+        // [V7-FIX] Multi-step: wrap native OCT to WOCT before swap if fromToken is native
+        let actualFromToken = fromToken;
+        let actualRawAmount = rawAmount;
+        if (fromToken.address === '') {
+          updateProgress(10, 'Wrapping OCT to WOCT...', false);
+          updateToast(toastId, 'pending', 'Step 1/2: Wrapping OCT to WOCT...');
+          const wrapHash = await walletService.callContract({
+            contract: CONTRACTS.woct,
+            method: 'deposit',
+            params: [],
+            amount: rawAmount,
+          });
+          updateProgress(25, 'Waiting for wrap confirmation...', false);
+          await rpc.waitForReceipt(wrapHash);
+          // After wrap, fromToken becomes WOCT with the same amount
+          actualFromToken = WOCT_TOKEN;
+          actualRawAmount = rawAmount;
+          updateProgress(30, 'Wrap complete, preparing swap...', false);
+        }
+
         if (!canSubmitPair) {
           throw new Error(pairError || 'Invalid token pair');
         }
 
+        // [V7-FIX] Use chain epoch (not unix timestamp) for deadline
+        // epoch in AML is the chain block counter, not wall-clock time
+        const epochInfo = await rpc.call<{ epoch_id: number }>('epoch_current');
+        const chainEpoch = epochInfo?.epoch_id || 0;
+        const deadline = chainEpoch + 300;
+
         const freshReserves = await rpc.getReserves(poolAddress);
         const freshPool = await rpc.getPoolInfo(poolAddress);
-        const fromIsTokenA = fromToken.address.toLowerCase() === freshPool.tokenA.toLowerCase();
-        const fromIsTokenB = fromToken.address.toLowerCase() === freshPool.tokenB.toLowerCase();
-        const toIsTokenB = toToken.address.toLowerCase() === freshPool.tokenB.toLowerCase();
-        const toIsTokenA = toToken.address.toLowerCase() === freshPool.tokenA.toLowerCase();
+        const fromIsTokenA = actualFromToken.address.toLowerCase() === freshPool.tokenA.toLowerCase();
+        const fromIsTokenB = actualFromToken.address.toLowerCase() === freshPool.tokenB.toLowerCase();
         if (!fromIsTokenA && !fromIsTokenB) {
           throw new Error('Selected input token is not part of the resolved pool');
         }
-        if (!(fromIsTokenA && toIsTokenB) && !(fromIsTokenB && toIsTokenA)) {
+        // [V7-FIX] If toToken is native OCT, treat it as WOCT for the pool swap
+        const actualToToken = toToken.address === '' ? WOCT_TOKEN : toToken;
+        const toIsActualTokenA = actualToToken.address.toLowerCase() === freshPool.tokenA.toLowerCase();
+        const toIsActualTokenB = actualToToken.address.toLowerCase() === freshPool.tokenB.toLowerCase();
+        if (!(fromIsTokenA && toIsActualTokenB) && !(fromIsTokenB && toIsActualTokenA)) {
           throw new Error('Selected output token does not match the resolved pool pair');
         }
 
         const freshReserveIn = fromIsTokenA ? freshReserves.reserveA : freshReserves.reserveB;
         const freshReserveOut = fromIsTokenA ? freshReserves.reserveB : freshReserves.reserveA;
 
-        const amountInBN = parseUnits(fromAmount.trim(), fromToken.decimals);
+        const amountInBN = parseUnits(fromAmount.trim(), actualFromToken.decimals);
         // [SECURITY] F-7: Pre-check user balance before submission
-        if (fromBalance !== null && BigInt(amountInBN) > BigInt(fromBalance)) {
+        // For wrapped flow, we already wrapped so balance check is skipped
+        if (fromToken.address !== '' && fromBalance !== null && BigInt(amountInBN) > BigInt(fromBalance)) {
           throw new Error('Insufficient balance for swap');
         }
         const freshOutput = calculateOutput(amountInBN, freshReserveIn, freshReserveOut);
@@ -364,9 +418,10 @@ function SwapPage() {
         if (BigInt(freshOutput) <= 0n) {
           throw new Error('Calculated output is zero or negative — pool may be empty or amount too small');
         }
-        const freshToAmount = formatUnits(freshOutput, toToken.decimals);
+        const freshToAmount = formatUnits(freshOutput, actualToToken.decimals);
 
-        const toRaw = parseUnits(freshToAmount || '0', toToken.decimals);
+        // [V7-FIX] Apply slippage to the intermediate WOCT amount if final token is OCT
+        const toRaw = parseUnits(freshToAmount || '0', actualToToken.decimals);
         const basisPoints = getSlippageBasisPoints();
         const minOutRaw = BigInt(toRaw) * BigInt(10000 - basisPoints) / 10000n;
         const swapMethod = fromIsTokenA ? 'swap_a_for_b' : 'swap_b_for_a';
@@ -375,25 +430,25 @@ function SwapPage() {
           throw new Error('Minimum output too small — try a larger amount or adjust slippage');
         }
         const minOutStr = minOutRaw.toString();
-        const deadline = Math.floor(Date.now() / 1000 + 300);
 
-        updateProgress(15, 'Preparing swap transaction...', false);
-        updateToast(toastId, 'pending', `Approving ${fromToken.symbol} grant in wallet...`);
-        updateProgress(35, 'Waiting for token grant approval...', false);
+        const stepStartPct = fromToken.address === '' ? 35 : 15;
+        updateProgress(stepStartPct, 'Preparing swap transaction...', false);
+        updateToast(toastId, 'pending', `Approving ${actualFromToken.symbol} grant in wallet...`);
+        updateProgress(stepStartPct + 20, 'Waiting for token grant approval...', false);
         const grantHash = await walletService.callContract({
-          contract: fromToken.address,
+          contract: actualFromToken.address,
           method: 'grant',
-          params: [poolAddress, rawAmount],
+          params: [poolAddress, actualRawAmount],
         });
-        updateProgress(55, 'Waiting for grant confirmation...', false);
+        updateProgress(stepStartPct + 40, 'Waiting for grant confirmation...', false);
         updateToast(toastId, 'pending', 'Waiting for grant confirmation...', grantHash);
         await rpc.waitForReceipt(grantHash);
 
         const preSwapPool = await rpc.getPoolInfo(poolAddress);
-        const preSwapFromA = fromToken.address.toLowerCase() === preSwapPool.tokenA.toLowerCase();
-        const preSwapFromB = fromToken.address.toLowerCase() === preSwapPool.tokenB.toLowerCase();
-        const preSwapToA = toToken.address.toLowerCase() === preSwapPool.tokenA.toLowerCase();
-        const preSwapToB = toToken.address.toLowerCase() === preSwapPool.tokenB.toLowerCase();
+        const preSwapFromA = actualFromToken.address.toLowerCase() === preSwapPool.tokenA.toLowerCase();
+        const preSwapFromB = actualFromToken.address.toLowerCase() === preSwapPool.tokenB.toLowerCase();
+        const preSwapToA = actualToToken.address.toLowerCase() === preSwapPool.tokenA.toLowerCase();
+        const preSwapToB = actualToToken.address.toLowerCase() === preSwapPool.tokenB.toLowerCase();
         if (!((preSwapFromA && preSwapToB) || (preSwapFromB && preSwapToA))) {
           throw new Error('Resolved pool pair changed before swap submission');
         }
@@ -416,18 +471,37 @@ function SwapPage() {
           throw new Error('Price moved unfavorably during grant confirmation — please review and retry');
         }
 
-        updateProgress(70, 'Submitting swap...', false);
+        updateProgress(stepStartPct + 55, 'Submitting swap...', false);
         updateToast(toastId, 'pending', 'Approving swap in wallet...');
-        updateProgress(85, 'Waiting for swap confirmation...', false);
         const swapHash = await walletService.callContract({
           contract: poolAddress,
           method: swapMethod,
-          params: [rawAmount, minOutStr, String(deadline)],
+          params: [actualRawAmount, minOutStr, String(deadline)],
         });
+        updateProgress(stepStartPct + 65, 'Waiting for swap confirmation...', false);
         updateToast(toastId, 'pending', 'Waiting for swap confirmation...', swapHash);
         await rpc.waitForReceipt(swapHash);
+
+        // [V7-FIX] Multi-step: unwrap WOCT to OCT after swap if toToken is native
+        if (toToken.address === '') {
+          updateProgress(90, 'Unwrapping WOCT to OCT...', false);
+          updateToast(toastId, 'pending', 'Step 2/2: Unwrapping WOCT to OCT...');
+          // Use the actual WOCT received (post-grant output) — slightly less than minOutRaw
+          const unwrapAmount = postGrantOutput.toString();
+          const unwrapHash = await walletService.callContract({
+            contract: CONTRACTS.woct,
+            method: 'withdraw',
+            params: [unwrapAmount],
+          });
+          updateProgress(95, 'Waiting for unwrap confirmation...', false);
+          await rpc.waitForReceipt(unwrapHash);
+        }
+
         updateProgress(100, 'Swap completed', false);
-        updateToast(toastId, 'success', `Swap ${fromAmount} ${fromToken.symbol} → ${freshToAmount} ${toToken.symbol} successful!`, swapHash);
+        const finalDisplay = toToken.address === ''
+          ? `Swap ${fromAmount} ${fromToken.symbol} → ${formatUnits(postGrantOutput, WOCT_TOKEN.decimals)} WOCT → unwrapped to OCT successful!`
+          : `Swap ${fromAmount} ${fromToken.symbol} → ${freshToAmount} ${toToken.symbol} successful!`;
+        updateToast(toastId, 'success', finalDisplay, swapHash);
       }
 
       try { await loadBalances(); } catch { /* noop */ }
@@ -488,21 +562,25 @@ function SwapPage() {
             <div className="flex gap-1 mt-2">
               {[10, 25, 50, 100].map(pct => {
                 const bal = fromBalance ?? '0';
-                // [SECURITY] F-10: For native OCT (empty address), reserve 0.0001 OCT
-                // (~1e9 base units) for gas when using 100% to avoid being unable
-                // to pay fees after wrapping the entire balance.
+                // [SECURITY] F-10: For native OCT (empty address), reserve headroom
+                // for gas. Multi-step flow (wrap + swap) needs ~0.02 OCT for fees,
+                // so use 98% to leave more buffer.
                 const isNative = fromToken.address === '';
+                const isMultiStep = isNative && mode === 'swap';
                 let effectivePct = pct;
                 if (isNative && pct === 100) {
-                  effectivePct = 99; // 99% leaves headroom for gas (~0.01 OCT)
+                  effectivePct = isMultiStep ? 98 : 99;
                 }
                 const rawPct = BigInt(bal) * BigInt(effectivePct) / 100n;
+                const tip = isNative && pct === 100
+                  ? (isMultiStep ? 'Reserves ~0.02 OCT for wrap+swap gas' : 'Reserves ~0.01 OCT for gas')
+                  : undefined;
                 return (
                   <button
                     key={pct}
                     onClick={() => setFromAmount(formatUnits(rawPct.toString(), fromToken.decimals))}
                     className="text-xs px-2 py-0.5 rounded bg-[var(--app-hover)] hover:bg-[var(--app-hover)] text-[var(--app-muted)] hover:text-[var(--app-text)] transition-colors"
-                    title={isNative && pct === 100 ? 'Reserves ~0.01 OCT for gas' : undefined}
+                    title={tip}
                   >
                     {pct}%
                   </button>
@@ -766,9 +844,8 @@ function SwapPage() {
         onSelect={handleSelectFromToken}
         rpc={rpc}
         excludeAddress={toToken.address || undefined}
-        // [SECURITY] F-5: Don't allow OCT (native token) as from-token in swap mode
-        // because it has no contract to grant to. Only allowed in wrap mode.
-        excludeNative={mode === 'swap'}
+        // [V7-FIX] OCT now allowed as from-token — handleSwap will auto-wrap if needed
+        excludeNative={false}
         walletAddress={walletAddress}
         isConnected={isConnected}
       />
