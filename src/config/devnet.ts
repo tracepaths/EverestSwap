@@ -16,7 +16,7 @@ export const OCT_TOKEN: TokenInfo = {
 };
 
 export const WOCT_TOKEN: TokenInfo = {
-  address: 'oct3taQXSQetRSmq21hfLmc1ormx7svm112cUB5uEze3oVe',
+  address: 'octE7bttbCKJLQskNzHs8MiqCXDjuF2k1JdADv44axxA8LK',
   symbol: 'WOCT',
   name: 'Wrapped OCT',
   decimals: 6,
