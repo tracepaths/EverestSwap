@@ -42,6 +42,8 @@ function LiquidityPage() {
   const [totalLockedLp, setTotalLockedLp] = useState<string>('0');
   const [lockOption, setLockOption] = useState<'unlocked' | '30d' | '6m' | '1y' | 'custom'>('unlocked');
   const [customLockDays, setCustomLockDays] = useState<string>('');
+  // [V7-FIX] Track if user has manually edited amountB — don't auto-overwrite
+  const [userEditedB, setUserEditedB] = useState(false);
 
   const pool = pools[selectedPoolIdx];
   const mountedRef = useRef(true);
@@ -184,7 +186,8 @@ function LiquidityPage() {
   const isEmptyPool = reserveA === '0' && reserveB === '0';
 
   useEffect(() => {
-    if (isEmptyPool) return;
+    // [V7-FIX] Don't auto-overwrite user's manual amountB input
+    if (isEmptyPool || userEditedB) return;
     if (amountA && amountA !== '0' && reserveA !== '0' && reserveB !== '0') {
       const expectedB = formatUnits(
         ((BigInt(parseUnits(amountA, validTokenA.decimals)) * BigInt(reserveB)) / BigInt(reserveA)).toString(),
@@ -192,7 +195,7 @@ function LiquidityPage() {
       );
       setAmountB(expectedB);
     }
-  }, [amountA, reserveA, reserveB, isEmptyPool, validTokenA.decimals, validTokenB.decimals]);
+  }, [amountA, reserveA, reserveB, isEmptyPool, validTokenA.decimals, validTokenB.decimals, userEditedB]);
 
   const poolShare = totalLP !== '0' && lpBalance !== '0'
     ? Number(BigInt(lpBalance) * 10000n / BigInt(totalLP)) / 100
@@ -255,13 +258,16 @@ function LiquidityPage() {
         lockDuration = days * 24 * 60;
       }
 
-      // [V6-SECURITY-FIX HIGH-8] Add 5-minute deadline
-      const deadline = Math.floor(Date.now() / 1000 + 300);
+      // [V7-FIX] Use chain epoch (not unix timestamp) for deadline
+      // epoch in AML is the chain block counter, not wall-clock time
+      const epochInfo = await rpc.call<{ epoch_id: number }>('epoch_current');
+      const deadline = (epochInfo?.epoch_id || 0) + 300;
 
       // [V6-SECURITY-FIX HIGH-8] Calculate proper min_lp with slippage (10% tolerance)
-      // First deposit: accept any LP > 0. Subsequent: estimate from BOTH reserves
-      // (the limiting factor is whichever side is depleted)
-      let minLp = '1';
+      // [V7-FIX] First deposit: contract requires lp_raw > 1000 (minimum_liquidity)
+      // so minLp must be at least 1001 (1001 - 1000 burned = 1 LP for user).
+      // Subsequent: estimate from BOTH reserves
+      let minLp = '1001';
 
       // [SECURITY] F-8: Pre-check user balances before submission
       if (tokenABalance !== '0' && tokenABalance !== '' && BigInt(rawA) > BigInt(tokenABalance)) {
@@ -347,8 +353,9 @@ function LiquidityPage() {
     setLoading(true);
     const toastId = addToast('pending', 'Remove Liquidity in progress...');
     try {
-      // [V6-SECURITY-FIX HIGH-8] Calculate proper min amounts with 10% slippage and deadline
-      const deadline = Math.floor(Date.now() / 1000 + 300);
+      // [V7-FIX] Use chain epoch (not unix timestamp) for deadline
+      const epochInfo = await rpc.call<{ epoch_id: number }>('epoch_current');
+      const deadline = (epochInfo?.epoch_id || 0) + 300;
       const minA = removeEstimates.a !== '0'
         ? (BigInt(parseUnits(removeEstimates.a, validTokenA.decimals)) * 9000n / 10000n).toString()
         : '1';
@@ -471,7 +478,13 @@ function LiquidityPage() {
                         return (
                           <button
                             key={p.address}
-                            onClick={() => { setSelectedPoolIdx(origIdx); setShowPoolSelect(false); setPoolQuery(''); }}
+                            onClick={() => {
+                              setSelectedPoolIdx(origIdx);
+                              setShowPoolSelect(false);
+                              setPoolQuery('');
+                              // [V7-FIX] Reset position selection when pool changes
+                              setSelectedPositionId(null);
+                            }}
                             className={`w-full px-4 py-2.5 text-left text-sm rounded-xl transition-colors flex items-center gap-2 ${origIdx === selectedPoolIdx ? 'bg-[var(--app-blue)]/10 text-[var(--app-blue-3)]' : 'hover:bg-[var(--app-hover)]'}`}
                           >
                             <div className="flex -space-x-2">
@@ -543,7 +556,7 @@ function LiquidityPage() {
                   inputMode="decimal"
                   value={amountB}
                   // [SECURITY] F-1: Sanitize input
-                  onChange={e => isEmptyPool ? setAmountB(sanitizeNumericInput(e.target.value)) : undefined}
+                  onChange={e => isEmptyPool ? (setAmountB(sanitizeNumericInput(e.target.value)), setUserEditedB(true)) : undefined}
                   readOnly={!isEmptyPool}
                   placeholder="0.0"
                   className="flex-1 bg-transparent text-2xl font-mono outline-none placeholder-[var(--app-muted-2)]"

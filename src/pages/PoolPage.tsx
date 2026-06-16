@@ -171,6 +171,29 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
       if (mountedRef.current) setStep(s);
     };
 
+    // [V7-FIX] Pre-check balance before starting — pool creation costs
+    // ~1+ OCT for deploy + 5 init txs. Fail fast with clear message.
+    try {
+      const bal = await rpc.getBalance(walletService.address);
+      // Need at least 1 OCT (1_000_000 base units at 6 decimals) to safely cover deploy + 5 txs + fees
+      const minRequired = 1000000n;
+      if (BigInt(bal.balance_raw || '0') < minRequired) {
+        const octBal = Number(bal.balance_raw || '0') / 1_000_000;
+        throw new Error(
+          `Insufficient OCT for pool creation. Need at least 1 OCT, have ${octBal.toFixed(6)} OCT.`
+        );
+      }
+    } catch (e) {
+      if (e instanceof Error && e.message.startsWith('Insufficient')) {
+        safeSetStep({ type: 'error', message: e.message });
+        createSubmittingRef.current = false;
+        setCreating(false);
+        return;
+      }
+      // If balance check itself failed, log and continue (don't block)
+      console.warn('Balance pre-check failed:', e);
+    }
+
     try {
       safeSetStep({ type: 'compiling' });
 
@@ -257,11 +280,14 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
 
         safeSetStep({ type: 'adding_liquidity' });
 
-        const deadline = Math.floor(Date.now() / 1000 + 300);
+        // [V7-FIX] Use chain epoch (not unix timestamp) for deadline
+        const epochInfo = await rpc.call<{ epoch_id: number }>('epoch_current');
+        const deadline = (epochInfo?.epoch_id || 0) + 300;
+        // [V7-FIX] minLp = '1001' for initial pool (contract burns 1000 LP)
         const addHash = await walletService.callContract({
           contract: poolAddress,
           method: 'add_liquidity',
-          params: [rawInitA, rawInitB, '1', String(deadline), '0'],
+          params: [rawInitA, rawInitB, '1001', String(deadline), '0'],
         });
         await rpc.waitForReceipt(addHash, 60);
       }
@@ -471,11 +497,10 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
 
           <button
             onClick={handleCreatePool}
-            disabled={!isConnected || !isValidA || !isValidB || !hasValidPair || creating}
-            // [SECURITY] F-4: Disable when pair already exists
-            // (will revert at register_pool)
-            title={pairAlreadyExists ? 'This pair already has a pool — create would fail' : undefined}
+            // [V7-FIX] Disable when pair already exists — would revert at register_pool
+            disabled={!isConnected || !isValidA || !isValidB || !hasValidPair || creating || pairAlreadyExists}
             className="w-full py-3 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-xl font-medium transition-colors"
+            title={pairAlreadyExists ? 'This pair already has a pool — create would fail' : undefined}
           >
             {!isConnected ? 'Connect Wallet' : isValidA && isValidB && hasValidPair && initAmountA && initAmountB ? 'Create Pool + Add Liquidity' : 'Create Pool'}
           </button>

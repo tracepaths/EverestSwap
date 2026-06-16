@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useCallback, useEffect, useRef, ty
 import { OctraRpc } from '../services/octraRpc';
 import { walletService } from '../services/walletService';
 import { assertMainnetConfigured } from '../config';
+import { setTokenCacheNetwork } from '../services/tokenCache';
 
 export type AppTheme = 'dark' | 'light' | 'blue';
 
@@ -10,6 +11,7 @@ export interface Toast {
   type: 'pending' | 'success' | 'error';
   message: string;
   txHash?: string;
+  addedAt?: number; // [V7-FIX] For auto-expiry of stuck pending toasts
 }
 
 interface AppContextType {
@@ -52,6 +54,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setIsWalletInstalled(!!(window as unknown as { octra?: { isOctra?: boolean } }).octra?.isOctra);
   }, []);
 
+  // [V7-FIX] Auto-expire stuck pending toasts after 60s (they should normally
+  // transition to success/error quickly, but if a tx hangs, don't pile them up)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setToasts(prev => prev.filter(t => {
+        if (t.type !== 'pending') return true;
+        return t.addedAt ? (now - t.addedAt) < 60_000 : true;
+      }));
+    }, 10_000);
+    return () => clearInterval(interval);
+  }, []);
+
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     // [SECURITY] FM-2: Log localStorage errors for diagnostics (without leaking user data)
@@ -64,7 +79,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const id = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-    setToasts(prev => [...prev, { id, type, message, txHash }]);
+    // [V7-FIX] Track addedAt for auto-expiry of stuck pending toasts
+    setToasts(prev => [...prev, { id, type, message, txHash, addedAt: Date.now() }]);
     return id;
   }, []);
 
@@ -124,6 +140,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     setNetworkState(n);
     rpc.setNetwork(n);
+    // [V7-FIX] Clear stale state when network changes
+    setTokenCacheNetwork(n);
+    setWalletBalance('');
   }, [rpc]);
 
   const setTheme = useCallback((t: AppTheme) => {

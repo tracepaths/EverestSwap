@@ -36,10 +36,16 @@ export function formatUnits(raw: string, decimals: number): string {
     const divisor = BigInt(10) ** BigInt(decimals);
     const integerPart = rawBigInt / divisor;
     const fractionalPart = rawBigInt % divisor;
-    let fractionalStr = fractionalPart.toString().padStart(decimals, '0');
-    fractionalStr = fractionalStr.replace(/0+$/, '');
-    if (fractionalStr === '') return integerPart.toString();
-    return `${integerPart}.${fractionalStr}`;
+    const fractionalStr = fractionalPart.toString().padStart(decimals, '0');
+    // [V7-FIX] For sub-1 values (integerPart === 0), keep enough precision
+    // to distinguish from zero. For >= 1, strip trailing zeros as before.
+    if (integerPart === 0n) {
+      // Show full padded form for sub-1 (e.g., 0.000001 stays 0.000001)
+      return `0.${fractionalStr}`;
+    }
+    const trimmed = fractionalStr.replace(/0+$/, '');
+    if (trimmed === '') return integerPart.toString();
+    return `${integerPart}.${trimmed}`;
   } catch {
     return '0';
   }

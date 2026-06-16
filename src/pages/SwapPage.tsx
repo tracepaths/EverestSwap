@@ -9,6 +9,14 @@ import TokenSelectModal from '../components/TokenSelectModal';
 
 const HARDCODED_TOKENS = [OCT_TOKEN, WOCT_TOKEN, OES_TOKEN];
 
+// [V7-FIX] Map pool address to display label
+function getTokenLabel(address: string): string {
+  if (!address || address === '') return 'OCT';
+  if (address === WOCT_TOKEN.address) return 'WOCT';
+  if (address === OES_TOKEN.address) return 'OES';
+  return address.slice(0, 8) + '...';
+}
+
 function SwapPage() {
   const { rpc, isConnected, walletAddress, addToast, updateToast } = useApp();
   const [fromAmount, setFromAmount] = useState('');
@@ -108,7 +116,15 @@ function SwapPage() {
     if (token.address === '') {
       try {
         const bal = await rpc.getBalance(walletAddress);
-        return bal.balance_raw;
+        const raw = bal.balance_raw || bal.balance || '0';
+        // [V7-FIX] balance_raw may be human-readable decimal string (e.g. "0.000001")
+        // in some RPC versions. Convert to raw integer if it contains a dot.
+        if (raw.includes('.')) {
+          const num = Number(raw);
+          if (!Number.isFinite(num)) return '0';
+          return BigInt(Math.floor(num * 10 ** token.decimals)).toString();
+        }
+        return raw;
       } catch { return '0'; }
     }
     try {
@@ -193,15 +209,43 @@ function SwapPage() {
   useEffect(() => {
     // [SECURITY] FM-7: Add cancelled flag to prevent wasted RPC calls on unmount
     let cancelled = false;
-    const tick = () => {
+    const tick = async () => {
       if (cancelled) return;
-      loadReserves();
-      loadBalances();
+      // [V7-FIX] Await both loads in parallel for atomicity
+      try { await Promise.allSettled([loadReserves(), loadBalances()]); } catch { /* noop */ }
     };
     tick();
     const interval = setInterval(tick, 10000);
     return () => { cancelled = true; clearInterval(interval); };
   }, [loadReserves, loadBalances]);
+
+  // [V7-FIX] Actual pool fee (for custom fee tiers) — defaults to 3/1000 (0.3%)
+  const [poolFee, setPoolFee] = useState({ num: 3, denom: 1000 });
+  // [V7-FIX] Fetch pool fee params when pool changes
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!poolAddress) {
+        setPoolFee({ num: 3, denom: 1000 });
+        return;
+      }
+      try {
+        const fee = await rpc.contractView<{ fee_numerator: string; fee_denominator: string }>(
+          poolAddress, 'get_fee_params', []
+        );
+        if (cancelled) return;
+        const num = parseInt(fee?.fee_numerator || '3', 10);
+        const denom = parseInt(fee?.fee_denominator || '1000', 10);
+        if (num > 0 && denom > 0 && num < denom) {
+          setPoolFee({ num, denom });
+        }
+      } catch {
+        // Default to 3/1000 if call fails
+        if (!cancelled) setPoolFee({ num: 3, denom: 1000 });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [rpc, poolAddress]);
 
   useEffect(() => {
     if (fromAmount && fromAmount !== '0') {
@@ -211,7 +255,7 @@ function SwapPage() {
         setPrice('1');
       } else if (reserveIn !== '0') {
         const amountInBN = parseUnits(fromAmount, fromToken.decimals);
-        const out = calculateOutput(amountInBN, reserveIn, reserveOut);
+        const out = calculateOutput(amountInBN, reserveIn, reserveOut, poolFee.num, poolFee.denom);
         setToAmount(formatUnits(out, toToken.decimals));
         const impact = calculatePriceImpact(amountInBN, reserveIn);
         setPriceImpact(impact);
@@ -222,7 +266,7 @@ function SwapPage() {
       setToAmount('0');
       setPriceImpact(0);
     }
-  }, [fromAmount, reserveIn, reserveOut, fromToken, toToken, mode]);
+  }, [fromAmount, reserveIn, reserveOut, fromToken, toToken, mode, poolFee.num, poolFee.denom]);
 
   // [SECURITY] FM-1: Reset price impact confirmation when amount or pair changes
   // (otherwise stale confirmation applies to a different swap)
@@ -249,6 +293,12 @@ function SwapPage() {
     setToToken(fromToken);
     setFromAmount('');
     setToAmount('0');
+    // [V7-FIX] Reset pool state immediately to avoid stale data
+    setPoolAddress('');
+    setPoolTokenA('');
+    setPoolTokenB('');
+    setPairError('');
+    setHighPriceImpactConfirmed(false);
   };
 
   const handleSelectFromToken = (address: string, meta: { symbol: string; name: string; decimals: number }) => {
@@ -356,8 +406,19 @@ function SwapPage() {
         updateProgress(55, 'Waiting for unwrap confirmation...', false);
         updateToast(toastId, 'pending', 'Waiting for transaction confirmation...', txHash);
         await rpc.waitForReceipt(txHash);
+        // [V7-CRIT-10] WOCT uses pull pattern: withdraw records pending claim,
+        // user must call claim_withdrawal to actually receive native OCT.
+        updateProgress(75, 'Claiming native OCT...', false);
+        updateToast(toastId, 'pending', 'Step 2/2: Claiming OCT...');
+        const claimHash = await walletService.callContract({
+          contract: CONTRACTS.woct,
+          method: 'claim_withdrawal',
+          params: [],
+        });
+        updateProgress(95, 'Waiting for claim confirmation...', false);
+        await rpc.waitForReceipt(claimHash);
         updateProgress(100, 'Unwrap completed', false);
-        updateToast(toastId, 'success', `${fromAmount} WOCT unwrapped to OCT successfully!`, txHash);
+        updateToast(toastId, 'success', `${fromAmount} WOCT unwrapped to OCT successfully!`, claimHash);
       } else {
         // [V7-FIX] Multi-step: wrap native OCT to WOCT before swap if fromToken is native
         let actualFromToken = fromToken;
@@ -413,17 +474,17 @@ function SwapPage() {
         if (fromToken.address !== '' && fromBalance !== null && BigInt(amountInBN) > BigInt(fromBalance)) {
           throw new Error('Insufficient balance for swap');
         }
-        const freshOutput = calculateOutput(amountInBN, freshReserveIn, freshReserveOut);
+        const freshOutput = calculateOutput(amountInBN, freshReserveIn, freshReserveOut, poolFee.num, poolFee.denom);
         // [SECURITY] Reject zero or negative output to prevent silent failures
         if (BigInt(freshOutput) <= 0n) {
           throw new Error('Calculated output is zero or negative — pool may be empty or amount too small');
         }
         const freshToAmount = formatUnits(freshOutput, actualToToken.decimals);
 
-        // [V7-FIX] Apply slippage to the intermediate WOCT amount if final token is OCT
-        const toRaw = parseUnits(freshToAmount || '0', actualToToken.decimals);
+        // [V7-FIX] Compute minOutRaw directly from BigInt to avoid precision loss
+        // from formatUnits → parseUnits round-trip on high-decimal tokens.
         const basisPoints = getSlippageBasisPoints();
-        const minOutRaw = BigInt(toRaw) * BigInt(10000 - basisPoints) / 10000n;
+        const minOutRaw = BigInt(freshOutput) * BigInt(10000 - basisPoints) / 10000n;
         const swapMethod = fromIsTokenA ? 'swap_a_for_b' : 'swap_b_for_a';
 
         if (minOutRaw <= 0n) {
@@ -461,7 +522,7 @@ function SwapPage() {
         const postGrantReserves = await rpc.getReserves(poolAddress);
         const postGrantReserveIn = preSwapFromA ? postGrantReserves.reserveA : postGrantReserves.reserveB;
         const postGrantReserveOut = preSwapFromA ? postGrantReserves.reserveB : postGrantReserves.reserveA;
-        const postGrantOutput = calculateOutput(amountInBN, postGrantReserveIn, postGrantReserveOut);
+        const postGrantOutput = calculateOutput(amountInBN, postGrantReserveIn, postGrantReserveOut, poolFee.num, poolFee.denom);
         if (BigInt(postGrantOutput) <= 0n) {
           throw new Error('Post-grant pool state is empty — possible sandwich attack');
         }
@@ -484,8 +545,8 @@ function SwapPage() {
 
         // [V7-FIX] Multi-step: unwrap WOCT to OCT after swap if toToken is native
         if (toToken.address === '') {
-          updateProgress(90, 'Unwrapping WOCT to OCT...', false);
-          updateToast(toastId, 'pending', 'Step 2/2: Unwrapping WOCT to OCT...');
+          updateProgress(88, 'Unwrapping WOCT to OCT...', false);
+          updateToast(toastId, 'pending', 'Step 2/3: Unwrapping WOCT to OCT...');
           // Use the actual WOCT received (post-grant output) — slightly less than minOutRaw
           const unwrapAmount = postGrantOutput.toString();
           const unwrapHash = await walletService.callContract({
@@ -493,8 +554,17 @@ function SwapPage() {
             method: 'withdraw',
             params: [unwrapAmount],
           });
-          updateProgress(95, 'Waiting for unwrap confirmation...', false);
+          updateProgress(93, 'Waiting for unwrap confirmation...', false);
           await rpc.waitForReceipt(unwrapHash);
+          // [V7-CRIT-10] Pull pattern: claim the pending native OCT
+          updateProgress(96, 'Claiming native OCT...', false);
+          updateToast(toastId, 'pending', 'Step 3/3: Claiming OCT...');
+          const claimHash = await walletService.callContract({
+            contract: CONTRACTS.woct,
+            method: 'claim_withdrawal',
+            params: [],
+          });
+          await rpc.waitForReceipt(claimHash);
         }
 
         updateProgress(100, 'Swap completed', false);
@@ -511,6 +581,8 @@ function SwapPage() {
       const errMsg = e instanceof Error ? e.message : 'An error occurred';
       updateProgress(100, 'Transaction failed', true);
       updateToast(toastId, 'error', `${actionLabel} failed: ${errMsg}`);
+      // [V7-FIX] Reset price impact confirmation on failure (stale state bug)
+      setHighPriceImpactConfirmed(false);
     } finally {
       // [SECURITY] F-2: Reset ref guard
       submittingRef.current = false;
@@ -562,18 +634,26 @@ function SwapPage() {
             <div className="flex gap-1 mt-2">
               {[10, 25, 50, 100].map(pct => {
                 const bal = fromBalance ?? '0';
-                // [SECURITY] F-10: For native OCT (empty address), reserve headroom
-                // for gas. Multi-step flow (wrap + swap) needs ~0.02 OCT for fees,
-                // so use 98% to leave more buffer.
+                // [V7-FIX] For native OCT, reserve headroom for gas.
+                // Wrap needs ~0.05 OCT for tx fee.
+                // Unwrap is fine (no native gas needed for the value side).
+                // Multi-step flow (swap) needs ~0.02 OCT for wrap+swap fees.
                 const isNative = fromToken.address === '';
                 const isMultiStep = isNative && mode === 'swap';
+                const isWrap = isNative && mode === 'wrap';
                 let effectivePct = pct;
                 if (isNative && pct === 100) {
-                  effectivePct = isMultiStep ? 98 : 99;
+                  if (isMultiStep) effectivePct = 98;
+                  else if (isWrap) effectivePct = 95;
+                  else effectivePct = 99;
                 }
                 const rawPct = BigInt(bal) * BigInt(effectivePct) / 100n;
                 const tip = isNative && pct === 100
-                  ? (isMultiStep ? 'Reserves ~0.02 OCT for wrap+swap gas' : 'Reserves ~0.01 OCT for gas')
+                  ? (isMultiStep
+                      ? 'Reserves ~0.02 OCT for wrap+swap gas'
+                      : isWrap
+                        ? 'Reserves ~0.05 OCT for tx fee'
+                        : 'Reserves ~0.01 OCT for gas')
                   : undefined;
                 return (
                   <button
@@ -828,12 +908,13 @@ function SwapPage() {
         </div>
         <div className="p-4 text-sm text-[var(--app-muted)] font-mono">
           <div className="flex justify-between py-1">
-            <span>WOCT Reserve:</span>
-            <span>{formatUnits(reserveA, fromToken.decimals)}</span>
+            {/* [V7-FIX] Use actual pool token labels and decimals (was hardcoded "WOCT"/"OES" and fromToken.decimals) */}
+            <span>{getTokenLabel(poolTokenA)} Reserve:</span>
+            <span>{formatUnits(reserveA, 6)}</span>
           </div>
           <div className="flex justify-between py-1">
-            <span>OES Reserve:</span>
-            <span>{formatUnits(reserveB, toToken.decimals)}</span>
+            <span>{getTokenLabel(poolTokenB)} Reserve:</span>
+            <span>{formatUnits(reserveB, 6)}</span>
           </div>
         </div>
       </div>

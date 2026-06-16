@@ -2,6 +2,17 @@ import { useState, useRef, useEffect } from 'react';
 import { useApp } from '../contexts/AppContext';
 import { truncateAddress } from '../services/swapService';
 
+// [V7-FIX] Format OCT balance adaptively — show 6 decimals for sub-0.01 to
+// preserve dust visibility, 2 decimals for normal amounts.
+function formatOctBalance(balance: string, forceDecimals?: number): string {
+  const num = Number(balance);
+  if (!Number.isFinite(num)) return `${balance} OCT`;
+  if (forceDecimals !== undefined) return `${num.toFixed(forceDecimals)} OCT`;
+  if (num === 0) return '0 OCT';
+  if (num < 0.01) return `${num.toFixed(6)} OCT`;
+  return `${num.toFixed(2)} OCT`;
+}
+
 function WalletConnector() {
   const { isConnected, walletAddress, walletBalance, isWalletInstalled, connect, disconnect } = useApp();
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -35,7 +46,9 @@ function WalletConnector() {
           <span className="w-2 h-2 rounded-full bg-green-500" />
           <span className="hidden sm:inline">{truncateAddress(walletAddress)}</span>
           <span className="text-xs text-[var(--app-muted)]">
-            {walletBalance ? `${Number(walletBalance).toFixed(2)} OCT` : ''}
+            {/* [V7-FIX] Adaptive formatting — use 6 decimals for sub-0.01 OCT to
+                show actual balance, 2 decimals otherwise */}
+            {walletBalance ? formatOctBalance(walletBalance) : ''}
           </span>
         </button>
         {dropdownOpen && (
@@ -52,7 +65,7 @@ function WalletConnector() {
               {walletBalance && (
                 <div className="px-4 py-2 border-b border-[var(--app-border)]">
                   <div className="text-xs text-[var(--app-muted)]">Balance</div>
-                  <div className="text-sm font-medium">{Number(walletBalance).toFixed(4)} OCT</div>
+                  <div className="text-sm font-medium">{formatOctBalance(walletBalance, 6)}</div>
                 </div>
               )}
               <button
