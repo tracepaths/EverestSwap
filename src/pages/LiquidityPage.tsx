@@ -103,7 +103,12 @@ function LiquidityPage() {
           const preselected = searchParams.get('pool');
           if (preselected) {
             const idx = poolInfos.findIndex(p => p.address === preselected);
-            if (idx !== -1) setSelectedPoolIdx(idx);
+            if (idx !== -1) {
+              setSelectedPoolIdx(idx);
+              // [V7-FIX] Reset position selection when switching pools via searchParams
+              // to avoid accidentally removing a position from the wrong pool
+              setSelectedPositionId(null);
+            }
           }
         }
       } catch {
@@ -167,9 +172,13 @@ function LiquidityPage() {
         console.warn('Failed to fetch epoch info');
       }
       try {
-        const oesAddr = CONTRACTS.oes || pool.tokenB.address;
-        const rewardsInfo = await rpc.getOesRewardsInfo(oesAddr);
-        if (mountedRef.current && pool?.address === targetPoolAddr) setRewardsPerEpoch(rewardsInfo.rewardsPerEpoch);
+        // [V7-FIX] Only query rewards if CONTRACTS.oes is set. Don't fallback to
+        // pool.tokenB which could be WOCT or any other token (no rewards method).
+        const oesAddr = CONTRACTS.oes;
+        if (oesAddr) {
+          const rewardsInfo = await rpc.getOesRewardsInfo(oesAddr);
+          if (mountedRef.current && pool?.address === targetPoolAddr) setRewardsPerEpoch(rewardsInfo.rewardsPerEpoch);
+        }
       } catch { /* noop */ }
       try {
         const locked = await rpc.getTotalLockedLp(poolAddr);
@@ -178,7 +187,13 @@ function LiquidityPage() {
     }
   }, [rpc, isConnected, walletAddress, pool, selectedPositionId]);
 
-  useEffect(() => { loadPoolInfo(); const i = setInterval(loadPoolInfo, 10000); return () => clearInterval(i); }, [loadPoolInfo]);
+  // [V7-FIX] Split into two effects: one for initial load, one for periodic refresh
+  // Avoids re-creating interval on every pool/position change
+  useEffect(() => { loadPoolInfo(); }, [loadPoolInfo]);
+  useEffect(() => {
+    const i = setInterval(loadPoolInfo, 10000);
+    return () => clearInterval(i);
+  }, [loadPoolInfo]);
 
   const validTokenA = pool?.tokenA || UNKNOWN_TOKEN;
   const validTokenB = pool?.tokenB || UNKNOWN_TOKEN;

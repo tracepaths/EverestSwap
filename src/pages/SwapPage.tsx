@@ -9,11 +9,13 @@ import TokenSelectModal from '../components/TokenSelectModal';
 
 const HARDCODED_TOKENS = [OCT_TOKEN, WOCT_TOKEN, OES_TOKEN];
 
-// [V7-FIX] Map pool address to display label
+// [V7-FIX] Map pool address to display label (case-insensitive comparison
+// to handle any RPC case variations)
 function getTokenLabel(address: string): string {
   if (!address || address === '') return 'OCT';
-  if (address === WOCT_TOKEN.address) return 'WOCT';
-  if (address === OES_TOKEN.address) return 'OES';
+  const lower = address.toLowerCase();
+  if (lower === WOCT_TOKEN.address.toLowerCase()) return 'WOCT';
+  if (lower === OES_TOKEN.address.toLowerCase()) return 'OES';
   return address.slice(0, 8) + '...';
 }
 
@@ -429,6 +431,11 @@ function SwapPage() {
         let actualFromToken = fromToken;
         let actualRawAmount = rawAmount;
         if (fromToken.address === '') {
+          // [V7-FIX] Pre-check native OCT balance before auto-wrap. Without this,
+          // the wrap would fail on-chain and user pays gas for nothing.
+          if (fromBalance !== null && BigInt(rawAmount) > BigInt(fromBalance)) {
+            throw new Error(`Insufficient OCT balance for wrap+swap (have ${formatUnits(fromBalance, 6)} OCT)`);
+          }
           updateProgress(10, 'Wrapping OCT to WOCT...', false);
           updateToast(toastId, 'pending', 'Step 1/2: Wrapping OCT to WOCT...');
           const wrapHash = await walletService.callContract({
@@ -550,10 +557,15 @@ function SwapPage() {
 
         // [V7-FIX] Multi-step: unwrap WOCT to OCT after swap if toToken is native
         if (toToken.address === '') {
+          // [V7-FIX] Use actual WOCT balance after swap, not postGrantOutput
+          // (which is expected output). If pool moved between swap and unwrap,
+          // actual balance may be less. Cap at actual balance to avoid revert.
+          const actualWoctBal = await rpc.getTokenBalance(WOCT_TOKEN.address, walletAddress);
+          const unwrapAmount = BigInt(actualWoctBal) < BigInt(postGrantOutput.toString())
+            ? actualWoctBal
+            : postGrantOutput.toString();
           updateProgress(88, 'Unwrapping WOCT to OCT...', false);
           updateToast(toastId, 'pending', 'Step 2/3: Unwrapping WOCT to OCT...');
-          // Use the actual WOCT received (post-grant output) — slightly less than minOutRaw
-          const unwrapAmount = postGrantOutput.toString();
           const unwrapHash = await walletService.callContract({
             contract: CONTRACTS.woct,
             method: 'withdraw',

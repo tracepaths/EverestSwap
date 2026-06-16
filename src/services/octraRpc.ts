@@ -122,9 +122,11 @@ export class OctraRpc {
     if (typeof raw === 'string') {
       const sep = raw.includes(':') ? ':' : ',';
       const parts = raw.split(sep);
-      if (parts.length >= 2) {
-        return { reserveA: parts[0], reserveB: parts[1] };
+      // [V7-FIX] Validate exactly 2 parts (not >= 2 which silently ignores extra)
+      if (parts.length === 2) {
+        return { reserveA: parts[0].trim(), reserveB: parts[1].trim() };
       }
+      throw new Error('Unexpected reserves string format (expected 2 parts): ' + raw.slice(0, 100));
     }
     // [SECURITY] FM-2: Throw on parse failure instead of silently returning '0' which
     // could trick the user into adding liquidity to an already-existing pool
@@ -356,13 +358,15 @@ export class OctraRpc {
   private async callFactoryPoolAddress(factoryAddress: string, tokenA: string, tokenB: string): Promise<string> {
     try {
       const raw: unknown = await this.contractView(factoryAddress, 'get_pool', [tokenA, tokenB]);
+      // [V7-FIX] Reject all falsy/placeholder values from various RPC versions
+      const isValidResult = (s: string) => s && s !== '' && s !== '0' && s !== 'null' && s !== 'undefined';
       if (raw && typeof raw === 'object') {
         const obj = raw as Record<string, unknown>;
-        if (typeof obj.result === 'string' && obj.result !== '' && obj.result !== '0') return obj.result;
+        if (typeof obj.result === 'string' && isValidResult(obj.result)) return obj.result;
         const storage = obj.storage as Record<string, string> | undefined;
-        if (storage?.pool && storage.pool !== '' && storage.pool !== '0') return storage.pool;
+        if (storage?.pool && isValidResult(storage.pool)) return storage.pool;
       }
-      if (typeof raw === 'string' && raw !== '' && raw !== '0') return raw;
+      if (typeof raw === 'string' && isValidResult(raw)) return raw;
     } catch { /* noop */ }
     return '';
   }

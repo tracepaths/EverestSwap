@@ -143,6 +143,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // [V7-FIX] Clear stale state when network changes
     setTokenCacheNetwork(n);
     setWalletBalance('');
+    setToasts([]);  // Clear stale toasts
   }, [rpc]);
 
   const setTheme = useCallback((t: AppTheme) => {

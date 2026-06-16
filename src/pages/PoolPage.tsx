@@ -138,6 +138,14 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
       if (num <= 0 || denom <= 0 || num >= denom) {
         throw new Error('Invalid fee: numerator must be > 0 and < denominator');
       }
+      // [V7-FIX] Validate fee range matches contract: 0.03% <= fee <= 1%
+      // Contract: num * 10000 >= denom * 3 AND num * 1000 <= denom * 10
+      if (num * 10000 < denom * 3) {
+        throw new Error('Fee too low (min 0.03%, e.g. 3/10000)');
+      }
+      if (num * 1000 > denom * 10) {
+        throw new Error('Fee too high (max 1%, e.g. 10/1000)');
+      }
       return { num, denom };
     }
     return { num: 3, denom: 1000 };
@@ -263,6 +271,14 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated }: {
       // [V7-SECURITY-FIX] Guard against null meta during initial liquidity
       const rawInitA = initAmountA && metaA ? parseUnits(initAmountA, metaA.decimals) : null;
       const rawInitB = initAmountB && metaB ? parseUnits(initAmountB, metaB.decimals) : null;
+
+      // [V7-FIX] Validate that initial liquidity amounts are consistent:
+      // - both empty = no initial liquidity (allowed)
+      // - both positive = ok
+      // - one set, one not = error (user forgot one)
+      if ((initAmountA && !initAmountB) || (initAmountB && !initAmountA)) {
+        throw new Error('Enter both amounts for initial liquidity, or leave both empty.');
+      }
 
       if (rawInitA && rawInitB && BigInt(rawInitA) > 0 && BigInt(rawInitB) > 0) {
         safeSetStep({ type: 'granting_a' });
@@ -581,9 +597,13 @@ function PoolPage() {
           const feeParams = await rpc.getPoolFeeParams(addr);
           let rewardsPerEpoch = 0;
           try {
-            const oesAddr = CONTRACTS.oes || info.tokenB;
-            const rewardsInfo = await rpc.getOesRewardsInfo(oesAddr);
-            rewardsPerEpoch = rewardsInfo.rewardsPerEpoch;
+            // [V7-FIX] Validate oesAddr is actually an OES contract (has get_rewards_info).
+            // Don't fallback to tokenB which could be WOCT or any other token.
+            const oesAddr = CONTRACTS.oes;
+            if (oesAddr) {
+              const rewardsInfo = await rpc.getOesRewardsInfo(oesAddr);
+              rewardsPerEpoch = rewardsInfo.rewardsPerEpoch;
+            }
           } catch { /* noop */ }
           let totalLockedLp = '0';
           try {

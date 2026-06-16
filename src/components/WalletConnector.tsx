@@ -14,10 +14,18 @@ function formatOctBalance(balance: string, forceDecimals?: number): string {
 }
 
 function WalletConnector() {
-  const { isConnected, walletAddress, walletBalance, isWalletInstalled, connect, disconnect } = useApp();
+  const { isConnected, walletAddress, walletBalance, isWalletInstalled, connect, disconnect, refreshBalance } = useApp();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // [V7-FIX] Refresh balance every 10s while connected so it stays current
+  // after wraps, swaps, etc.
+  useEffect(() => {
+    if (!isConnected) return;
+    const i = setInterval(() => { refreshBalance().catch(() => {}); }, 10000);
+    return () => clearInterval(i);
+  }, [isConnected, refreshBalance]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
