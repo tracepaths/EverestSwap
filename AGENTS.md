@@ -16,7 +16,7 @@ everestswap/
     hooks/                 useIndexer
     types/                 index.ts (contract addresses, token definitions)
   public/
-    contracts/             SwapPool.aml, Token.aml (compiled at deploy time)
+    contracts/             SwapPool.aml, TokenV2.aml (compiled at deploy time)
     docs.md, favicon.svg, icons.svg
 ```
 

@@ -39,7 +39,7 @@ src/
   hooks/               useIndexer
   types/               index.ts (contract addresses, token definitions)
 public/
-  contracts/           SwapPool.aml, Token.aml (for on-chain deployment)
+  contracts/           SwapPool.aml, TokenV2.aml (for on-chain deployment)
 ```
 
 ## Repos

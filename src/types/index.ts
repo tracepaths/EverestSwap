@@ -30,7 +30,6 @@ export interface TokenLaunchConfig {
 
   // Step 2: Optional Features
   mintable: boolean;
-  maxSupply: string;
   burnable: boolean;
   pausable: boolean;
   blacklist: boolean;
@@ -42,12 +41,13 @@ export interface TokenLaunchConfig {
   cooldownSeconds: string;
   autoBurn: boolean;
   autoBurnBps: string;
-  reflection: boolean;
+  // [V7-PASS8] H-8 fix: reflection removed (was dead state in contract)
 
   // Step 3: Taxes
   tax: boolean;
   taxBps: string;
-  taxRecipientMode: 'self' | 'lp' | 'burn' | 'custom';
+  // [V7-PASS8] H-11 fix: removed 'lp' (not implementable in current contract)
+  taxRecipientMode: 'self' | 'burn' | 'custom';
   customTaxRecipient: string;
 }
 

@@ -179,23 +179,24 @@ export class WalletService {
       poolAddress: string;
       feeOu?: string;
       message?: string;
+      // [V7-PASS8] M-8 fix: allow caller to pre-fetch the nonce to avoid race
+      // where concurrent txs bump nonce between address computation and submit.
+      nonce?: number;
     }
   ): Promise<string> {
     // [SECURITY] F-1: Snapshot wallet address at the start of the deploy flow.
-    // If the wallet disconnects (or switches account) between the balance fetch
-    // and the submit, the deploy will be addressed to a contract computed from
-    // a stale address — abort instead.
     const address = this._address;
     if (!address) throw new Error('Not connected');
     const addressSnapshot = address;
 
-    // [SECURITY] F-1: Re-fetch nonce immediately before submission to avoid stale nonce
-    // [SECURITY] F-5: Note — the nonce is computed as `balance.nonce + 1`. If the user
-    // has pending txs from another tab/operation, this might collide. We re-check below
-    // and abort if the wallet identity changed. For a tighter fix, integrate a
-    // nonce manager that tracks pending txs per address.
-    const balance = await rpc.getBalance(addressSnapshot);
-    const nonce = balance.nonce + 1;
+    // [V7-PASS8] M-8: if caller pre-fetched the nonce, use it; otherwise fetch fresh
+    let nonce: number;
+    if (typeof params.nonce === 'number' && Number.isFinite(params.nonce) && params.nonce > 0) {
+      nonce = params.nonce;
+    } else {
+      const balance = await rpc.getBalance(addressSnapshot);
+      nonce = balance.nonce + 1;
+    }
     // [SECURITY] FM-8: Floor and clamp timestamp to a reasonable range to prevent
     // gaming with system clock (0, far future, NaN, etc.)
     let timestamp = Math.floor(Date.now() / 1000);

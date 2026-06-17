@@ -30,7 +30,6 @@ const INITIAL_CONFIG: TokenLaunchConfig = {
 
   // Step 2: Optional Features
   mintable: false,
-  maxSupply: '0',
   burnable: false,
   pausable: false,
   blacklist: false,
@@ -42,7 +41,6 @@ const INITIAL_CONFIG: TokenLaunchConfig = {
   cooldownSeconds: '60',
   autoBurn: false,
   autoBurnBps: '100',
-  reflection: false,
 
   // Step 3: Taxes
   tax: false,
@@ -51,24 +49,28 @@ const INITIAL_CONFIG: TokenLaunchConfig = {
   customTaxRecipient: '',
 };
 
-// [V7-FIX] Convert string amount to BigInt safely (max Number.MAX_SAFE_INTEGER)
+// [V7-PASS8] C-8 fix: cap on the raw (result) value, not the input
+// [V7-PASS8] AML int is 64-bit; max value is 2^63-1 = 9_223_372_036_854_775_807
+const MAX_INT64 = 9_223_372_036_854_775_807n;
+
 function toBigInt(s: string, decimals: number): bigint | null {
   if (!s || !/^\d+$/.test(s)) return null;
   try {
     const v = BigInt(s);
     if (v <= 0n) return null;
-    if (v > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-    return v * BigInt(10) ** BigInt(decimals);
+    // [V7-PASS8] C-8: cap the final raw value (input * 10^decimals), not the input alone
+    const raw = v * BigInt(10) ** BigInt(decimals);
+    if (raw > MAX_INT64 || raw <= 0n) return null;
+    return raw;
   } catch {
     return null;
   }
 }
 
-// [V7-FIX] Octra address validator: must start with 'oct' and be 40-60 chars
+// [V7-PASS8] H-10 fix: use the strict base58 validator from octraRpc
+import { isValidOctraAddress } from '../services/octraRpc';
 function isValidAddress(addr: string): boolean {
-  if (!addr) return false;
-  const t = addr.trim();
-  return t.startsWith('oct') && t.length >= 40 && t.length <= 60;
+  return isValidOctraAddress(addr);
 }
 
 function LaunchTokenPage() {
@@ -93,26 +95,9 @@ function LaunchTokenPage() {
     }
   }, [config.name, config.contractName]);
 
-  // [V7-FIX] Resolve supply recipient address based on mode
-  const supplyRecipientAddress = useMemo(() => {
-    if (config.supplyRecipientMode === 'self') return walletService.address || '';
-    return config.customSupplyRecipient.trim();
-  }, [config.supplyRecipientMode, config.customSupplyRecipient]);
-
-  // [V7-FIX] Resolve token owner address based on mode
-  const tokenOwnerAddress = useMemo(() => {
-    if (config.tokenOwnerMode === 'self') return walletService.address || '';
-    return config.customTokenOwner.trim();
-  }, [config.tokenOwnerMode, config.customTokenOwner]);
-
-  // [V7-FIX] Resolve tax recipient address based on mode
-  const taxRecipientAddress = useMemo(() => {
-    if (!config.tax) return '';
-    if (config.taxRecipientMode === 'self') return walletService.address || '';
-    if (config.taxRecipientMode === 'burn') return '';
-    if (config.taxRecipientMode === 'lp') return 'lp_pool';
-    return config.customTaxRecipient.trim();
-  }, [config.tax, config.taxRecipientMode, config.customTaxRecipient]);
+  // [V7-PASS8] C-10 fix: don't use useMemo with mutable walletService.address.
+  // Addresses are now resolved inside handleLaunch from the walletSnapshot.
+  // [V7-PASS8] H-11 fix: removed 'lp' tax recipient mode (not implementable)
 
   // [V7-FIX] Per-step validation
   const step1Errors = useMemo(() => {
@@ -147,11 +132,6 @@ function LaunchTokenPage() {
 
   const step2Errors = useMemo(() => {
     const errs: string[] = [];
-    if (config.mintable && config.maxSupply && BigInt(config.maxSupply || '0') > 0n) {
-      const ms = BigInt(config.maxSupply);
-      const is = BigInt(config.initialSupply || '0');
-      if (ms < is) errs.push('Max supply must be >= initial supply');
-    }
     if (config.maxTx && (!config.maxTxAmount || BigInt(config.maxTxAmount || '0') <= 0n)) {
       errs.push('Max transaction amount must be > 0');
     }
@@ -194,7 +174,7 @@ function LaunchTokenPage() {
 
   // [V7-FIX] Cost estimation — base + per-feature gas
   const estimatedCost = useMemo(() => {
-    let base = 200000;  // base deploy
+    let base = 200000;
     if (config.mintable) base += 20000;
     if (config.burnable) base += 20000;
     if (config.pausable) base += 20000;
@@ -204,47 +184,67 @@ function LaunchTokenPage() {
     if (config.cooldown) base += 20000;
     if (config.tax) base += 30000;
     if (config.autoBurn) base += 30000;
-    if (config.reflection) base += 20000;
     return (base / 1_000_000).toFixed(4);
   }, [config]);
 
-  // [V7-FIX] Build the 25-arg constructor message for TokenV2
-  const buildConstructorMessage = (): string | null => {
+  // [V7-PASS8] C-10 fix: build constructor message from explicit wallet snapshot
+  // [V7-PASS8] C-9 fix: cap max_tx/max_wallet at MAX_INT64
+  // [V7-PASS8] M-9 fix: stringify all int params for consistency
+  // [V7-PASS8] H-11 fix: removed reflection_flag from constructor (dead in contract)
+  // [V7-PASS8] H-11 fix: removed 'lp_pool' tax recipient (not implementable)
+  function buildConstructorMessage(walletSnap: string): string | null {
     const raw = toBigInt(config.initialSupply, config.decimals);
     if (!raw) return null;
 
-    const maxTx = config.maxTx ? BigInt(config.maxTxAmount || '0') * BigInt(10) ** BigInt(config.decimals) : 0n;
-    const maxWallet = config.maxWallet ? BigInt(config.maxWalletAmount || '0') * BigInt(10) ** BigInt(config.decimals) : 0n;
-    const cooldownSecs = config.cooldown ? parseInt(config.cooldownSeconds, 10) : 0;
-    const taxBps = config.tax ? parseInt(config.taxBps, 10) : 0;
-    const taxRecipient = config.tax ? taxRecipientAddress : walletService.address || '';
-    const autoBurnBps = config.autoBurn ? parseInt(config.autoBurnBps, 10) : 0;
+    // Resolve addresses from snapshot (C-10 fix)
+    const tokenOwner = config.tokenOwnerMode === 'self' ? walletSnap : config.customTokenOwner.trim();
+    const supplyRecipient = config.supplyRecipientMode === 'self' ? walletSnap : config.customSupplyRecipient.trim();
+    const taxRecipient = config.taxRecipientMode === 'custom' ? config.customTaxRecipient.trim() : walletSnap;
 
+    // Cap max_tx and max_wallet (C-9 fix)
+    let maxTx = 0n;
+    let maxWallet = 0n;
+    if (config.maxTx) {
+      maxTx = BigInt(config.maxTxAmount || '0') * BigInt(10) ** BigInt(config.decimals);
+      if (maxTx > MAX_INT64) return null;
+    }
+    if (config.maxWallet) {
+      maxWallet = BigInt(config.maxWalletAmount || '0') * BigInt(10) ** BigInt(config.decimals);
+      if (maxWallet > MAX_INT64) return null;
+    }
+
+    // NaN guard (M-11 fix)
+    const cooldownBlocks = config.cooldown ? parseInt(config.cooldownSeconds, 10) : 0;
+    if (config.cooldown && (!Number.isFinite(cooldownBlocks) || cooldownBlocks < 1)) return null;
+    const taxBps = config.tax ? parseInt(config.taxBps, 10) : 0;
+    if (config.tax && (!Number.isFinite(taxBps) || taxBps < 1)) return null;
+    const autoBurnBps = config.autoBurn ? parseInt(config.autoBurnBps, 10) : 0;
+    if (config.autoBurn && (!Number.isFinite(autoBurnBps) || autoBurnBps < 1)) return null;
+
+    // 23-arg constructor (reflection removed)
     return JSON.stringify([
       config.name.trim(),                                    // 1. n
       config.symbol.trim().toUpperCase(),                    // 2. s
       config.contractName.trim() || (config.name.trim() + 'Token'),  // 3. contract_name
-      raw.toString(),                                        // 4. initial_supply
-      config.decimals,                                       // 5. dec
-      tokenOwnerAddress,                                     // 6. initial_owner
-      supplyRecipientAddress,                                // 7. supply_recipient
-      0,                                                     // 8. max_supply (disabled for now)
-      maxTx.toString(),                                      // 9. max_tx_amount
-      maxWallet.toString(),                                  // 10. max_wallet_amount
-      cooldownSecs,                                          // 11. cooldown_seconds
-      taxBps,                                                // 12. tax_bps
-      taxRecipient,                                          // 13. tax_recipient
-      autoBurnBps,                                           // 14. auto_burn_bps
-      config.mintable,                                       // 15
-      config.burnable,                                       // 16
-      config.pausable,                                       // 17
-      config.blacklist,                                      // 18
-      config.maxTx,                                          // 19
-      config.maxWallet,                                      // 20
-      config.cooldown,                                       // 21
-      config.tax,                                            // 22
-      config.autoBurn,                                       // 23
-      config.reflection,                                     // 24
+      raw.toString(),                                        // 4. initial_supply (int)
+      String(config.decimals),                               // 5. dec
+      tokenOwner,                                            // 6. initial_owner
+      supplyRecipient,                                       // 7. supply_recipient
+      maxTx.toString(),                                      // 8. max_tx_amount
+      maxWallet.toString(),                                  // 9. max_wallet_amount
+      String(cooldownBlocks),                                // 10. cooldown_blocks
+      String(taxBps),                                        // 11. tax_bps
+      taxRecipient,                                          // 12. tax_recipient
+      String(autoBurnBps),                                   // 13. auto_burn_bps
+      config.mintable,                                       // 14
+      config.burnable,                                       // 15
+      config.pausable,                                       // 16
+      config.blacklist,                                      // 17
+      config.maxTx,                                          // 18
+      config.maxWallet,                                      // 19
+      config.cooldown,                                       // 20
+      config.tax,                                            // 21
+      config.autoBurn,                                       // 22
     ]);
   };
 
@@ -284,13 +284,16 @@ function LaunchTokenPage() {
 
       setStep({ type: 'deploying' });
 
-      const constructorMessage = buildConstructorMessage();
-      if (!constructorMessage) throw new Error('Invalid supply value');
+      // [V7-PASS8] C-10 fix: pass walletSnapshot to build message from same source
+      const constructorMessage = buildConstructorMessage(walletSnapshot);
+      if (!constructorMessage) throw new Error('Invalid supply or amount exceeds int64 limit');
 
       const deployTxHash = await walletService.signAndSubmitDeployTx(rpc, {
         bytecode,
         poolAddress: tokenAddress,
         message: constructorMessage,
+        // [V7-PASS8] M-8 fix: pass pre-fetched nonce to avoid race with concurrent txs
+        nonce: deployNonce,
       });
 
       await rpc.waitForReceipt(deployTxHash, 60);
@@ -560,20 +563,10 @@ function LaunchTokenPage() {
                 {/* Mintable */}
                 <FeatureCard
                   title="Mintable"
-                  desc="Owner can mint new tokens after launch"
+                  desc="Owner can mint new tokens after launch (uncapped)"
                   enabled={config.mintable}
                   onToggle={() => update('mintable', !config.mintable)}
-                >
-                  <label className="text-[10px] text-[var(--app-muted-2)]">Max Supply (0 = uncapped)</label>
-                  <input
-                    type="text"
-                    value={config.maxSupply}
-                    onChange={e => update('maxSupply', sanitizeNumericInput(e.target.value))}
-                    placeholder="0"
-                    disabled={!config.mintable}
-                    className="w-full mt-1 bg-[var(--app-bg)] border border-[var(--app-border)] rounded-lg px-3 py-2 text-sm outline-none focus:border-[var(--app-blue)] disabled:opacity-50"
-                  />
-                </FeatureCard>
+                />
 
                 {/* Burnable */}
                 <FeatureCard
@@ -678,13 +671,7 @@ function LaunchTokenPage() {
                   </p>
                 </FeatureCard>
 
-                {/* Reflection */}
-                <FeatureCard
-                  title="Reflection (RFI)"
-                  desc="Distribute % of transfers to holders"
-                  enabled={config.reflection}
-                  onToggle={() => update('reflection', !config.reflection)}
-                />
+                {/* Reflection (RFI) removed in V7-PASS8 — see contract notes */}
               </div>
 
               {step2Errors.length > 0 && (
@@ -744,8 +731,8 @@ function LaunchTokenPage() {
 
                   <div className="space-y-1.5">
                     <label className="text-xs text-[var(--app-muted)]">Tax Recipient</label>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                      {(['self', 'lp', 'burn', 'custom'] as const).map(mode => (
+                    <div className="grid grid-cols-3 gap-2">
+                      {(['self', 'burn', 'custom'] as const).map(mode => (
                         <button
                           key={mode}
                           type="button"
@@ -756,7 +743,7 @@ function LaunchTokenPage() {
                               : 'border-[var(--app-border)]'
                           }`}
                         >
-                          {mode === 'self' ? 'My wallet' : mode === 'lp' ? 'Auto LP' : mode === 'burn' ? 'Burn' : 'Custom'}
+                          {mode === 'self' ? 'My wallet' : mode === 'burn' ? 'Burn' : 'Custom'}
                         </button>
                       ))}
                     </div>
@@ -820,10 +807,9 @@ function LaunchTokenPage() {
                   {config.cooldown && <Feature enabled>✓ Cooldown ({config.cooldownSeconds}s)</Feature>}
                   {config.autoBurn && <Feature enabled>✓ Auto-burn ({config.autoBurnBps} bps)</Feature>}
                   {config.tax && <Feature enabled>✓ Tax ({config.taxBps} bps)</Feature>}
-                  {config.reflection && <Feature enabled>✓ Reflection</Feature>}
                   {!config.mintable && !config.burnable && !config.pausable && !config.blacklist &&
                    !config.maxTx && !config.maxWallet && !config.cooldown && !config.autoBurn &&
-                   !config.tax && !config.reflection && (
+                   !config.tax && (
                     <div className="col-span-2 text-[var(--app-muted-2)] italic">No optional features</div>
                   )}
                 </div>
@@ -840,8 +826,8 @@ function LaunchTokenPage() {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-[var(--app-muted)]">Wallet Balance</span>
-                  <span className={`font-mono ${walletBalance && Number(walletBalance) / 1e6 < parseFloat(estimatedCost) ? 'text-[var(--app-danger)]' : ''}`}>
-                    {walletBalance ? `${(Number(walletBalance) / 1_000_000).toFixed(4)} OCT` : '—'}
+                  <span className={`font-mono ${walletBalance && Number(walletBalance) < parseFloat(estimatedCost) ? 'text-[var(--app-danger)]' : ''}`}>
+                    {walletBalance ? `${Number(walletBalance).toFixed(4)} OCT` : '—'}
                   </span>
                 </div>
                 <div className="flex justify-between">
