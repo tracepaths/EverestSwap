@@ -15,6 +15,42 @@ export interface PoolInfo {
   totalLP: string;
 }
 
+// [V7-FIX] TokenV2 launch configuration — 20lab-style features
+export interface TokenLaunchConfig {
+  // Step 1: General
+  name: string;
+  symbol: string;
+  contractName: string;
+  initialSupply: string;
+  decimals: number;
+  supplyRecipientMode: 'self' | 'custom';
+  customSupplyRecipient: string;
+  tokenOwnerMode: 'self' | 'custom';
+  customTokenOwner: string;
+
+  // Step 2: Optional Features
+  mintable: boolean;
+  maxSupply: string;
+  burnable: boolean;
+  pausable: boolean;
+  blacklist: boolean;
+  maxTx: boolean;
+  maxTxAmount: string;
+  maxWallet: boolean;
+  maxWalletAmount: string;
+  cooldown: boolean;
+  cooldownSeconds: string;
+  autoBurn: boolean;
+  autoBurnBps: string;
+  reflection: boolean;
+
+  // Step 3: Taxes
+  tax: boolean;
+  taxBps: string;
+  taxRecipientMode: 'self' | 'lp' | 'burn' | 'custom';
+  customTaxRecipient: string;
+}
+
 export {
   RPC_URL,
   INDEXER_URL,
