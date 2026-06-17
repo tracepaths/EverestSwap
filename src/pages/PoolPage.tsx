@@ -114,7 +114,9 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect }: {
     return () => { cancelled = true; };
   }, [rpc, tokenA, tokenB]);
 
+  // [V7-PASS10] LOW-28: prevent selecting the same token for both A and B
   const handleSelectTokenA = (address: string, meta: TokenMeta) => {
+    if (address === tokenB) return;
     setTokenA(address);
     setMetaA(meta);
     setInitAmountA('');
@@ -122,6 +124,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect }: {
   };
 
   const handleSelectTokenB = (address: string, meta: TokenMeta) => {
+    if (address === tokenA) return;
     setTokenB(address);
     setMetaB(meta);
     setInitAmountB('');
@@ -164,6 +167,50 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect }: {
     const safeSetStep = (s: typeof step) => {
       if (mountedRef.current) setStep(s);
     };
+    // [V7-PASS10] HIGH-8: pre-flight check for paused/blacklisted tokens.
+    // Catches before deploy so user doesn't waste gas on a pool that will fail
+    // at the grant step due to paused/blacklist checks.
+    // tokenA/tokenB are address strings; resolve to symbols via getTokenMeta when needed.
+    try {
+      const resolveSym = async (addr: string): Promise<string> => {
+        try { const m = await rpc.getTokenMeta(addr); return m.symbol; } catch { return addr.slice(0, 6); }
+      };
+      const userAddr = walletService.address || '';
+      if (tokenA) {
+        const statusA = await rpc.getTokenStatus(tokenA, userAddr);
+        if (statusA.paused) {
+          const symA = await resolveSym(tokenA);
+          safeSetStep({ type: 'error', message: `${symA} is paused — cannot create pool` });
+          createSubmittingRef.current = false;
+          setCreating(false);
+          return;
+        }
+        if (statusA.blacklisted) {
+          const symA = await resolveSym(tokenA);
+          safeSetStep({ type: 'error', message: `Your wallet is blacklisted from ${symA}` });
+          createSubmittingRef.current = false;
+          setCreating(false);
+          return;
+        }
+      }
+      if (tokenB) {
+        const statusB = await rpc.getTokenStatus(tokenB, userAddr);
+        if (statusB.paused) {
+          const symB = await resolveSym(tokenB);
+          safeSetStep({ type: 'error', message: `${symB} is paused — cannot create pool` });
+          createSubmittingRef.current = false;
+          setCreating(false);
+          return;
+        }
+        if (statusB.blacklisted) {
+          const symB = await resolveSym(tokenB);
+          safeSetStep({ type: 'error', message: `Your wallet is blacklisted from ${symB}` });
+          createSubmittingRef.current = false;
+          setCreating(false);
+          return;
+        }
+      }
+    } catch { /* noop — proceed if status fetch fails */ }
     const factoryAddr = CONTRACTS.factory;
     if (!factoryAddr) {
       safeSetStep({ type: 'error', message: 'Factory contract not configured' });
@@ -596,11 +643,14 @@ function PoolPage() {
         try {
           const info = await rpc.getPoolInfo(addr);
           if (!info.tokenA || !info.tokenB) continue;
-          const metaA = await rpc.getTokenMeta(info.tokenA);
-          const metaB = await rpc.getTokenMeta(info.tokenB);
+          // [V7-PASS10] LOW-35: parallelize meta + fee fetch
+          const [metaA, metaB, feeParams] = await Promise.all([
+            rpc.getTokenMeta(info.tokenA),
+            rpc.getTokenMeta(info.tokenB),
+            rpc.getPoolFeeParams(addr),
+          ]);
           if (!metaA.symbol || metaA.symbol === '???') continue;
           if (!metaB.symbol || metaB.symbol === '???') continue;
-          const feeParams = await rpc.getPoolFeeParams(addr);
           let rewardsPerEpoch = 0;
           try {
             // [V7-FIX] Validate oesAddr is actually an OES contract (has get_rewards_info).

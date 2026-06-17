@@ -99,12 +99,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // [V7-FIX] Poll wallet connection to detect external disconnect (user locks
   // extension, uninstalls, etc.). React state doesn't auto-update.
+  // [V7-PASS10] CRITICAL-3: debounce — require 2 consecutive empty checks (~10s)
+  // before treating the wallet as disconnected. Avoids false disconnects during
+  // cold start, locked extension, or slow account switching.
   useEffect(() => {
     if (!isConnected) return;
+    let emptyStreak = 0;
     const i = setInterval(() => {
       if (walletService.address === '' && walletAddress !== '') {
-        setWalletAddress('');
-        setWalletBalance('');
+        emptyStreak++;
+        if (emptyStreak >= 2) {
+          setWalletAddress('');
+          setWalletBalance('');
+          emptyStreak = 0;
+        }
+      } else {
+        emptyStreak = 0;
       }
     }, 5000);
     return () => clearInterval(i);

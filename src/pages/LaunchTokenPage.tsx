@@ -112,7 +112,8 @@ function LaunchTokenPage() {
     const errs: string[] = [];
     if (!config.name.trim()) errs.push('Token name is required');
     else if (config.name.trim().length > 50) errs.push('Name must be 50 characters or less');
-    else if (!/^[a-zA-Z0-9 _.,'-]+$/.test(config.name.trim())) errs.push('Name contains invalid characters');
+      // [V7-PASS10] LOW-29: allow Unicode letters via \p{L}, \p{N}
+      else if (!/^[\p{L}\p{N} _.,'-]+$/u.test(config.name.trim())) errs.push('Name contains invalid characters');
 
     if (!config.symbol.trim()) errs.push('Token symbol is required');
     else if (config.symbol.trim().length > 20) errs.push('Symbol must be 20 characters or less');
@@ -154,6 +155,28 @@ function LaunchTokenPage() {
       const bps = parseInt(config.autoBurnBps, 10);
       if (isNaN(bps) || bps < 1 || bps > 1000) errs.push('Auto-burn must be 1-1000 bps (0.01%-10%)');
     }
+    // [V7-PASS10] MED-20: trusted address validation
+    if (config.maxWallet) {
+      const trusted = [config.trusted1, config.trusted2, config.trusted3, config.trusted4, config.trusted5]
+        .map(t => t.trim()).filter(t => t !== '');
+      // Duplicate detection
+      const seen = new Set<string>();
+      for (const t of trusted) {
+        if (seen.has(t)) {
+          errs.push(`Duplicate trusted address: ${t.slice(0, 10)}...`);
+          break;
+        }
+        seen.add(t);
+      }
+      // Format validation
+      for (let i = 0; i < trusted.length; i++) {
+        if (!isValidAddress(trusted[i])) {
+          errs.push(`Trusted #${i + 1} is not a valid Octra address`);
+        }
+      }
+      // Self-trust warning (informational, not a blocker)
+      // (deferred to UI as a soft warning)
+    }
     return errs;
   }, [config]);
 
@@ -181,19 +204,8 @@ function LaunchTokenPage() {
   const canLaunch = isConnected && allErrors.length === 0 && step.type === 'idle';
 
   // [V7-FIX] Cost estimation — base + per-feature gas
-  const estimatedCost = useMemo(() => {
-    let base = 200000;
-    if (config.mintable) base += 20000;
-    if (config.burnable) base += 20000;
-    if (config.pausable) base += 20000;
-    if (config.blacklist) base += 20000;
-    if (config.maxTx) base += 20000;
-    if (config.maxWallet) base += 20000;
-    if (config.cooldown) base += 20000;
-    if (config.tax) base += 30000;
-    if (config.autoBurn) base += 30000;
-    return (base / 1_000_000).toFixed(4);
-  }, [config]);
+  // [V7-PASS10] MED-19: starting cost estimate (overridden after compile with real bytecode size)
+  const [estimatedCost, setEstimatedCost] = useState('0.2000');
 
   // [V7-PASS8] C-10 fix: build constructor message from explicit wallet snapshot
   // [V7-PASS8] C-9 fix: cap max_tx/max_wallet at MAX_INT64
@@ -281,6 +293,11 @@ function LaunchTokenPage() {
 
       const compileResult = await rpc.compileAml(source);
       const bytecode = compileResult.bytecode;
+      // [V7-PASS10] MED-19: compute more accurate cost from bytecode size + instructions
+      const instructions = Number(compileResult.instructions || 0);
+      const baseGas = Math.ceil(instructions * 1.2);  // rough estimate
+      const dynamicCostOCT = (baseGas / 1_000_000).toFixed(4);
+      setEstimatedCost(dynamicCostOCT);
 
       setStep({ type: 'computing_address' });
 
@@ -352,6 +369,14 @@ function LaunchTokenPage() {
     if (wizardStep === 1 && step1Valid) setWizardStep(2);
     else if (wizardStep === 2 && step2Valid) setWizardStep(3);
     else if (wizardStep === 3 && step3Valid) setWizardStep(4);
+  };
+
+  // [V7-PASS10] MED-13/14: safe numeric input wrapper — sanitizeNumericInput now
+  // returns 'INVALID' for scientific notation or negative input. Convert to '' so
+  // the field clears rather than displaying 'INVALID'.
+  const safeNumeric = (v: string): string => {
+    const r = sanitizeNumericInput(v);
+    return r === 'INVALID' ? '' : r;
   };
 
   const goBack = () => {
@@ -458,7 +483,7 @@ function LaunchTokenPage() {
                   <input
                     type="text"
                     value={config.initialSupply}
-                    onChange={e => update('initialSupply', sanitizeNumericInput(e.target.value))}
+                    onChange={e => update('initialSupply', safeNumeric(e.target.value))}
                     placeholder="1000000"
                     className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[var(--app-blue)] transition-colors"
                   />
@@ -619,7 +644,7 @@ function LaunchTokenPage() {
                   <input
                     type="text"
                     value={config.maxTxAmount}
-                    onChange={e => update('maxTxAmount', sanitizeNumericInput(e.target.value))}
+                    onChange={e => update('maxTxAmount', safeNumeric(e.target.value))}
                     placeholder="10000"
                     disabled={!config.maxTx}
                     className="w-full mt-1 bg-[var(--app-bg)] border border-[var(--app-border)] rounded-lg px-3 py-2 text-sm outline-none focus:border-[var(--app-blue)] disabled:opacity-50"
@@ -637,7 +662,7 @@ function LaunchTokenPage() {
                   <input
                     type="text"
                     value={config.maxWalletAmount}
-                    onChange={e => update('maxWalletAmount', sanitizeNumericInput(e.target.value))}
+                    onChange={e => update('maxWalletAmount', safeNumeric(e.target.value))}
                     placeholder="50000"
                     disabled={!config.maxWallet}
                     className="w-full mt-1 bg-[var(--app-bg)] border border-[var(--app-border)] rounded-lg px-3 py-2 text-sm outline-none focus:border-[var(--app-blue)] disabled:opacity-50"

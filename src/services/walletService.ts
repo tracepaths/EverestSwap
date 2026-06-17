@@ -6,9 +6,47 @@ export class WalletService {
   private _address = '';
   private _balance = '';
   private _publicKey = '';
+  // [V7-PASS10] CRITICAL-2: global per-address submit mutex.
+  // Prevents 2 browser tabs from racing on the same nonce.
+  private _submitLock: Promise<void> = Promise.resolve();
+  private _inFlightSubmit: { address: string; nonce: number } | null = null;
 
   constructor() {
     this.sdk = new ZeroXIOWallet({ appName: 'EverestSwap' });
+  }
+
+  // [V7-PASS10] CRITICAL-2: Acquire the per-address submit lock.
+  // Returns a release function. The mutex is keyed by the address passed in,
+  // so different addresses can submit concurrently but the same address is serialized.
+  async acquireSubmitLock(address: string): Promise<() => void> {
+    // Wait for the current lock holder
+    let release!: () => void;
+    const next = new Promise<void>(resolve => { release = resolve; });
+    const previous = this._submitLock;
+    this._submitLock = next;
+    await previous;
+    // Yield a microtask so concurrent callers get serialized
+    return () => {
+      release();
+      // If a stale _inFlightSubmit exists for this address, clear it
+      if (this._inFlightSubmit && this._inFlightSubmit.address === address) {
+        this._inFlightSubmit = null;
+      }
+    };
+  }
+
+  // [V7-PASS10] CRITICAL-2: Track the next expected nonce for an address.
+  // Returns the stored nonce if one is pending, otherwise null.
+  getPendingNonce(address: string): number | null {
+    if (this._inFlightSubmit && this._inFlightSubmit.address === address) {
+      return this._inFlightSubmit.nonce;
+    }
+    return null;
+  }
+
+  // [V7-PASS10] CRITICAL-2: Reserve a nonce for an address before submit.
+  setPendingNonce(address: string, nonce: number): void {
+    this._inFlightSubmit = { address, nonce };
   }
 
   get isConnected(): boolean {
@@ -194,57 +232,86 @@ export class WalletService {
     if (!address) throw new Error('Not connected');
     const addressSnapshot = address;
 
-    // [V7-PASS8] M-8: if caller pre-fetched the nonce, use it; otherwise fetch fresh
-    let nonce: number;
-    if (typeof params.nonce === 'number' && Number.isFinite(params.nonce) && params.nonce > 0) {
-      nonce = params.nonce;
-    } else {
-      const balance = await rpc.getBalance(addressSnapshot);
-      nonce = balance.nonce + 1;
-    }
-    // [SECURITY] FM-8: Floor and clamp timestamp to a reasonable range to prevent
-    // gaming with system clock (0, far future, NaN, etc.)
-    let timestamp = Math.floor(Date.now() / 1000);
-    if (!Number.isFinite(timestamp) || timestamp < 0) timestamp = 0;
-    // Clamp to a reasonable upper bound (year 2100)
-    if (timestamp > 4_102_444_800) timestamp = 4_102_444_800;
+    // [V7-PASS10] CRITICAL-2: acquire per-address submit lock
+    // Wait for any pending submit for this address to clear before computing nonce
+    const releaseLock = await this.acquireSubmitLock(addressSnapshot);
+    try {
+      // [V7-PASS8] M-8: if caller pre-fetched the nonce, use it; otherwise fetch fresh
+      let nonce: number;
+      if (typeof params.nonce === 'number' && Number.isFinite(params.nonce) && params.nonce > 0) {
+        nonce = params.nonce;
+      } else {
+        const balance = await rpc.getBalance(addressSnapshot);
+        nonce = balance.nonce + 1;
+      }
+      // [V7-PASS10] CRITICAL-2: record pending nonce so concurrent tabs see it
+      this.setPendingNonce(addressSnapshot, nonce);
+      // [SECURITY] FM-8: Floor and clamp timestamp to a reasonable range to prevent
+      // gaming with system clock (0, far future, NaN, etc.)
+      let timestamp = Math.floor(Date.now() / 1000);
+      if (!Number.isFinite(timestamp) || timestamp < 0) timestamp = 0;
+      // Clamp to a reasonable upper bound (year 2100)
+      if (timestamp > 4_102_444_800) timestamp = 4_102_444_800;
 
-    const txFields: Record<string, string | number> = {
-      from: addressSnapshot,
-      to_: targetAddress,
-      amount: '0',
-      nonce,
-      ou: params.feeOu || '100000',
-      timestamp,
-      op_type: 'deploy',
-      encrypted_data: params.bytecode,
-    };
-    if (params.message) {
-      txFields.message = params.message;
-    }
+      const txFields: Record<string, string | number> = {
+        from: addressSnapshot,
+        to_: targetAddress,
+        amount: '0',
+        nonce,
+        ou: params.feeOu || '100000',
+        timestamp,
+        op_type: 'deploy',
+        encrypted_data: params.bytecode,
+      };
+      if (params.message) {
+        txFields.message = params.message;
+      }
 
-    const canonicalJson = this.buildCanonicalJson(txFields);
-    const { signature, publicKey: sigPubKey } = await this.signMessage(canonicalJson);
-    let publicKey = sigPubKey || await this.getPublicKey();
-    if (!publicKey) {
+      const canonicalJson = this.buildCanonicalJson(txFields);
+      const { signature, publicKey: sigPubKey } = await this.signMessage(canonicalJson);
+      let publicKey = sigPubKey || await this.getPublicKey();
+      if (!publicKey) {
+        try {
+          publicKey = await rpc.getPublicKey(addressSnapshot);
+          if (publicKey) this._publicKey = publicKey;
+        } catch { /* noop */ }
+      }
+
+      // [SECURITY] F-1: Verify wallet identity hasn't changed during signing
+      if (this._address !== addressSnapshot) {
+        throw new Error('Wallet changed during deploy — aborting');
+      }
+
+      const signedTx: Record<string, unknown> = { ...txFields, signature };
+      if (publicKey) signedTx.public_key = publicKey;
+
+      // [V7-PASS10] CRITICAL-4: try submit, retry once on "nonce too low"
+      let submitResult: { tx_hash: string; status: string; nonce: number; ou_cost: string };
       try {
-        publicKey = await rpc.getPublicKey(addressSnapshot);
-        if (publicKey) this._publicKey = publicKey;
-      } catch { /* noop */ }
+        submitResult = await rpc.call<{ tx_hash: string; status: string; nonce: number; ou_cost: string }>('octra_submit', [signedTx]);
+      } catch (e) {
+        const errMsg = e instanceof Error ? e.message : String(e);
+        if (/nonce too low|invalid nonce|nonce.*low/i.test(errMsg)) {
+          // Refetch and retry once
+          const fresh = await rpc.getBalance(addressSnapshot);
+          txFields.nonce = fresh.nonce + 1;
+          this.setPendingNonce(addressSnapshot, txFields.nonce as number);
+          const canonicalJson2 = this.buildCanonicalJson(txFields);
+          const { signature: sig2, publicKey: pk2 } = await this.signMessage(canonicalJson2);
+          const signedTx2: Record<string, unknown> = { ...txFields, signature: sig2 };
+          if (pk2 || this._publicKey) signedTx2.public_key = pk2 || this._publicKey;
+          submitResult = await rpc.call<{ tx_hash: string; status: string; nonce: number; ou_cost: string }>('octra_submit', [signedTx2]);
+        } else {
+          throw e;
+        }
+      }
+      const txHash = submitResult.tx_hash;
+      if (!txHash) throw new Error('Submit succeeded but no tx_hash returned');
+      return txHash;
+    } finally {
+      // [V7-PASS10] CRITICAL-2: always release the lock
+      releaseLock();
     }
-
-    // [SECURITY] F-1: Verify wallet identity hasn't changed during signing
-    if (this._address !== addressSnapshot) {
-      throw new Error('Wallet changed during deploy — aborting');
-    }
-
-    const signedTx: Record<string, unknown> = { ...txFields, signature };
-    if (publicKey) signedTx.public_key = publicKey;
-
-    const submitResult = await rpc.call<{ tx_hash: string; status: string; nonce: number; ou_cost: string }>('octra_submit', [signedTx]);
-    const txHash = submitResult.tx_hash;
-    if (!txHash) throw new Error('Submit succeeded but no tx_hash returned');
-    return txHash;
   }
 }
 

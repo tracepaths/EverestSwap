@@ -42,6 +42,8 @@ function SwapPage() {
   const [showFromModal, setShowFromModal] = useState(false);
   const [showToModal, setShowToModal] = useState(false);
   const [poolAddress, setPoolAddress] = useState('');
+  // [V7-PASS10] MED-15: flag to indicate pool resolution is in progress
+  const [isResolvingPool, setIsResolvingPool] = useState(false);
   const [poolTokenA, setPoolTokenA] = useState('');
   const [poolTokenB, setPoolTokenB] = useState('');
   const [pairError, setPairError] = useState('');
@@ -92,7 +94,9 @@ function SwapPage() {
   const poolIsAtoB = mode === 'swap' && poolTokenA && effectiveFromAddress.toLowerCase() === poolTokenA.toLowerCase();
   const poolIsBtoA = mode === 'swap' && poolTokenB && effectiveFromAddress.toLowerCase() === poolTokenB.toLowerCase();
   const swapDirectionValid = mode !== 'swap' || poolIsAtoB || poolIsBtoA;
-  const canSubmitPair = mode !== 'swap' || (!!poolAddress && swapDirectionValid && !pairError);
+  // [V7-PASS10] HIGH-7: also require non-zero reserves (no empty pool)
+  // [V7-PASS10] MED-15: also require pool resolution to be complete
+  const canSubmitPair = mode !== 'swap' || (!!poolAddress && swapDirectionValid && !pairError && reserveA !== '0' && reserveB !== '0' && !isResolvingPool);
 
   const reserveIn = mode === 'swap' ? (poolIsAtoB ? reserveA : poolIsBtoA ? reserveB : '0') : '0';
   const reserveOut = mode === 'swap' ? (poolIsAtoB ? reserveB : poolIsBtoA ? reserveA : '0') : '0';
@@ -141,12 +145,14 @@ function SwapPage() {
     }
   }, [rpc, isConnected, walletAddress]);
 
-  const loadBalances = useCallback(async () => {
-    if (!isConnected || !walletAddress) return;
+  // [V7-PASS10] MED-17: return balances so caller can use fresh values immediately
+  const loadBalances = useCallback(async (): Promise<{ from: string; to: string }> => {
+    if (!isConnected || !walletAddress) return { from: '0', to: '0' };
     const fb = await getTokenBalance(fromToken);
     setFromBalance(fb);
     const tb = await getTokenBalance(toToken);
     setToBalance(tb);
+    return { from: fb, to: tb };
   }, [isConnected, walletAddress, getTokenBalance, fromToken, toToken]);
 
   useEffect(() => {
@@ -197,6 +203,7 @@ function SwapPage() {
     }
 
     let cancelled = false;
+    setIsResolvingPool(true);
     (async () => {
       try {
         const foundPool = await rpc.getPoolAddress(CONTRACTS.factory, tokenA, tokenB);
@@ -212,6 +219,8 @@ function SwapPage() {
         if (cancelled) return;
         setPoolAddress('');
         setPairError(`Unable to resolve pool for ${fromToken.symbol}/${toToken.symbol}`);
+      } finally {
+        if (!cancelled) setIsResolvingPool(false);
       }
     })();
 
@@ -441,11 +450,12 @@ function SwapPage() {
     updateProgress(0, 'Preparing transaction...', false);
     const toastId = addToast('pending', `${actionLabel} in progress...`);
     try {
-      await loadBalances();
+      // [V7-PASS10] MED-17: use the freshly-fetched balance directly to avoid
+      // stale state in the pre-swap check
+      const { from: freshFromBal } = await loadBalances();
 
       const rawAmount = parseAmountInput(fromAmount, fromToken);
-      const currentBal = fromBalance ?? '0';
-      if (BigInt(rawAmount) > BigInt(currentBal)) {
+      if (BigInt(rawAmount) > BigInt(freshFromBal)) {
         throw new Error(`Insufficient ${fromToken.symbol} balance`);
       }
 
@@ -825,10 +835,11 @@ function SwapPage() {
                 {(outputTaxBps > 0 || outputAutoBurnBps > 0) && (
                   <div className="flex justify-between text-[var(--app-muted)]">
                     <span>Token Fee</span>
-                    <span className="text-[var(--app-warning)]">
+                    <span className={`${(outputTaxBps + outputAutoBurnBps) >= 10000 ? 'text-[var(--app-danger)]' : 'text-[var(--app-warning)]'}`}>
                       {((outputTaxBps + outputAutoBurnBps) / 100).toFixed(2)}%
                       {outputTaxBps > 0 && outputAutoBurnBps > 0 ? ' (tax + burn)' :
                        outputTaxBps > 0 ? ' (tax)' : ' (auto-burn)'}
+                      {(outputTaxBps + outputAutoBurnBps) >= 10000 && ' — 100% fee, swap will fail'}
                     </span>
                   </div>
                 )}

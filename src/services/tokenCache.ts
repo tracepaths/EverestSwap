@@ -50,24 +50,29 @@ export function setCachedTrustedTokens(factoryAddress: string, tokens: string[])
   trustedCache.set(cacheKey('trusted', factoryAddress), { data: tokens, timestamp: Date.now() });
 }
 
-export function getCachedIsTrusted(factoryAddress: string, tokenAddress: string): boolean | null {
-  const entry = isTrustedCache.get(cacheKey('trusted-token', factoryAddress, tokenAddress));
-  if (entry === undefined) return null;
-  if (Date.now() - entry.timestamp >= TRUSTED_TTL) {
-    isTrustedCache.delete(cacheKey('trusted-token', factoryAddress, tokenAddress));
-    return null;
-  }
-  return entry.data;
-}
+// [V6-SECURITY-FIX MED-12] Cache positive trust with full TTL
+// [V7-PASS10] LOW-41: also cache negative trust with shorter TTL to limit RPC load
+const NEGATIVE_TRUSTED_TTL = 5_000;  // 5s for negative results
 
-// [V6-SECURITY-FIX MED-12] Only cache positive trust results to allow re-checking
 export function setCachedIsTrusted(factoryAddress: string, tokenAddress: string, trusted: boolean): void {
   const key = cacheKey('trusted-token', factoryAddress, tokenAddress);
   if (trusted) {
     isTrustedCache.set(key, { data: trusted, timestamp: Date.now() });
   } else {
-    isTrustedCache.delete(key);
+    // Cache negative result with a short TTL so we don't hammer RPC for untrusted tokens
+    isTrustedCache.set(key, { data: false, timestamp: Date.now() });
   }
+}
+
+export function getCachedIsTrusted(factoryAddress: string, tokenAddress: string): boolean | null {
+  const entry = isTrustedCache.get(cacheKey('trusted-token', factoryAddress, tokenAddress));
+  if (entry === undefined) return null;
+  const ttl = entry.data ? TRUSTED_TTL : NEGATIVE_TRUSTED_TTL;
+  if (Date.now() - entry.timestamp >= ttl) {
+    isTrustedCache.delete(cacheKey('trusted-token', factoryAddress, tokenAddress));
+    return null;
+  }
+  return entry.data;
 }
 
 export function clearTokenCache(): void {

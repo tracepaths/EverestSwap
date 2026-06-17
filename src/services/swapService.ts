@@ -100,10 +100,13 @@ export function truncateAddress(address: string, start = 6, end = 4): string {
 }
 
 // [SECURITY] F-1: Sanitize numeric input — allow only digits and at most one dot.
-// Reject scientific notation, multiple dots, leading operators, whitespace, and
-// Unicode digits. Returns the cleaned string, or empty if input is empty.
+// [V7-PASS10] MED-13/14: reject scientific notation (1e18) and negative signs.
+// Returns the cleaned string, or empty if input is empty. Returns 'INVALID' if
+// input contains e/E/-/+ (so callers can show a clear error).
 export function sanitizeNumericInput(input: string): string {
   if (!input) return '';
+  // Reject scientific notation and negative signs explicitly
+  if (/[eE+-]/.test(input)) return 'INVALID';
   // Strip everything except digits and '.'
   let cleaned = input.replace(/[^0-9.]/g, '');
   // Keep only the first '.'

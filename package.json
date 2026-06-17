@@ -4,6 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "sync-contracts": "node scripts/sync-contracts.mjs",
+    "sync-contracts:check": "node scripts/sync-contracts.mjs --check",
+    "predev": "npm run sync-contracts",
+    "prebuild": "npm run sync-contracts:check",
     "dev": "vite",
     "dev:devnet": "vite --mode devnet",
     "dev:mainnet": "vite --mode mainnet",

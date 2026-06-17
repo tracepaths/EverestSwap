@@ -689,7 +689,9 @@ export class OctraRpc {
         }
       });
     }
-    throw new Error('Transaction timeout - not confirmed after 60s');
+    // [V7-PASS10] HIGH-12: include tx hash in timeout error so callers can
+    // link to explorer for manual check
+    throw new Error(`Transaction ${txHash} not confirmed after 60s — check explorer for status`);
   }
 
   clearCache(): void {
