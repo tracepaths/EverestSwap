@@ -176,14 +176,19 @@ export class WalletService {
     rpc: OctraRpc,
     params: {
       bytecode: string;
-      poolAddress: string;
+      // [V7-PASS9] L-13: primary name is contractAddress (works for any contract
+      // type — pool, token, etc.). poolAddress is kept as deprecated alias.
+      contractAddress?: string;
+      poolAddress?: string;
       feeOu?: string;
       message?: string;
-      // [V7-PASS8] M-8 fix: allow caller to pre-fetch the nonce to avoid race
-      // where concurrent txs bump nonce between address computation and submit.
       nonce?: number;
     }
   ): Promise<string> {
+    // [V7-PASS9] L-13: resolve address from new or legacy field
+    const targetAddress = params.contractAddress ?? params.poolAddress;
+    if (!targetAddress) throw new Error('contractAddress or poolAddress required');
+    params = { ...params, contractAddress: targetAddress };
     // [SECURITY] F-1: Snapshot wallet address at the start of the deploy flow.
     const address = this._address;
     if (!address) throw new Error('Not connected');
@@ -206,7 +211,7 @@ export class WalletService {
 
     const txFields: Record<string, string | number> = {
       from: addressSnapshot,
-      to_: params.poolAddress,
+      to_: targetAddress,
       amount: '0',
       nonce,
       ou: params.feeOu || '100000',

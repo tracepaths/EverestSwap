@@ -1,4 +1,15 @@
-export function calculateOutput(amountIn: string, reserveIn: string, reserveOut: string, feeNumerator = 3, feeDenominator = 1000): string {
+// [V7-PASS9] C-9 fix: include tax + auto-burn deduction in output calculation.
+// TokenV2 with tax_bps/10000 + auto_burn_bps/10000 fees charges the recipient,
+// so user receives `out * (1 - (tax + auto_burn) / 10000)` of the AMM-computed output.
+export function calculateOutput(
+  amountIn: string,
+  reserveIn: string,
+  reserveOut: string,
+  feeNumerator = 3,
+  feeDenominator = 1000,
+  outputTaxBps = 0,
+  outputAutoBurnBps = 0
+): string {
   try {
     const amountInBN = BigInt(amountIn);
     const reserveInBN = BigInt(reserveIn);
@@ -9,10 +20,24 @@ export function calculateOutput(amountIn: string, reserveIn: string, reserveOut:
     const numerator = amountInAfterFee * reserveOutBN;
     const denominator = reserveInBN + amountInAfterFee;
     if (denominator === 0n) return '0';
-    return (numerator / denominator).toString();
+    const ammOut = numerator / denominator;
+    // [V7-PASS9] Apply output token tax + auto-burn
+    // feeBps/10000 of the output is taken by tax_recipient or burned.
+    // Use BigInt math to avoid float precision loss.
+    const totalOutputFeeBps = BigInt(outputTaxBps) + BigInt(outputAutoBurnBps);
+    if (totalOutputFeeBps > 0n && totalOutputFeeBps <= 10000n) {
+      const outputFee = ammOut * totalOutputFeeBps / 10000n;
+      return (ammOut - outputFee).toString();
+    }
+    return ammOut.toString();
   } catch {
     throw new Error('Failed to calculate swap output');
   }
+}
+
+// [V7-PASS9] C-9 helper: compute total output fee percentage (for UI display)
+export function getOutputFeePercent(taxBps: number, autoBurnBps: number): number {
+  return (taxBps + autoBurnBps) / 100;
 }
 
 export function calculatePriceImpact(amountIn: string, reserveIn: string): number {

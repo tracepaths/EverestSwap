@@ -1,17 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { useApp } from '../contexts/AppContext';
 import { truncateAddress } from '../services/swapService';
-
-// [V7-FIX] Format OCT balance adaptively — show 6 decimals for sub-0.01 to
-// preserve dust visibility, 2 decimals for normal amounts.
-function formatOctBalance(balance: string, forceDecimals?: number): string {
-  const num = Number(balance);
-  if (!Number.isFinite(num)) return `${balance} OCT`;
-  if (forceDecimals !== undefined) return `${num.toFixed(forceDecimals)} OCT`;
-  if (num === 0) return '0 OCT';
-  if (num < 0.01) return `${num.toFixed(6)} OCT`;
-  return `${num.toFixed(2)} OCT`;
-}
+// [V7-PASS9] M-13: import shared formatter
+import { formatOctBalance } from '../utils/format';
 
 function WalletConnector() {
   const { isConnected, walletAddress, walletBalance, isWalletInstalled, connect, disconnect, refreshBalance } = useApp();

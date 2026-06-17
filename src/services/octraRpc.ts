@@ -133,6 +133,63 @@ export class OctraRpc {
     throw new Error('Failed to parse reserves for pool ' + poolAddress);
   }
 
+  // [V7-PASS9] H-13: getTokenStatus fetches pause/blacklist/tax state from TokenV2.
+  // Returns a partial status object; missing view fns are treated as "not enabled".
+  async getTokenStatus(tokenAddress: string, userAddress?: string): Promise<{
+    paused: boolean;
+    blacklisted: boolean;
+    isMintable: boolean;
+    isBurnable: boolean;
+    isPausable: boolean;
+    isBlacklistable: boolean;
+    isMaxTx: boolean;
+    isMaxWallet: boolean;
+    isCooldown: boolean;
+    isTax: boolean;
+    isAutoBurn: boolean;
+  }> {
+    const defaults = {
+      paused: false, blacklisted: false,
+      isMintable: false, isBurnable: false, isPausable: false, isBlacklistable: false,
+      isMaxTx: false, isMaxWallet: false, isCooldown: false, isTax: false, isAutoBurn: false,
+    };
+    if (!tokenAddress) return defaults;
+    try {
+      const [paused, blacklisted, mintable, burnable, pausable, blacklistable,
+             maxTx, maxWallet, cooldown, tax, autoBurn] = await Promise.all([
+        this.contractView<unknown>(tokenAddress, 'is_paused', []),
+        userAddress
+          ? this.contractView<unknown>(tokenAddress, 'is_blacklisted', [userAddress])
+          : Promise.resolve(false),
+        this.contractView<unknown>(tokenAddress, 'is_mintable', []),
+        this.contractView<unknown>(tokenAddress, 'is_burnable', []),
+        this.contractView<unknown>(tokenAddress, 'is_pausable_enabled', []),
+        this.contractView<unknown>(tokenAddress, 'is_blacklist_enabled', []),
+        this.contractView<unknown>(tokenAddress, 'is_max_tx_enabled', []),
+        this.contractView<unknown>(tokenAddress, 'is_max_wallet_enabled', []),
+        this.contractView<unknown>(tokenAddress, 'is_cooldown_enabled', []),
+        this.contractView<unknown>(tokenAddress, 'is_tax_enabled', []),
+        this.contractView<unknown>(tokenAddress, 'is_auto_burn_enabled', []),
+      ]);
+      const b = (v: unknown): boolean => v === true || v === 'true' || v === 1;
+      return {
+        paused: b(paused),
+        blacklisted: b(blacklisted),
+        isMintable: b(mintable),
+        isBurnable: b(burnable),
+        isPausable: b(pausable),
+        isBlacklistable: b(blacklistable),
+        isMaxTx: b(maxTx),
+        isMaxWallet: b(maxWallet),
+        isCooldown: b(cooldown),
+        isTax: b(tax),
+        isAutoBurn: b(autoBurn),
+      };
+    } catch {
+      return defaults;
+    }
+  }
+
   async getPrice(poolAddress: string): Promise<string> {
     const result = await this.contractView<{ result: string }>(poolAddress, 'get_price', []);
     if (result && typeof result === 'object') {

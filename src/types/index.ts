@@ -28,7 +28,13 @@ export interface TokenLaunchConfig {
   tokenOwnerMode: 'self' | 'custom';
   customTokenOwner: string;
 
-  // Step 2: Optional Features
+  // [V7-PASS9] H-14: up to 5 initial trusted addresses (bypass max_wallet)
+  // Empty string = unused slot
+  trusted1: string;
+  trusted2: string;
+  trusted3: string;
+  trusted4: string;
+  trusted5: string;
   mintable: boolean;
   burnable: boolean;
   pausable: boolean;

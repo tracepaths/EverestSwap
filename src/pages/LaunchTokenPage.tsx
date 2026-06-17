@@ -28,6 +28,13 @@ const INITIAL_CONFIG: TokenLaunchConfig = {
   tokenOwnerMode: 'self',
   customTokenOwner: '',
 
+  // [V7-PASS9] H-14: 5 initial trusted addresses (empty = unused)
+  trusted1: '',
+  trusted2: '',
+  trusted3: '',
+  trusted4: '',
+  trusted5: '',
+
   // Step 2: Optional Features
   mintable: false,
   burnable: false,
@@ -38,7 +45,8 @@ const INITIAL_CONFIG: TokenLaunchConfig = {
   maxWallet: false,
   maxWalletAmount: '0',
   cooldown: false,
-  cooldownSeconds: '60',
+  // [V7-PASS9] M-15: default to 10 blocks (~60s at 6s/block)
+  cooldownSeconds: '10',
   autoBurn: false,
   autoBurnBps: '100',
 
@@ -74,7 +82,7 @@ function isValidAddress(addr: string): boolean {
 }
 
 function LaunchTokenPage() {
-  const { rpc, isConnected, network, connect, walletBalance } = useApp();
+  const { rpc, isConnected, network, connect, walletBalance, refreshBalance } = useApp();
   const navigate = useNavigate();
   const [config, setConfig] = useState<TokenLaunchConfig>(INITIAL_CONFIG);
   const [wizardStep, setWizardStep] = useState<WizardStep>(1);
@@ -140,7 +148,7 @@ function LaunchTokenPage() {
     }
     if (config.cooldown) {
       const cd = parseInt(config.cooldownSeconds, 10);
-      if (isNaN(cd) || cd < 1 || cd > 86400) errs.push('Cooldown must be 1-86400 seconds');
+      if (isNaN(cd) || cd < 1 || cd > 1000) errs.push('Cooldown must be 1-1000 blocks');
     }
     if (config.autoBurn) {
       const bps = parseInt(config.autoBurnBps, 10);
@@ -221,7 +229,7 @@ function LaunchTokenPage() {
     const autoBurnBps = config.autoBurn ? parseInt(config.autoBurnBps, 10) : 0;
     if (config.autoBurn && (!Number.isFinite(autoBurnBps) || autoBurnBps < 1)) return null;
 
-    // 23-arg constructor (reflection removed)
+    // 28-arg constructor (reflection removed, 5 trusted addresses added)
     return JSON.stringify([
       config.name.trim(),                                    // 1. n
       config.symbol.trim().toUpperCase(),                    // 2. s
@@ -245,6 +253,12 @@ function LaunchTokenPage() {
       config.cooldown,                                       // 20
       config.tax,                                            // 21
       config.autoBurn,                                       // 22
+      // [V7-PASS9] H-14: 5 initial trusted addresses
+      (config.trusted1 || '').trim(),                        // 23
+      (config.trusted2 || '').trim(),                        // 24
+      (config.trusted3 || '').trim(),                        // 25
+      (config.trusted4 || '').trim(),                        // 26
+      (config.trusted5 || '').trim(),                        // 27
     ]);
   };
 
@@ -290,7 +304,7 @@ function LaunchTokenPage() {
 
       const deployTxHash = await walletService.signAndSubmitDeployTx(rpc, {
         bytecode,
-        poolAddress: tokenAddress,
+        contractAddress: tokenAddress,
         message: constructorMessage,
         // [V7-PASS8] M-8 fix: pass pre-fetched nonce to avoid race with concurrent txs
         nonce: deployNonce,
@@ -301,6 +315,8 @@ function LaunchTokenPage() {
       if (mountedRef.current) {
         setStep({ type: 'done', tokenAddress });
         rpc.clearCache();
+        // [V7-PASS9] M-12: refresh balance after deploy to reflect gas spent
+        refreshBalance().catch(() => { /* non-fatal */ });
       }
     } catch (e) {
       if (mountedRef.current) {
@@ -613,7 +629,7 @@ function LaunchTokenPage() {
                 {/* Max Wallet */}
                 <FeatureCard
                   title="Max Wallet"
-                  desc="Cap on wallet size (anti-whale)"
+                  desc="Cap on wallet size (anti-whale). Add trusted addresses (e.g., pool) to bypass."
                   enabled={config.maxWallet}
                   onToggle={() => update('maxWallet', !config.maxWallet)}
                 >
@@ -626,6 +642,23 @@ function LaunchTokenPage() {
                     disabled={!config.maxWallet}
                     className="w-full mt-1 bg-[var(--app-bg)] border border-[var(--app-border)] rounded-lg px-3 py-2 text-sm outline-none focus:border-[var(--app-blue)] disabled:opacity-50"
                   />
+                  <label className="text-[10px] text-[var(--app-muted-2)] mt-2 block">
+                    Trusted addresses (bypass max wallet, max 5)
+                  </label>
+                  {[1, 2, 3, 4, 5].map(i => {
+                    const key = `trusted${i}` as 'trusted1' | 'trusted2' | 'trusted3' | 'trusted4' | 'trusted5';
+                    return (
+                      <input
+                        key={i}
+                        type="text"
+                        value={config[key]}
+                        onChange={e => update(key, e.target.value)}
+                        placeholder={`oct... (optional #${i})`}
+                        disabled={!config.maxWallet}
+                        className="w-full mt-1 bg-[var(--app-bg)] border border-[var(--app-border)] rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-[var(--app-blue)] disabled:opacity-50"
+                      />
+                    );
+                  })}
                 </FeatureCard>
 
                 {/* Cooldown */}
@@ -635,7 +668,7 @@ function LaunchTokenPage() {
                   enabled={config.cooldown}
                   onToggle={() => update('cooldown', !config.cooldown)}
                 >
-                  <label className="text-[10px] text-[var(--app-muted-2)]">Cooldown (seconds, 1-86400)</label>
+                  <label className="text-[10px] text-[var(--app-muted-2)]">Cooldown (blocks, 1-1000)</label>
                   <input
                     type="number"
                     value={config.cooldownSeconds}
@@ -793,6 +826,14 @@ function LaunchTokenPage() {
                 <SummaryRow label="Initial Supply" value={config.initialSupply ? parseInt(config.initialSupply, 10).toLocaleString() : '—'} />
                 <SummaryRow label="Supply Recipient" value={config.supplyRecipientMode === 'self' ? 'My wallet' : config.customSupplyRecipient} />
                 <SummaryRow label="Token Owner" value={config.tokenOwnerMode === 'self' ? 'My wallet' : config.customTokenOwner} />
+                {config.maxWallet && [config.trusted1, config.trusted2, config.trusted3, config.trusted4, config.trusted5]
+                  .filter(t => t && t.trim() !== '').length > 0 && (
+                  <SummaryRow
+                    label="Trusted Addresses"
+                    value={[config.trusted1, config.trusted2, config.trusted3, config.trusted4, config.trusted5]
+                      .filter(t => t && t.trim() !== '').length.toString()}
+                  />
+                )}
               </div>
 
               <div className="border-t border-[var(--app-border)] pt-3">
@@ -804,7 +845,7 @@ function LaunchTokenPage() {
                   {config.blacklist && <Feature enabled>✓ Blacklist</Feature>}
                   {config.maxTx && <Feature enabled>✓ Max Tx ({config.maxTxAmount})</Feature>}
                   {config.maxWallet && <Feature enabled>✓ Max Wallet ({config.maxWalletAmount})</Feature>}
-                  {config.cooldown && <Feature enabled>✓ Cooldown ({config.cooldownSeconds}s)</Feature>}
+                  {config.cooldown && <Feature enabled>✓ Cooldown ({config.cooldownSeconds} blocks)</Feature>}
                   {config.autoBurn && <Feature enabled>✓ Auto-burn ({config.autoBurnBps} bps)</Feature>}
                   {config.tax && <Feature enabled>✓ Tax ({config.taxBps} bps)</Feature>}
                   {!config.mintable && !config.burnable && !config.pausable && !config.blacklist &&

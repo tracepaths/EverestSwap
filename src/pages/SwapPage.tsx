@@ -45,6 +45,11 @@ function SwapPage() {
   const [poolTokenA, setPoolTokenA] = useState('');
   const [poolTokenB, setPoolTokenB] = useState('');
   const [pairError, setPairError] = useState('');
+  // [V7-PASS9] C-9: output token tax/auto-burn (fetched from toToken contract)
+  const [outputTaxBps, setOutputTaxBps] = useState(0);
+  const [outputAutoBurnBps, setOutputAutoBurnBps] = useState(0);
+  // [V7-PASS9] H-13: fromToken status (paused/blacklisted)
+  const [fromTokenStatus, setFromTokenStatus] = useState<{ paused: boolean; blacklisted: boolean } | null>(null);
   // [V6-SECURITY-FIX MED-18] Price impact confirmation gate
   const [highPriceImpactConfirmed, setHighPriceImpactConfirmed] = useState(false);
   // [SECURITY] F-2: Synchronous submit guard via ref to prevent double-click races
@@ -262,7 +267,8 @@ function SwapPage() {
         setPrice('1');
       } else if (reserveIn !== '0') {
         const amountInBN = parseUnits(fromAmount, fromToken.decimals);
-        const out = calculateOutput(amountInBN, reserveIn, reserveOut, poolFee.num, poolFee.denom);
+        // [V7-PASS9] C-9: pass output token tax + auto-burn to calculateOutput
+        const out = calculateOutput(amountInBN, reserveIn, reserveOut, poolFee.num, poolFee.denom, outputTaxBps, outputAutoBurnBps);
         setToAmount(formatUnits(out, toToken.decimals));
         const impact = calculatePriceImpact(amountInBN, reserveIn);
         setPriceImpact(impact);
@@ -273,7 +279,61 @@ function SwapPage() {
       setToAmount('0');
       setPriceImpact(0);
     }
-  }, [fromAmount, reserveIn, reserveOut, fromToken, toToken, mode, poolFee.num, poolFee.denom]);
+  }, [fromAmount, reserveIn, reserveOut, fromToken, toToken, mode, poolFee.num, poolFee.denom, outputTaxBps, outputAutoBurnBps]);
+
+  // [V7-PASS9] C-9: fetch tax + auto-burn from output token contract
+  // (TokenV2 exposes get_tax_bps / get_auto_burn_bps view functions)
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchFees() {
+      // Native OCT has no fees
+      if (!toToken.address || toToken.address === '') {
+        if (!cancelled) { setOutputTaxBps(0); setOutputAutoBurnBps(0); }
+        return;
+      }
+      // Known trusted tokens: WOCT (no tax), OES (no tax)
+      const knownFeeFree = [WOCT_TOKEN.address, OES_TOKEN.address].map(a => a.toLowerCase());
+      if (knownFeeFree.includes(toToken.address.toLowerCase())) {
+        if (!cancelled) { setOutputTaxBps(0); setOutputAutoBurnBps(0); }
+        return;
+      }
+      try {
+        const [taxRaw, burnRaw] = await Promise.all([
+          rpc.contractView(toToken.address, 'get_tax_bps', []),
+          rpc.contractView(toToken.address, 'get_auto_burn_bps', []),
+        ]);
+        if (cancelled) return;
+        const tax = Number(typeof taxRaw === 'object' && taxRaw !== null ? (taxRaw as Record<string, unknown>).result ?? 0 : taxRaw) || 0;
+        const burn = Number(typeof burnRaw === 'object' && burnRaw !== null ? (burnRaw as Record<string, unknown>).result ?? 0 : burnRaw) || 0;
+        setOutputTaxBps(Number.isFinite(tax) ? tax : 0);
+        setOutputAutoBurnBps(Number.isFinite(burn) ? burn : 0);
+      } catch {
+        if (!cancelled) { setOutputTaxBps(0); setOutputAutoBurnBps(0); }
+      }
+    }
+    fetchFees();
+    return () => { cancelled = true; };
+  }, [rpc, toToken.address]);
+
+  // [V7-PASS9] H-13: fetch fromToken pause/blacklist status
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchStatus() {
+      // Native OCT (no address) has no contract-level status
+      if (!fromToken.address || fromToken.address === '') {
+        if (!cancelled) setFromTokenStatus(null);
+        return;
+      }
+      try {
+        const status = await rpc.getTokenStatus(fromToken.address, walletAddress);
+        if (!cancelled) setFromTokenStatus({ paused: status.paused, blacklisted: status.blacklisted });
+      } catch {
+        if (!cancelled) setFromTokenStatus(null);
+      }
+    }
+    fetchStatus();
+    return () => { cancelled = true; };
+  }, [rpc, fromToken.address, walletAddress]);
 
   // [SECURITY] FM-1: Reset price impact confirmation when amount or pair changes
   // (otherwise stale confirmation applies to a different swap)
@@ -695,6 +755,18 @@ function SwapPage() {
             </div>
           )}
 
+          {/* [V7-PASS9] H-13: pause/blacklist warnings for fromToken */}
+          {fromTokenStatus?.paused && mode === 'swap' && (
+            <div className="text-xs text-[var(--app-danger)] bg-red-400/10 rounded-lg px-3 py-2 border border-red-400/20">
+              ⚠️ {fromToken.symbol} transfers are paused. Swaps will fail.
+            </div>
+          )}
+          {fromTokenStatus?.blacklisted && mode === 'swap' && (
+            <div className="text-xs text-[var(--app-danger)] bg-red-400/10 rounded-lg px-3 py-2 border border-red-400/20">
+              ⚠️ Your wallet is blacklisted from {fromToken.symbol}. Swaps will fail.
+            </div>
+          )}
+
           <div className="flex justify-center my-3 relative z-10">
             <button
               onClick={switchTokens}
@@ -749,6 +821,17 @@ function SwapPage() {
                     {priceImpact.toFixed(2)}%
                   </span>
                 </div>
+                {/* [V7-PASS9] C-9: show output token tax/auto-burn fees */}
+                {(outputTaxBps > 0 || outputAutoBurnBps > 0) && (
+                  <div className="flex justify-between text-[var(--app-muted)]">
+                    <span>Token Fee</span>
+                    <span className="text-[var(--app-warning)]">
+                      {((outputTaxBps + outputAutoBurnBps) / 100).toFixed(2)}%
+                      {outputTaxBps > 0 && outputAutoBurnBps > 0 ? ' (tax + burn)' :
+                       outputTaxBps > 0 ? ' (tax)' : ' (auto-burn)'}
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between text-[var(--app-muted)]">
                   <span>Slippage</span>
                   <div className="flex items-center gap-2">
