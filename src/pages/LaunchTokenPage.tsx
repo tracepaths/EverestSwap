@@ -345,7 +345,7 @@ function LaunchTokenPage() {
       <div>
         <h2 className="text-2xl font-bold">Launch Token</h2>
         <p className="text-sm text-[var(--app-muted)] mt-1">
-          Deploy a feature-rich ERC20 token on EverestSwap — 20lab style
+          Deploy a feature-rich token on EverestSwap
         </p>
       </div>
 

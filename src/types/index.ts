@@ -15,7 +15,7 @@ export interface PoolInfo {
   totalLP: string;
 }
 
-// [V7-FIX] TokenV2 launch configuration — 20lab-style features
+// [V7-FIX] TokenV2 launch configuration
 export interface TokenLaunchConfig {
   // Step 1: General
   name: string;
