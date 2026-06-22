@@ -216,11 +216,12 @@ export class WalletService {
          .replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
       const now = Date.now() / 1000;
       const tsStr = now === Math.floor(now) ? now.toFixed(1) : now.toString();
+      const ou = params.feeOu || '100000';
       let canonical = `{"from":"${json_escape(addressSnapshot)}"`;
       canonical += `,"to_":"${json_escape(targetAddress)}"`;
       canonical += `,"amount":"0"`;
       canonical += `,"nonce":${nonce}`;
-      canonical += `,"ou":"50000000"`;
+      canonical += `,"ou":"${json_escape(ou)}"`;
       canonical += `,"timestamp":${tsStr}`;
       canonical += `,"op_type":"deploy"`;
       canonical += `,"encrypted_data":"${json_escape(params.bytecode)}"`;
@@ -236,7 +237,7 @@ export class WalletService {
         to_: targetAddress,
         amount: '0',
         nonce,
-        ou: '50000000',
+        ou,
         timestamp: now,
         op_type: 'deploy',
         encrypted_data: params.bytecode,
@@ -266,7 +267,7 @@ export class WalletService {
           retryCanonical += `,"to_":"${json_escape(targetAddress)}"`;
           retryCanonical += `,"amount":"0"`;
           retryCanonical += `,"nonce":${fresh.nonce + 1}`;
-          retryCanonical += `,"ou":"50000000"`;
+          retryCanonical += `,"ou":"${json_escape(ou)}"`;
           retryCanonical += `,"timestamp":${tsStr}`;
           retryCanonical += `,"op_type":"deploy"`;
           retryCanonical += `,"encrypted_data":"${json_escape(params.bytecode)}"`;
@@ -280,7 +281,7 @@ export class WalletService {
             to_: targetAddress,
             amount: '0',
             nonce: fresh.nonce + 1,
-            ou: '50000000',
+            ou,
             timestamp: now,
             op_type: 'deploy',
             encrypted_data: params.bytecode,

@@ -530,6 +530,19 @@ export class OctraRpc {
     return { tokenA: '', tokenB: '', reserveA: '0', reserveB: '0', totalLP: '0', active: false };
   }
 
+  async getRecommendedFee(opType: string): Promise<{ minimum: string; recommended: string; fast: string }> {
+    const raw: unknown = await this.call('octra_recommendedFee', [opType]);
+    if (raw && typeof raw === 'object') {
+      const obj = raw as Record<string, unknown>;
+      return {
+        minimum: String(obj.minimum ?? '10000'),
+        recommended: String(obj.recommended ?? '100000'),
+        fast: String(obj.fast ?? '200000'),
+      };
+    }
+    return { minimum: '10000', recommended: '100000', fast: '200000' };
+  }
+
   async compileAml(source: string): Promise<{ bytecode: string; size: number; instructions: number }> {
     return this.call('octra_compileAml', [source]);
   }

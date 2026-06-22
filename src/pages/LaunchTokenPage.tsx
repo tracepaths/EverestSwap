@@ -299,6 +299,14 @@ function LaunchTokenPage() {
 
       setStep({ type: 'deploying' });
 
+      // Fetch recommended fee for deploy
+      let feeOu = '100000';
+      try {
+        const feeResp = await rpc.getRecommendedFee('deploy');
+        feeOu = feeResp.recommended || '100000';
+      } catch { /* fallback to 100000 (0.1 OCT) */ }
+      setEstimatedCost((Number(feeOu) / 1_000_000).toFixed(4));
+
       // [V7-PASS8] C-10 fix: pass walletSnapshot to build message from same source
       const constructorMessage = buildConstructorMessage(walletSnapshot);
       if (!constructorMessage) throw new Error('Invalid supply or amount');
@@ -309,6 +317,7 @@ function LaunchTokenPage() {
         message: constructorMessage,
         // [V7-PASS8] M-8 fix: pass pre-fetched nonce to avoid race with concurrent txs
         nonce: deployNonce,
+        feeOu,
       });
 
       await rpc.waitForReceipt(deployTxHash, 60);
