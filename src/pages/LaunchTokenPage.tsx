@@ -193,7 +193,7 @@ function LaunchTokenPage() {
   const step3Valid = step3Errors.length === 0;
 
   const allErrors = [...step1Errors, ...step2Errors, ...step3Errors];
-  const canLaunch = isConnected && allErrors.length === 0 && step.type === 'idle';
+  const canLaunch = isConnected && allErrors.length === 0 && (step.type === 'idle' || step.type === 'error');
 
   // [V7-FIX] Cost estimation — base + per-feature gas
   // [V7-PASS10] MED-19: starting cost estimate (overridden after compile with real bytecode size)

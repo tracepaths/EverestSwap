@@ -225,6 +225,9 @@ export class WalletService {
       });
       const signedTx: Record<string, unknown> = sdkResult?.signedTx || sdkResult || {};
 
+      // [FIX] Ensure amount is a string for chain's std::stoll parser
+      signedTx.amount = String(signedTx.amount ?? '0');
+
       // [V7-PASS10] CRITICAL-4: inject deploy-specific fields
       signedTx.nonce = nonce;
       signedTx.ou = params.feeOu || '100000';
@@ -273,6 +276,7 @@ export class WalletService {
           const retryTx: Record<string, unknown> = retryResult?.signedTx || retryResult || {};
           retryTx.nonce = fresh.nonce + 1;
           retryTx.ou = params.feeOu || '100000';
+          retryTx.amount = String(retryTx.amount ?? '0');
           retryTx.op_type = 'deploy';
           retryTx.encrypted_data = params.bytecode;
           if (params.message && params.message !== truncated) {
