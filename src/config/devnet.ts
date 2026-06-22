@@ -30,9 +30,9 @@ export const OES_TOKEN: TokenInfo = {
 };
 
 export const CONTRACTS = {
-  factory: 'octHrqFJNiZkLSsPGVgG54sEv4DCCJ6pNmtfbZ7FZxAKebG',
+  factory: 'octFmVqADVjj8v1WSr4ex6EJd2TPRf1JjUVHb3tK29YTXTV',
   pool: 'octFh3NNUj2JmAorPcrLfcy4bzf5tdk88qDCdFnmjHt12X3',
-  router: 'octH9REiXfnhZrhiYBoCEg9c42v4so4ATSakEkkbK3iRKMb',
+  router: 'oct8FKHqsXXE8z11AwKQ7jhEeU7tXefeY4tTRZEnoWK5S3r',
   oes: 'oct9LgGSpkrqbpWPQpYervyryzDtbGYph2hHvcBi9ZppNvD',
   woct: 'octE7bttbCKJLQskNzHs8MiqCXDjuF2k1JdADv44axxA8LK',
 } as const;
