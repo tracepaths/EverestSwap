@@ -468,6 +468,7 @@ function SwapPage() {
           method: 'deposit',
           params: [],
           amount: rawAmount,
+          rpc,
         });
         updateProgress(55, 'Waiting for wrap confirmation...', false);
         updateToast(toastId, 'pending', 'Waiting for transaction confirmation...', txHash);
@@ -482,6 +483,7 @@ function SwapPage() {
           contract: CONTRACTS.woct,
           method: 'withdraw',
           params: [rawAmount],
+          rpc,
         });
         updateProgress(55, 'Waiting for unwrap confirmation...', false);
         updateToast(toastId, 'pending', 'Waiting for transaction confirmation...', txHash);
@@ -494,6 +496,7 @@ function SwapPage() {
           contract: CONTRACTS.woct,
           method: 'claim_withdrawal',
           params: [],
+          rpc,
         });
         updateProgress(95, 'Waiting for claim confirmation...', false);
         await rpc.waitForReceipt(claimHash);
@@ -516,6 +519,7 @@ function SwapPage() {
             method: 'deposit',
             params: [],
             amount: rawAmount,
+            rpc,
           });
           updateProgress(25, 'Waiting for wrap confirmation...', false);
           await rpc.waitForReceipt(wrapHash);
@@ -585,6 +589,7 @@ function SwapPage() {
           contract: actualFromToken.address,
           method: 'grant',
           params: [poolAddress, actualRawAmount],
+          rpc,
         });
         updateProgress(stepStartPct + 40, 'Waiting for grant confirmation...', false);
         updateToast(toastId, 'pending', 'Waiting for grant confirmation...', grantHash);
@@ -623,6 +628,7 @@ function SwapPage() {
           contract: poolAddress,
           method: swapMethod,
           params: [actualRawAmount, minOutStr, String(deadline)],
+          rpc,
         });
         updateProgress(stepStartPct + 65, 'Waiting for swap confirmation...', false);
         updateToast(toastId, 'pending', 'Waiting for swap confirmation...', swapHash);
@@ -643,6 +649,7 @@ function SwapPage() {
             contract: CONTRACTS.woct,
             method: 'withdraw',
             params: [unwrapAmount],
+            rpc,
           });
           updateProgress(93, 'Waiting for unwrap confirmation...', false);
           await rpc.waitForReceipt(unwrapHash);
@@ -653,6 +660,7 @@ function SwapPage() {
             contract: CONTRACTS.woct,
             method: 'claim_withdrawal',
             params: [],
+            rpc,
           });
           await rpc.waitForReceipt(claimHash);
         }

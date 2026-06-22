@@ -1,6 +1,24 @@
 import { ZeroXIOWallet, type TransactionHistory, type ContractParams } from '@0xio/sdk';
 import { OctraRpc } from './octraRpc';
 
+// [V7-FIX] Fee cache: avoid repeated RPC calls for the same op_type
+const _feeCache = new Map<string, { ou: string; ts: number }>();
+const FEE_CACHE_TTL = 30_000; // 30s
+
+async function fetchRecommendedOu(rpc: OctraRpc, opType: string): Promise<string> {
+  const now = Date.now();
+  const cached = _feeCache.get(opType);
+  if (cached && now - cached.ts < FEE_CACHE_TTL) return cached.ou;
+  try {
+    const fee = await rpc.getRecommendedFee(opType);
+    const ou = fee.recommended || '100000';
+    _feeCache.set(opType, { ou, ts: now });
+    return ou;
+  } catch {
+    return cached?.ou || '100000';
+  }
+}
+
 export class WalletService {
   private sdk: ZeroXIOWallet;
   private _address = '';
@@ -156,8 +174,13 @@ export class WalletService {
     params: ContractParams;
     amount?: string | number;
     ou?: string | number;
+    rpc?: OctraRpc;
   }): Promise<string> {
-    const result = await this.sdk.callContract(params);
+    if (!params.ou && params.rpc) {
+      params.ou = await fetchRecommendedOu(params.rpc, 'call');
+    }
+    const sdkParams = { contract: params.contract, method: params.method, params: params.params, amount: params.amount, ou: params.ou };
+    const result = await this.sdk.callContract(sdkParams);
     const resultObj = result && typeof result === 'object' ? (result as Record<string, unknown>) : {};
     const txHash = typeof resultObj.hash === 'string' ? resultObj.hash
       : typeof resultObj.txHash === 'string' ? resultObj.txHash

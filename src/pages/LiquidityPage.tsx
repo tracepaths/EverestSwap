@@ -320,6 +320,7 @@ function LiquidityPage() {
         contract: pool.tokenA.address,
         method: 'grant',
         params: [pool.address, rawA],
+        rpc,
       });
       updateToast(toastId, 'pending', `Waiting for ${validTokenA.symbol} grant confirmation...`, grantAHash);
       await rpc.waitForReceipt(grantAHash);
@@ -329,6 +330,7 @@ function LiquidityPage() {
         contract: pool.tokenB.address,
         method: 'grant',
         params: [pool.address, rawB],
+        rpc,
       });
       updateToast(toastId, 'pending', `Waiting for ${validTokenB.symbol} grant confirmation...`, grantBHash);
       await rpc.waitForReceipt(grantBHash);
@@ -338,6 +340,7 @@ function LiquidityPage() {
         contract: pool.address,
         method: 'add_liquidity',
         params: [rawA, rawB, minLp, String(deadline), String(lockDuration)],
+        rpc,
       });
       updateToast(toastId, 'pending', 'Waiting for add liquidity confirmation...', addHash);
       await rpc.waitForReceipt(addHash);
@@ -399,6 +402,7 @@ function LiquidityPage() {
         contract: pool.address,
         method: 'remove_liquidity',
         params: [selectedPositionId, minA, minB, String(deadline)],
+        rpc,
       });
       updateToast(toastId, 'pending', 'Waiting for remove liquidity confirmation...', removeHash);
       await rpc.waitForReceipt(removeHash);

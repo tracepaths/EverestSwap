@@ -278,9 +278,16 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect }: {
 
       safeSetStep({ type: 'deploying' });
 
+      let feeOu = '100000';
+      try {
+        const feeResp = await rpc.getRecommendedFee('deploy');
+        feeOu = feeResp.recommended || '100000';
+      } catch { /* fallback */ }
+
       const deployTxHash = await walletService.signAndSubmitDeployTx(rpc, {
         bytecode,
         poolAddress,
+        feeOu,
       });
 
       await rpc.waitForReceipt(deployTxHash, 60);
@@ -291,6 +298,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect }: {
         contract: poolAddress,
         method: 'set_tokens',
         params: [tokenA, tokenB],
+        rpc,
       });
 
       await rpc.waitForReceipt(tokenTxHash, 60);
@@ -302,6 +310,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect }: {
         contract: poolAddress,
         method: 'set_fee_params',
         params: [num, denom],
+        rpc,
       });
 
       await rpc.waitForReceipt(feeTxHash, 60);
@@ -312,6 +321,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect }: {
         contract: factoryAddr,
         method: 'register_pool',
         params: [tokenA, tokenB, poolAddress],
+        rpc,
       });
 
       await rpc.waitForReceipt(regTxHash, 60);
@@ -335,6 +345,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect }: {
           contract: tokenA,
           method: 'grant',
           params: [poolAddress, rawInitA],
+          rpc,
         });
         await rpc.waitForReceipt(grantAHash, 60);
 
@@ -344,6 +355,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect }: {
           contract: tokenB,
           method: 'grant',
           params: [poolAddress, rawInitB],
+          rpc,
         });
         await rpc.waitForReceipt(grantBHash, 60);
 
@@ -357,6 +369,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect }: {
           contract: poolAddress,
           method: 'add_liquidity',
           params: [rawInitA, rawInitB, '1001', String(deadline), '0'],
+          rpc,
         });
         await rpc.waitForReceipt(addHash, 60);
       }
