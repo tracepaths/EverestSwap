@@ -32,7 +32,7 @@ export const OES_TOKEN: TokenInfo = {
 export const CONTRACTS = {
   factory: 'octFmVqADVjj8v1WSr4ex6EJd2TPRf1JjUVHb3tK29YTXTV',
   pool: 'octFh3NNUj2JmAorPcrLfcy4bzf5tdk88qDCdFnmjHt12X3',
-  router: 'oct8FKHqsXXE8z11AwKQ7jhEeU7tXefeY4tTRZEnoWK5S3r',
+  router: 'octFxNmmEQ9VbnefP9zGGhyPexsWnU7CnHMTB3vxPubNyZG',
   oes: 'oct9LgGSpkrqbpWPQpYervyryzDtbGYph2hHvcBi9ZppNvD',
   woct: 'octE7bttbCKJLQskNzHs8MiqCXDjuF2k1JdADv44axxA8LK',
 } as const;

@@ -44,6 +44,11 @@ function SwapPage() {
   const [poolAddress, setPoolAddress] = useState('');
   // [V7-PASS10] MED-15: flag to indicate pool resolution is in progress
   const [isResolvingPool, setIsResolvingPool] = useState(false);
+  // [MULTI-HOP] Multi-hop route state
+  const [multiHopPath, setMultiHopPath] = useState<string[]>([]); // [tokenA, intermediate, tokenB] or [tokenA, i1, i2, tokenB]
+  const [multiHopPoolAddresses, setMultiHopPoolAddresses] = useState<string[]>([]); // pool addresses for each hop
+  const [, setMultiHopEstimatedOutput] = useState<string>('0');
+  const isMultiHop = multiHopPath.length > 2;
   const [poolTokenA, setPoolTokenA] = useState('');
   const [poolTokenB, setPoolTokenB] = useState('');
   const [pairError, setPairError] = useState('');
@@ -65,6 +70,15 @@ function SwapPage() {
   const route = useMemo((): string[] => {
     if (mode === 'wrap') return ['OCT', 'WOCT'];
     if (mode === 'unwrap') return ['WOCT', 'OCT'];
+    if (mode === 'swap' && isMultiHop) {
+      // Show multi-hop route from path
+      return multiHopPath.map(addr => {
+        if (!addr) return 'OCT';
+        if (addr.toLowerCase() === WOCT_TOKEN.address.toLowerCase()) return WOCT_TOKEN.symbol;
+        if (addr.toLowerCase() === OES_TOKEN.address.toLowerCase()) return OES_TOKEN.symbol;
+        return addr.slice(0, 8) + '...';
+      });
+    }
     if (mode === 'swap' && poolAddress) {
       // [V7-FIX] For OCT pairs, show multi-hop route even though poolAddress is set
       if (fromToken.address === '' || toToken.address === '') {
@@ -87,22 +101,41 @@ function SwapPage() {
       }
     }
     return [];
-  }, [mode, poolAddress, fromToken.symbol, fromToken.address, toToken.symbol, toToken.address]);
+  }, [mode, poolAddress, isMultiHop, multiHopPath, fromToken.symbol, fromToken.address, toToken.symbol, toToken.address]);
 
   // [V7-FIX] For OCT pairs, the actual pool token is WOCT (after auto-wrap)
   const effectiveFromAddress = fromToken.address === '' ? WOCT_TOKEN.address : fromToken.address;
   const poolIsAtoB = mode === 'swap' && poolTokenA && effectiveFromAddress.toLowerCase() === poolTokenA.toLowerCase();
   const poolIsBtoA = mode === 'swap' && poolTokenB && effectiveFromAddress.toLowerCase() === poolTokenB.toLowerCase();
   const swapDirectionValid = mode !== 'swap' || poolIsAtoB || poolIsBtoA;
-  // [V7-PASS10] HIGH-7: also require non-zero reserves (no empty pool)
-  // [V7-PASS10] MED-15: also require pool resolution to be complete
-  const canSubmitPair = mode !== 'swap' || (!!poolAddress && swapDirectionValid && !pairError && reserveA !== '0' && reserveB !== '0' && !isResolvingPool);
+  // [MULTI-HOP] For multi-hop, consider pair valid if route exists
+  const canSubmitPair = mode !== 'swap' || (isMultiHop && multiHopPath.length > 1) || (!!poolAddress && swapDirectionValid && !pairError && reserveA !== '0' && reserveB !== '0' && !isResolvingPool);
 
   const reserveIn = mode === 'swap' ? (poolIsAtoB ? reserveA : poolIsBtoA ? reserveB : '0') : '0';
   const reserveOut = mode === 'swap' ? (poolIsAtoB ? reserveB : poolIsBtoA ? reserveA : '0') : '0';
 
   const loadReserves = useCallback(async () => {
     try {
+      if (isMultiHop && multiHopPath.length >= 3) {
+        // For multi-hop, fetch first pool reserves for display
+        const firstPool = multiHopPoolAddresses[0];
+        if (!firstPool) {
+          setReserveA('0');
+          setReserveB('0');
+          setPoolTokenA('');
+          setPoolTokenB('');
+          return;
+        }
+        const reserves = await rpc.getReserves(firstPool);
+        setReserveA(reserves.reserveA);
+        setReserveB(reserves.reserveB);
+        if (mode === 'swap') {
+          const info = await rpc.getPoolInfo(firstPool);
+          setPoolTokenA(info.tokenA);
+          setPoolTokenB(info.tokenB);
+        }
+        return;
+      }
       const targetPool = mode === 'swap' ? poolAddress : '';
       if (!targetPool) {
         setReserveA('0');
@@ -120,7 +153,7 @@ function SwapPage() {
         setPoolTokenB(info.tokenB);
       }
     } catch { /* noop */ }
-  }, [rpc, mode, poolAddress]);
+  }, [rpc, mode, poolAddress, isMultiHop, multiHopPath, multiHopPoolAddresses]);
 
   const getTokenBalance = useCallback(async (token: typeof OCT_TOKEN) => {
     if (!isConnected || !walletAddress) return '0';
@@ -204,17 +237,64 @@ function SwapPage() {
 
     let cancelled = false;
     setIsResolvingPool(true);
+    setMultiHopPath([]);
+    setMultiHopPoolAddresses([]);
+    setMultiHopEstimatedOutput('0');
     (async () => {
       try {
+        // First try direct pool
         const foundPool = await rpc.getPoolAddress(CONTRACTS.factory, tokenA, tokenB);
         if (cancelled) return;
         if (foundPool) {
           setPoolAddress(foundPool);
           setPairError('');
-        } else {
-          setPoolAddress('');
-          setPairError(`No pool found for ${fromToken.symbol}/${toToken.symbol}`);
+          return;
         }
+
+        // No direct pool — try multi-hop via WOCT
+        // Path: tokenA → WOCT → tokenB
+        const woctAddr = WOCT_TOKEN.address.toLowerCase();
+        const tokenALower = tokenA.toLowerCase();
+        const tokenBLower = tokenB.toLowerCase();
+        // Skip multi-hop if either token is WOCT or OCT (already handled separately)
+        if (tokenALower !== woctAddr && tokenA !== '' && tokenBLower !== woctAddr && tokenB !== '') {
+          const pool1 = await rpc.getPoolAddress(CONTRACTS.factory, tokenA, WOCT_TOKEN.address);
+          if (cancelled) return;
+          const pool2 = await rpc.getPoolAddress(CONTRACTS.factory, WOCT_TOKEN.address, tokenB);
+          if (cancelled) return;
+
+          if (pool1 && pool2) {
+            // Multi-hop route found: tokenA → WOCT → tokenB
+            setPoolAddress(''); // No single pool
+            setMultiHopPath([tokenA, WOCT_TOKEN.address, tokenB]);
+            setMultiHopPoolAddresses([pool1, pool2]);
+            setPairError('');
+            return;
+          }
+
+          // Try 3-hop via WOCT → OES (for very obscure tokens)
+          const oesAddr = OES_TOKEN.address.toLowerCase();
+          if (tokenALower !== oesAddr && tokenBLower !== oesAddr) {
+            const pool1_3h = await rpc.getPoolAddress(CONTRACTS.factory, tokenA, WOCT_TOKEN.address);
+            if (cancelled) return;
+            const pool2_3h = await rpc.getPoolAddress(CONTRACTS.factory, WOCT_TOKEN.address, OES_TOKEN.address);
+            if (cancelled) return;
+            const pool3_3h = await rpc.getPoolAddress(CONTRACTS.factory, OES_TOKEN.address, tokenB);
+            if (cancelled) return;
+
+            if (pool1_3h && pool2_3h && pool3_3h) {
+              setPoolAddress('');
+              setMultiHopPath([tokenA, WOCT_TOKEN.address, OES_TOKEN.address, tokenB]);
+              setMultiHopPoolAddresses([pool1_3h, pool2_3h, pool3_3h]);
+              setPairError('');
+              return;
+            }
+          }
+        }
+
+        // No route found
+        setPoolAddress('');
+        setPairError(`No pool or route found for ${fromToken.symbol}/${toToken.symbol}`);
       } catch {
         if (cancelled) return;
         setPoolAddress('');
@@ -274,7 +354,39 @@ function SwapPage() {
         setToAmount(fromAmount);
         setPriceImpact(0);
         setPrice('1');
+        setMultiHopEstimatedOutput('0');
+      } else if (isMultiHop && multiHopPath.length >= 3) {
+        // Calculate multi-hop output
+        (async () => {
+          try {
+            const amountInBN = parseUnits(fromAmount, fromToken.decimals);
+            const effectiveToToken = toToken.address === '' ? WOCT_TOKEN : toToken;
+            // Call router's view function to get multi-hop output
+            const routerAddr = CONTRACTS.router;
+            let amountsOut: string | undefined;
+            if (multiHopPath.length === 3) {
+              amountsOut = await rpc.contractView<string>(routerAddr, 'get_amounts_out_path_3', [amountInBN.toString(), multiHopPath[0], multiHopPath[1], multiHopPath[2]]);
+            } else if (multiHopPath.length === 4) {
+              amountsOut = await rpc.contractView<string>(routerAddr, 'get_amounts_out_path_4', [amountInBN.toString(), multiHopPath[0], multiHopPath[1], multiHopPath[2], multiHopPath[3]]);
+            }
+            if (amountsOut) {
+              setMultiHopEstimatedOutput(amountsOut);
+              setToAmount(formatUnits(amountsOut, effectiveToToken.decimals));
+              setPriceImpact(0); // Can't calculate exact impact for multi-hop
+              const p = Number(formatUnits(amountsOut, effectiveToToken.decimals)) / Number(fromAmount);
+              setPrice(p.toString());
+            } else {
+              setMultiHopEstimatedOutput('0');
+              setToAmount('0');
+              setPrice('0');
+            }
+          } catch {
+            setMultiHopEstimatedOutput('0');
+            setToAmount('0');
+          }
+        })();
       } else if (reserveIn !== '0') {
+        setMultiHopEstimatedOutput('0');
         const amountInBN = parseUnits(fromAmount, fromToken.decimals);
         // [V7-PASS9] C-9: pass output token tax + auto-burn to calculateOutput
         const out = calculateOutput(amountInBN, reserveIn, reserveOut, poolFee.num, poolFee.denom, outputTaxBps, outputAutoBurnBps);
@@ -287,8 +399,9 @@ function SwapPage() {
     } else {
       setToAmount('0');
       setPriceImpact(0);
+      setMultiHopEstimatedOutput('0');
     }
-  }, [fromAmount, reserveIn, reserveOut, fromToken, toToken, mode, poolFee.num, poolFee.denom, outputTaxBps, outputAutoBurnBps]);
+  }, [fromAmount, reserveIn, reserveOut, fromToken, toToken, mode, poolFee.num, poolFee.denom, outputTaxBps, outputAutoBurnBps, isMultiHop, multiHopPath, multiHopPoolAddresses]);
 
   // [V7-PASS9] C-9: fetch tax + auto-burn from output token contract
   // (TokenV2 exposes get_tax_bps / get_auto_burn_bps view functions)
@@ -378,6 +491,10 @@ function SwapPage() {
     // [V7-FIX] Reset balances to loading state to avoid stale display
     setFromBalance(null);
     setToBalance(null);
+    // [MULTI-HOP] Reset multi-hop state
+    setMultiHopPath([]);
+    setMultiHopPoolAddresses([]);
+    setMultiHopEstimatedOutput('0');
   };
 
   const handleSelectFromToken = (address: string, meta: { symbol: string; name: string; decimals: number }) => {
@@ -539,6 +656,117 @@ function SwapPage() {
         const chainEpoch = epochInfo?.epoch_id || 0;
         const deadline = chainEpoch + 300;
 
+        // [MULTI-HOP] Execute multi-hop swap via Router
+        if (isMultiHop && multiHopPath.length >= 3) {
+          const effectiveFromToken = actualFromToken;
+          const effectiveToToken = toToken.address === '' ? WOCT_TOKEN : toToken;
+          const amountInBN = parseUnits(fromAmount.trim(), effectiveFromToken.decimals);
+
+          // Balance check
+          if (fromToken.address !== '' && fromBalance !== null && BigInt(amountInBN) > BigInt(fromBalance)) {
+            throw new Error('Insufficient balance for swap');
+          }
+
+          // Calculate expected output via router view
+          let expectedOutput: string;
+          if (multiHopPath.length === 3) {
+            expectedOutput = await rpc.contractView<string>(CONTRACTS.router, 'get_amounts_out_path_3', [amountInBN.toString(), multiHopPath[0], multiHopPath[1], multiHopPath[2]]);
+          } else {
+            expectedOutput = await rpc.contractView<string>(CONTRACTS.router, 'get_amounts_out_path_4', [amountInBN.toString(), multiHopPath[0], multiHopPath[1], multiHopPath[2], multiHopPath[3]]);
+          }
+
+          if (!expectedOutput || BigInt(expectedOutput) <= 0n) {
+            throw new Error('Multi-hop swap returned zero output — pools may be empty');
+          }
+
+          const basisPoints = getSlippageBasisPoints();
+          const minOutRaw = BigInt(expectedOutput) * BigInt(10000 - basisPoints) / 10000n;
+
+          if (minOutRaw <= 0n) {
+            throw new Error('Minimum output too small — try a larger amount or adjust slippage');
+          }
+
+          // Grant router allowance
+          const stepStartPct = fromToken.address === '' ? 35 : 15;
+          updateProgress(stepStartPct, 'Preparing multi-hop swap...', false);
+          updateToast(toastId, 'pending', `Approving ${effectiveFromToken.symbol} grant to Router...`);
+          updateProgress(stepStartPct + 20, 'Waiting for token grant approval...', false);
+          const grantHash = await walletService.callContract({
+            contract: effectiveFromToken.address,
+            method: 'grant',
+            params: [CONTRACTS.router, actualRawAmount],
+            rpc,
+          });
+          updateProgress(stepStartPct + 40, 'Waiting for grant confirmation...', false);
+          updateToast(toastId, 'pending', 'Waiting for grant confirmation...', grantHash);
+          await rpc.waitForReceipt(grantHash);
+
+          // Execute multi-hop swap via router
+          const routeDisplay = multiHopPath.map(addr => {
+            if (!addr) return 'OCT';
+            if (addr.toLowerCase() === WOCT_TOKEN.address.toLowerCase()) return 'WOCT';
+            if (addr.toLowerCase() === OES_TOKEN.address.toLowerCase()) return 'OES';
+            return addr.slice(0, 8);
+          }).join(' → ');
+
+          updateProgress(stepStartPct + 55, `Submitting multi-hop swap (${routeDisplay})...`, false);
+          updateToast(toastId, 'pending', 'Approving multi-hop swap in wallet...');
+
+          let swapTxHash: string;
+          if (multiHopPath.length === 3) {
+            swapTxHash = await walletService.callContract({
+              contract: CONTRACTS.router,
+              method: 'swap_exact_tokens_for_tokens_path_3',
+              params: [actualRawAmount, minOutRaw.toString(), multiHopPath[0], multiHopPath[1], multiHopPath[2], walletAddress, String(deadline)],
+              rpc,
+            });
+          } else {
+            swapTxHash = await walletService.callContract({
+              contract: CONTRACTS.router,
+              method: 'swap_exact_tokens_for_tokens_path_4',
+              params: [actualRawAmount, minOutRaw.toString(), multiHopPath[0], multiHopPath[1], multiHopPath[2], multiHopPath[3], walletAddress, String(deadline)],
+              rpc,
+            });
+          }
+
+          updateProgress(stepStartPct + 65, 'Waiting for multi-hop swap confirmation...', false);
+          updateToast(toastId, 'pending', 'Waiting for swap confirmation...', swapTxHash);
+          await rpc.waitForReceipt(swapTxHash);
+
+          // [V7-FIX] Multi-step: unwrap WOCT to OCT after multi-hop swap if toToken is native
+          if (toToken.address === '') {
+            const actualWoctBal = await rpc.getTokenBalance(WOCT_TOKEN.address, walletAddress);
+            const unwrapAmount = BigInt(actualWoctBal) < BigInt(expectedOutput)
+              ? actualWoctBal
+              : expectedOutput;
+            updateProgress(88, 'Unwrapping WOCT to OCT...', false);
+            updateToast(toastId, 'pending', 'Step 2/3: Unwrapping WOCT to OCT...');
+            const unwrapHash = await walletService.callContract({
+              contract: CONTRACTS.woct,
+              method: 'withdraw',
+              params: [unwrapAmount],
+              rpc,
+            });
+            updateProgress(93, 'Waiting for unwrap confirmation...', false);
+            await rpc.waitForReceipt(unwrapHash);
+            updateProgress(96, 'Claiming native OCT...', false);
+            updateToast(toastId, 'pending', 'Step 3/3: Claiming OCT...');
+            const claimHash = await walletService.callContract({
+              contract: CONTRACTS.woct,
+              method: 'claim_withdrawal',
+              params: [],
+              rpc,
+            });
+            await rpc.waitForReceipt(claimHash);
+          }
+
+          updateProgress(100, 'Multi-hop swap completed', false);
+          const finalDisplay = toToken.address === ''
+            ? `Multi-hop swap ${fromAmount} ${fromToken.symbol} → ${formatUnits(expectedOutput, WOCT_TOKEN.decimals)} WOCT → unwrapped to OCT via ${routeDisplay}!`
+            : `Multi-hop swap ${fromAmount} ${fromToken.symbol} → ${formatUnits(expectedOutput, effectiveToToken.decimals)} ${toToken.symbol} via ${routeDisplay}!`;
+          updateToast(toastId, 'success', finalDisplay, swapTxHash);
+        } else {
+        // [DIRECT SWAP] Original direct pool swap logic
         const freshReserves = await rpc.getReserves(poolAddress);
         const freshPool = await rpc.getPoolInfo(poolAddress);
         const fromIsTokenA = actualFromToken.address.toLowerCase() === freshPool.tokenA.toLowerCase();
@@ -546,7 +774,6 @@ function SwapPage() {
         if (!fromIsTokenA && !fromIsTokenB) {
           throw new Error('Selected input token is not part of the resolved pool');
         }
-        // [V7-FIX] If toToken is native OCT, treat it as WOCT for the pool swap
         const actualToToken = toToken.address === '' ? WOCT_TOKEN : toToken;
         const toIsActualTokenA = actualToToken.address.toLowerCase() === freshPool.tokenA.toLowerCase();
         const toIsActualTokenB = actualToToken.address.toLowerCase() === freshPool.tokenB.toLowerCase();
@@ -556,22 +783,16 @@ function SwapPage() {
 
         const freshReserveIn = fromIsTokenA ? freshReserves.reserveA : freshReserves.reserveB;
         const freshReserveOut = fromIsTokenA ? freshReserves.reserveB : freshReserves.reserveA;
-
         const amountInBN = parseUnits(fromAmount.trim(), actualFromToken.decimals);
-        // [SECURITY] F-7: Pre-check user balance before submission
-        // For wrapped flow, we already wrapped so balance check is skipped
         if (fromToken.address !== '' && fromBalance !== null && BigInt(amountInBN) > BigInt(fromBalance)) {
           throw new Error('Insufficient balance for swap');
         }
         const freshOutput = calculateOutput(amountInBN, freshReserveIn, freshReserveOut, poolFee.num, poolFee.denom);
-        // [SECURITY] Reject zero or negative output to prevent silent failures
         if (BigInt(freshOutput) <= 0n) {
           throw new Error('Calculated output is zero or negative — pool may be empty or amount too small');
         }
         const freshToAmount = formatUnits(freshOutput, actualToToken.decimals);
 
-        // [V7-FIX] Compute minOutRaw directly from BigInt to avoid precision loss
-        // from formatUnits → parseUnits round-trip on high-decimal tokens.
         const basisPoints = getSlippageBasisPoints();
         const minOutRaw = BigInt(freshOutput) * BigInt(10000 - basisPoints) / 10000n;
         const swapMethod = fromIsTokenA ? 'swap_a_for_b' : 'swap_b_for_a';
@@ -580,8 +801,8 @@ function SwapPage() {
           throw new Error('Minimum output too small — try a larger amount or adjust slippage');
         }
         const minOutStr = minOutRaw.toString();
-
         const stepStartPct = fromToken.address === '' ? 35 : 15;
+
         updateProgress(stepStartPct, 'Preparing swap transaction...', false);
         updateToast(toastId, 'pending', `Approving ${actualFromToken.symbol} grant in wallet...`);
         updateProgress(stepStartPct + 20, 'Waiting for token grant approval...', false);
@@ -670,6 +891,7 @@ function SwapPage() {
           ? `Swap ${fromAmount} ${fromToken.symbol} → ${formatUnits(postGrantOutput, WOCT_TOKEN.decimals)} WOCT → unwrapped to OCT successful!`
           : `Swap ${fromAmount} ${fromToken.symbol} → ${freshToAmount} ${toToken.symbol} successful!`;
         updateToast(toastId, 'success', finalDisplay, swapHash);
+        }
       }
 
       try { await loadBalances(); } catch { /* noop */ }
