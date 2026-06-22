@@ -367,14 +367,70 @@ function LaunchTokenPage() {
     if (wizardStep > 1) setWizardStep((wizardStep - 1) as WizardStep);
   };
 
+  const fillRandom = () => {
+    const names = ['MoonDoge', 'SafePEPE', 'EverCorgi', 'LazySloth', 'SpaceBunny', 'ChadFox', 'PikaPulse', 'DankMeme', 'GigaChad', 'BasedBolt', 'WagmiWhale', 'DegenDuck', 'ApeTogether', 'RizzRaccoon', 'BetBear'];
+    const prefixes = ['SUPER', 'MEGA', 'ULTRA', 'HYPER', 'BIG', 'WOW', 'MOON', 'STAR', 'GOLD', 'DARK'];
+    const name = names[Math.floor(Math.random() * names.length)];
+    const prefixIdx = Math.floor(Math.random() * prefixes.length);
+    const withPrefix = Math.random() > 0.5;
+    const fullName = withPrefix ? `${prefixes[prefixIdx]} ${name}` : name;
+    const symbolLen = 3 + Math.floor(Math.random() * 3);
+    const symChars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    let symbol = '';
+    for (let i = 0; i < symbolLen; i++) symbol += symChars[Math.floor(Math.random() * symChars.length)];
+    const decimalsOptions = [6, 9, 18];
+    const decimals = decimalsOptions[Math.floor(Math.random() * decimalsOptions.length)];
+    const maxSupply = (9_223_372_036_854_775_807n / (BigInt(10) ** BigInt(decimals))).toString();
+    const maxSupplyNum = Number(maxSupply);
+    const supply = Math.floor(Math.random() * Math.min(maxSupplyNum, 1_000_000_000_000)) + 1_000_000;
+    const randomBool = () => Math.random() > 0.6;
+    const randomBps = (min: number, max: number) => String(Math.floor(Math.random() * (max - min + 1)) + min);
+    const randomAmount = () => String(Math.floor(Math.random() * 100_000) + 1_000);
+    setConfig({
+      ...INITIAL_CONFIG,
+      name: fullName,
+      symbol,
+      contractName: fullName.replace(/[^a-zA-Z0-9]/g, '') + 'Token',
+      initialSupply: String(supply),
+      decimals,
+      mintable: randomBool(),
+      burnable: randomBool(),
+      pausable: randomBool(),
+      blacklist: randomBool(),
+      maxTx: randomBool(),
+      maxTxAmount: randomBool() ? randomAmount() : '0',
+      maxWallet: randomBool(),
+      maxWalletAmount: randomBool() ? randomAmount() : '0',
+      cooldown: randomBool(),
+      cooldownSeconds: randomBool() ? randomBps(1, 1000) : '10',
+      autoBurn: randomBool(),
+      autoBurnBps: randomBool() ? randomBps(1, 1000) : '100',
+      tax: randomBool(),
+      taxBps: randomBool() ? randomBps(1, 2500) : '100',
+      taxRecipientMode: 'self',
+    });
+    setWizardStep(1);
+  };
+
   // ========== RENDER ==========
   return (
-    <div className="max-w-3xl mx-auto pt-4 space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold">Launch Token</h2>
-        <p className="text-sm text-[var(--app-muted)] mt-1">
-          Deploy a feature-rich token on EverestSwap
-        </p>
+      <div className="max-w-3xl mx-auto pt-4 space-y-6">
+      <div className="flex items-start justify-between">
+        <div>
+          <h2 className="text-2xl font-bold">Launch Token</h2>
+          <p className="text-sm text-[var(--app-muted)] mt-1">
+            Deploy a feature-rich token on EverestSwap
+          </p>
+        </div>
+        {(step.type === 'idle' || step.type === 'error') && (
+          <button
+            type="button"
+            onClick={fillRandom}
+            className="text-xs px-3 py-1.5 rounded-lg bg-[var(--app-panel-soft)] hover:bg-[var(--app-hover)] text-[var(--app-muted)] hover:text-[var(--app-text)] transition-colors border border-[var(--app-border)] whitespace-nowrap"
+          >
+            🎲 Random Fill
+          </button>
+        )}
       </div>
 
       {/* ====== Step tabs ====== */}
