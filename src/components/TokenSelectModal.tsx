@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import type { OctraRpc } from '../services/octraRpc';
 import { isValidOctraAddress } from '../services/octraRpc';
 import { OCT_TOKEN, WOCT_TOKEN, OES_TOKEN, CONTRACTS } from '../types';
+import { tokenStorage } from '../services/tokenStorage';
 
 interface TokenItem {
   address: string;
@@ -62,6 +63,9 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
     setTokens([]);
     (async () => {
       try {
+        // Load saved tokens from localStorage
+        const savedTokens = tokenStorage.getAll();
+        
         // [SECURITY] Verify common tokens against factory trust registry to prevent
         // impersonation if env vars are compromised
         const commonTrustChecks = await Promise.all(
@@ -84,9 +88,19 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
         });
         const results = (await Promise.all(metaPromises)).filter((t): t is TokenItem => t !== null);
         const knownAddrs = new Set(COMMON_TOKENS.map(t => t.address));
+        
+        // Add saved tokens at the top
+        const savedTokenItems: TokenItem[] = savedTokens.map(t => ({
+          ...t,
+          isCommon: false,
+          isTrusted: true,
+          balance: null,
+        }));
+        
         // [SECURITY] F-4: Always mark native token (empty address) as trusted since
         // it doesn't have a contract address to verify against the factory
         let deduped: TokenItem[] = [
+          ...savedTokenItems,
           ...COMMON_TOKENS.map(t => ({
             ...t,
             isCommon: true,
@@ -94,7 +108,7 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
             isTrusted: t.address === '' || trustedCommonAddrs.has(t.address),
             balance: null as null,
           })),
-          ...results.filter(t => !knownAddrs.has(t.address)),
+          ...results.filter(t => !knownAddrs.has(t.address) && !savedTokens.some(s => s.address === t.address)),
         ];
         // [SECURITY] F-5: Optionally hide native token (used for from-token in swap mode)
         if (excludeNative) {
@@ -240,6 +254,14 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
 
   const handleImportSelect = () => {
     if (!importMeta || importMeta.symbol === '???') return;
+    // Save to localStorage for persistence
+    tokenStorage.save({
+      address: importAddr,
+      symbol: importMeta.symbol,
+      name: importMeta.name,
+      decimals: importMeta.decimals,
+      timestamp: Date.now(),
+    });
     onSelect(importAddr, importMeta);
     onClose();
   };
@@ -316,7 +338,7 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
     >
       <div
         ref={dialogRef}
-        className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] max-w-sm w-full flex flex-col max-h-[80vh] shadow-2xl"
+        className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] max-w-[40%] w-full flex flex-col max-h-[50%] shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--app-border)]">
