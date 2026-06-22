@@ -57,19 +57,12 @@ const INITIAL_CONFIG: TokenLaunchConfig = {
   customTaxRecipient: '',
 };
 
-// [V7-PASS8] C-8 fix: cap on the raw (result) value, not the input
-// [V7-PASS8] AML int is 64-bit; max value is 2^63-1 = 9_223_372_036_854_775_807
-const MAX_INT64 = 9_223_372_036_854_775_807n;
-
 function toBigInt(s: string, decimals: number): bigint | null {
   if (!s || !/^\d+$/.test(s)) return null;
   try {
     const v = BigInt(s);
     if (v <= 0n) return null;
-    // [V7-PASS8] C-8: cap the final raw value (input * 10^decimals), not the input alone
-    const raw = v * BigInt(10) ** BigInt(decimals);
-    if (raw > MAX_INT64 || raw <= 0n) return null;
-    return raw;
+    return v * BigInt(10) ** BigInt(decimals);
   } catch {
     return null;
   }
@@ -126,7 +119,6 @@ function LaunchTokenPage() {
     } else {
       const v = BigInt(config.initialSupply.trim());
       if (v <= 0n) errs.push('Initial supply must be positive');
-      if (v > BigInt(Number.MAX_SAFE_INTEGER)) errs.push('Initial supply too large');
     }
 
     if (config.supplyRecipientMode === 'custom' && !isValidAddress(config.customSupplyRecipient)) {
@@ -208,74 +200,62 @@ function LaunchTokenPage() {
   const [estimatedCost, setEstimatedCost] = useState('0.2000');
 
   // [V7-PASS8] C-10 fix: build constructor message from explicit wallet snapshot
-  // [V7-PASS8] C-9 fix: cap max_tx/max_wallet at MAX_INT64
   // [V7-PASS8] M-9 fix: stringify all int params for consistency
   // [V7-PASS8] H-11 fix: removed reflection_flag from constructor (dead in contract)
   // [V7-PASS8] H-11 fix: removed 'lp_pool' tax recipient (not implementable)
-  type BuildResult = { ok: true; json: string } | { ok: false; reason: string };
-  function buildConstructorMessage(walletSnap: string): BuildResult {
+  function buildConstructorMessage(walletSnap: string): string | null {
     const raw = toBigInt(config.initialSupply, config.decimals);
-    if (!raw) return { ok: false, reason: `Initial supply × 10^${config.decimals} exceeds int64 limit` };
+    if (!raw) return null;
 
-    // Resolve addresses from snapshot (C-10 fix)
     const tokenOwner = config.tokenOwnerMode === 'self' ? walletSnap : config.customTokenOwner.trim();
     const supplyRecipient = config.supplyRecipientMode === 'self' ? walletSnap : config.customSupplyRecipient.trim();
     const taxRecipient = config.taxRecipientMode === 'custom' ? config.customTaxRecipient.trim() : walletSnap;
 
-    // Cap max_tx and max_wallet (C-9 fix)
     let maxTx = 0n;
     let maxWallet = 0n;
     if (config.maxTx) {
       maxTx = BigInt(config.maxTxAmount || '0') * BigInt(10) ** BigInt(config.decimals);
-      if (maxTx > MAX_INT64) return { ok: false, reason: `Max tx amount × 10^${config.decimals} exceeds int64 limit` };
     }
     if (config.maxWallet) {
       maxWallet = BigInt(config.maxWalletAmount || '0') * BigInt(10) ** BigInt(config.decimals);
-      if (maxWallet > MAX_INT64) return { ok: false, reason: `Max wallet amount × 10^${config.decimals} exceeds int64 limit` };
     }
 
-    // NaN guard (M-11 fix)
     const cooldownBlocks = config.cooldown ? parseInt(config.cooldownSeconds, 10) : 0;
-    if (config.cooldown && (!Number.isFinite(cooldownBlocks) || cooldownBlocks < 1)) return { ok: false, reason: 'Invalid cooldown blocks' };
+    if (config.cooldown && (!Number.isFinite(cooldownBlocks) || cooldownBlocks < 1)) return null;
     const taxBps = config.tax ? parseInt(config.taxBps, 10) : 0;
-    if (config.tax && (!Number.isFinite(taxBps) || taxBps < 1)) return { ok: false, reason: 'Invalid tax bps' };
+    if (config.tax && (!Number.isFinite(taxBps) || taxBps < 1)) return null;
     const autoBurnBps = config.autoBurn ? parseInt(config.autoBurnBps, 10) : 0;
-    if (config.autoBurn && (!Number.isFinite(autoBurnBps) || autoBurnBps < 1)) return { ok: false, reason: 'Invalid auto-burn bps' };
+    if (config.autoBurn && (!Number.isFinite(autoBurnBps) || autoBurnBps < 1)) return null;
 
-    // 27-arg constructor (reflection removed, 5 trusted addresses added)
-    return {
-      ok: true,
-      json: JSON.stringify([
-        config.name.trim(),                                    // 1. n
-        config.symbol.trim().toUpperCase(),                    // 2. s
-        config.contractName.trim() || (config.name.trim() + 'Token'),  // 3. contract_name
-        raw.toString(),                                        // 4. initial_supply (int)
-        String(config.decimals),                               // 5. dec
-        tokenOwner,                                            // 6. initial_owner
-        supplyRecipient,                                       // 7. supply_recipient
-        maxTx.toString(),                                      // 8. max_tx_amount
-        maxWallet.toString(),                                  // 9. max_wallet_amount
-        String(cooldownBlocks),                                // 10. cooldown_blocks
-        String(taxBps),                                        // 11. tax_bps
-        taxRecipient,                                          // 12. tax_recipient
-        String(autoBurnBps),                                   // 13. auto_burn_bps
-        config.mintable,                                       // 14
-        config.burnable,                                       // 15
-        config.pausable,                                       // 16
-        config.blacklist,                                      // 17
-        config.maxTx,                                          // 18
-        config.maxWallet,                                      // 19
-        config.cooldown,                                       // 20
-        config.tax,                                            // 21
-        config.autoBurn,                                       // 22
-        // [V7-PASS9] H-14: 5 initial trusted addresses
-        (config.trusted1 || '').trim(),                        // 23
-        (config.trusted2 || '').trim(),                        // 24
-        (config.trusted3 || '').trim(),                        // 25
-        (config.trusted4 || '').trim(),                        // 26
-        (config.trusted5 || '').trim(),                        // 27
-      ]),
-    };
+    return JSON.stringify([
+      config.name.trim(),
+      config.symbol.trim().toUpperCase(),
+      config.contractName.trim() || (config.name.trim() + 'Token'),
+      raw.toString(),
+      String(config.decimals),
+      tokenOwner,
+      supplyRecipient,
+      maxTx.toString(),
+      maxWallet.toString(),
+      String(cooldownBlocks),
+      String(taxBps),
+      taxRecipient,
+      String(autoBurnBps),
+      config.mintable,
+      config.burnable,
+      config.pausable,
+      config.blacklist,
+      config.maxTx,
+      config.maxWallet,
+      config.cooldown,
+      config.tax,
+      config.autoBurn,
+      (config.trusted1 || '').trim(),
+      (config.trusted2 || '').trim(),
+      (config.trusted3 || '').trim(),
+      (config.trusted4 || '').trim(),
+      (config.trusted5 || '').trim(),
+    ]);
   };
 
   const handleLaunch = async () => {
@@ -320,9 +300,8 @@ function LaunchTokenPage() {
       setStep({ type: 'deploying' });
 
       // [V7-PASS8] C-10 fix: pass walletSnapshot to build message from same source
-      const buildResult = buildConstructorMessage(walletSnapshot);
-      if (!buildResult.ok) throw new Error(buildResult.reason);
-      const constructorMessage = buildResult.json;
+      const constructorMessage = buildConstructorMessage(walletSnapshot);
+      if (!constructorMessage) throw new Error('Invalid supply or amount');
 
       const deployTxHash = await walletService.signAndSubmitDeployTx(rpc, {
         bytecode,
@@ -492,9 +471,6 @@ function LaunchTokenPage() {
                     placeholder="1000000"
                     className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[var(--app-blue)] transition-colors"
                   />
-                  <p className="text-[10px] text-[var(--app-muted-2)]">
-                    Max supply for {config.decimals} decimals: {(MAX_INT64 / (BigInt(10) ** BigInt(config.decimals))).toLocaleString()}
-                  </p>
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-xs text-[var(--app-muted)]">Decimals</label>
