@@ -46,11 +46,12 @@ type CreateStep =
   | { type: 'done'; poolAddress: string }
   | { type: 'error'; message: string };
 
-function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect }: {
+function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddress }: {
   rpc: OctraRpc;
   isConnected: boolean;
   onPoolCreated: () => void;
   connect: () => void | Promise<void>;
+  walletAddress: string;
 }) {
   const navigate = useNavigate();
   const [tokenA, setTokenA] = useState('');
@@ -59,6 +60,8 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect }: {
   const [metaB, setMetaB] = useState<TokenMeta | null>(null);
   const [trustedA, setTrustedA] = useState(false);
   const [trustedB, setTrustedB] = useState(false);
+  const [balanceA, setBalanceA] = useState<string | null>(null);
+  const [balanceB, setBalanceB] = useState<string | null>(null);
   const [showTokenASelect, setShowTokenASelect] = useState(false);
   const [showTokenBSelect, setShowTokenBSelect] = useState(false);
   const [hasValidPair, setHasValidPair] = useState(false);
@@ -81,6 +84,11 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect }: {
 
   useEffect(() => {
     if (!tokenA || !tokenB) { setHasValidPair(false); return; }
+    // [V7-FIX] If either token IS WOCT, the pool IS the WOCT pair — always valid
+    if (tokenA === WOCT_TOKEN.address || tokenB === WOCT_TOKEN.address) {
+      setHasValidPair(true);
+      return;
+    }
     let cancelled = false;
     (async () => {
       const factoryAddr = CONTRACTS.factory;
@@ -121,6 +129,14 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect }: {
     setMetaA(meta);
     setInitAmountA('');
     rpc.isTrustedToken(CONTRACTS.factory, address).then(t => { if (mountedRef.current) setTrustedA(t); });
+    // Fetch balance
+    if (walletAddress) {
+      if (address === '') {
+        rpc.getBalance(walletAddress).then(bal => { if (mountedRef.current) setBalanceA(bal.balance_raw || '0'); }).catch(() => { if (mountedRef.current) setBalanceA(null); });
+      } else {
+        rpc.getTokenBalance(address, walletAddress).then(bal => { if (mountedRef.current) setBalanceA(bal); }).catch(() => { if (mountedRef.current) setBalanceA(null); });
+      }
+    }
   };
 
   const handleSelectTokenB = (address: string, meta: TokenMeta) => {
@@ -129,6 +145,14 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect }: {
     setMetaB(meta);
     setInitAmountB('');
     rpc.isTrustedToken(CONTRACTS.factory, address).then(t => { if (mountedRef.current) setTrustedB(t); });
+    // Fetch balance
+    if (walletAddress) {
+      if (address === '') {
+        rpc.getBalance(walletAddress).then(bal => { if (mountedRef.current) setBalanceB(bal.balance_raw || '0'); }).catch(() => { if (mountedRef.current) setBalanceB(null); });
+      } else {
+        rpc.getTokenBalance(address, walletAddress).then(bal => { if (mountedRef.current) setBalanceB(bal); }).catch(() => { if (mountedRef.current) setBalanceB(null); });
+      }
+    }
   };
 
   const getFeeParams = (): { num: number; denom: number } => {
@@ -466,6 +490,11 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect }: {
                   <div className="text-[var(--app-muted)] truncate">{metaA.name}</div>
                   <div className="text-[var(--app-muted)]">Decimals: {metaA.decimals}</div>
                   <TokenTrustBadge isTrusted={trustedA} />
+                  {walletAddress && (
+                    <div className="text-[10px] text-[var(--app-muted)]">
+                      Balance: {balanceA === null ? '...' : formatUnits(balanceA, metaA.decimals)}
+                    </div>
+                  )}
                 </div>
               )}
               <TokenSelectModal
@@ -493,6 +522,11 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect }: {
                   <div className="text-[var(--app-muted)] truncate">{metaB.name}</div>
                   <div className="text-[var(--app-muted)]">Decimals: {metaB.decimals}</div>
                   <TokenTrustBadge isTrusted={trustedB} />
+                  {walletAddress && (
+                    <div className="text-[10px] text-[var(--app-muted)]">
+                      Balance: {balanceB === null ? '...' : formatUnits(balanceB, metaB.decimals)}
+                    </div>
+                  )}
                 </div>
               )}
               <TokenSelectModal
@@ -635,7 +669,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect }: {
 }
 
 function PoolPage() {
-  const { rpc, isConnected, connect } = useApp();
+  const { rpc, isConnected, connect, walletAddress } = useApp();
   const navigate = useNavigate();
   const [pools, setPools] = useState<PoolDisplay[]>([]);
   const [loading, setLoading] = useState(true);
@@ -731,6 +765,7 @@ function PoolPage() {
           isConnected={isConnected}
           onPoolCreated={loadPools}
           connect={connect}
+          walletAddress={walletAddress}
         />
       )}
 
