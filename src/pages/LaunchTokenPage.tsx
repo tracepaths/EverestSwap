@@ -22,7 +22,7 @@ const INITIAL_CONFIG: TokenLaunchConfig = {
   symbol: '',
   contractName: '',
   initialSupply: '',
-  decimals: 18,
+  decimals: 6,
   supplyRecipientMode: 'self',
   customSupplyRecipient: '',
   tokenOwnerMode: 'self',
@@ -127,11 +127,6 @@ function LaunchTokenPage() {
       const v = BigInt(config.initialSupply.trim());
       if (v <= 0n) errs.push('Initial supply must be positive');
       if (v > BigInt(Number.MAX_SAFE_INTEGER)) errs.push('Initial supply too large');
-      // [FIX] Check raw value (supply * 10^decimals) against MAX_INT64
-      const maxSupplyForDecimals = MAX_INT64 / (BigInt(10) ** BigInt(config.decimals));
-      if (v > maxSupplyForDecimals) {
-        errs.push(`Supply too large for ${config.decimals} decimals. Maximum: ${maxSupplyForDecimals.toLocaleString()}`);
-      }
     }
 
     if (config.supplyRecipientMode === 'custom' && !isValidAddress(config.customSupplyRecipient)) {
@@ -149,20 +144,8 @@ function LaunchTokenPage() {
     if (config.maxTx && (!config.maxTxAmount || BigInt(config.maxTxAmount || '0') <= 0n)) {
       errs.push('Max transaction amount must be > 0');
     }
-    if (config.maxTx && config.maxTxAmount) {
-      const maxTxRaw = BigInt(config.maxTxAmount) * BigInt(10) ** BigInt(config.decimals);
-      if (maxTxRaw > MAX_INT64) {
-        errs.push(`Max tx amount × 10^${config.decimals} exceeds int64 limit`);
-      }
-    }
     if (config.maxWallet && (!config.maxWalletAmount || BigInt(config.maxWalletAmount || '0') <= 0n)) {
       errs.push('Max wallet amount must be > 0');
-    }
-    if (config.maxWallet && config.maxWalletAmount) {
-      const maxWalletRaw = BigInt(config.maxWalletAmount) * BigInt(10) ** BigInt(config.decimals);
-      if (maxWalletRaw > MAX_INT64) {
-        errs.push(`Max wallet amount × 10^${config.decimals} exceeds int64 limit`);
-      }
     }
     if (config.cooldown) {
       const cd = parseInt(config.cooldownSeconds, 10);
