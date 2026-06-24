@@ -17,6 +17,20 @@ const UNKNOWN_TOKEN = { address: '', symbol: '???', name: 'Unknown', decimals: 6
 
 type Tab = 'add' | 'remove';
 
+type AddLiquidityStep =
+  | { type: 'idle' }
+  | { type: 'granting_a' }
+  | { type: 'granting_b' }
+  | { type: 'adding_liquidity' }
+  | { type: 'done'; txHash: string }
+  | { type: 'error'; message: string };
+
+type RemoveLiquidityStep =
+  | { type: 'idle' }
+  | { type: 'removing' }
+  | { type: 'done'; txHash: string }
+  | { type: 'error'; message: string };
+
 function LiquidityPage() {
   const { rpc, isConnected, walletAddress, addToast, updateToast, connect } = useApp();
   const [searchParams] = useSearchParams();
@@ -44,6 +58,8 @@ function LiquidityPage() {
   const [customLockDays, setCustomLockDays] = useState<string>('');
   // [V7-FIX] Track if user has manually edited amountB — don't auto-overwrite
   const [userEditedB, setUserEditedB] = useState(false);
+  const [addStep, setAddStep] = useState<AddLiquidityStep>({ type: 'idle' });
+  const [removeStep, setRemoveStep] = useState<RemoveLiquidityStep>({ type: 'idle' });
 
   const pool = pools[selectedPoolIdx];
   const mountedRef = useRef(true);
@@ -70,6 +86,9 @@ function LiquidityPage() {
     })();
     return () => { cancelled = true; };
   }, [rpc]);
+
+  const resetAddStep = () => setAddStep({ type: 'idle' });
+  const resetRemoveStep = () => setRemoveStep({ type: 'idle' });
 
   const filteredPools = useMemo(() => {
     if (!poolQuery) return pools;
@@ -241,15 +260,18 @@ function LiquidityPage() {
       : '—',
   };
 
+  const ADD_STEPS = [
+    { key: 'granting_a', label: `Grant ${validTokenA.symbol} to pool` },
+    { key: 'granting_b', label: `Grant ${validTokenB.symbol} to pool` },
+    { key: 'adding_liquidity', label: 'Add liquidity' },
+  ];
+
   const handleAddLiquidity = async () => {
     if (!pool) return;
-    // [SECURITY] F-2: Synchronous ref guard prevents double-click
     if (addSubmittingRef.current) return;
     addSubmittingRef.current = true;
-    // [V7-FIX] Declare outside try so catch can reference
     let toastId = '';
     try {
-      // [V7-SECURITY-FIX] Validate amounts before submission
       const trimmedA = amountA.trim();
       const trimmedB = amountB.trim();
       if (!/^\d+(\.\d+)?$/.test(trimmedA) || Number(trimmedA) <= 0) {
@@ -261,58 +283,36 @@ function LiquidityPage() {
         return;
       }
       setLoading(true);
+      setAddStep({ type: 'granting_a' });
       toastId = addToast('pending', 'Add Liquidity in progress...');
 
-      // [SECURITY] F-2: Use trimmed values for parseUnits to avoid silent zero on
-      // whitespace inputs (e.g., "  1.5  " would pass validation but parseUnits
-      // would return '0' because the regex doesn't match whitespace)
       const rawA = parseUnits(trimmedA, validTokenA.decimals);
       const rawB = parseUnits(trimmedB, validTokenB.decimals);
 
-      // Calculate lock duration in epochs (1 epoch = 1 minute)
       let lockDuration = 0;
       if (lockOption === '30d') {
-        lockDuration = 30 * 24 * 60; // 43200 epochs
+        lockDuration = 30 * 24 * 60;
       } else if (lockOption === '6m') {
-        lockDuration = 182 * 24 * 60; // 262080 epochs (6 months)
+        lockDuration = 182 * 24 * 60;
       } else if (lockOption === '1y') {
-        lockDuration = 365 * 24 * 60; // 525600 epochs (1 year)
+        lockDuration = 365 * 24 * 60;
       } else if (lockOption === 'custom') {
-        // [V6-SECURITY-FIX MED-14] Validate custom lock: min 1 day, no negatives
         const days = parseInt(customLockDays, 10) || 0;
-        if (days < 1) {
-          throw new Error('Custom lock duration must be at least 1 day');
-        }
-        if (days > 365) {
-          throw new Error('Maximum lock duration is 365 days');
-        }
+        if (days < 1) throw new Error('Custom lock duration must be at least 1 day');
+        if (days > 365) throw new Error('Maximum lock duration is 365 days');
         lockDuration = days * 24 * 60;
       }
 
-      // [V7-FIX] Use chain epoch (not unix timestamp) for deadline
-      // epoch in AML is the chain block counter, not wall-clock time
       const epochInfo = await rpc.call<{ epoch_id: number }>('epoch_current');
       const deadline = (epochInfo?.epoch_id || 0) + 300;
 
-      // [V6-SECURITY-FIX HIGH-8] Calculate proper min_lp with slippage (10% tolerance)
-      // [V7-FIX] First deposit: contract requires lp_raw > 1000 (minimum_liquidity)
-      // so minLp must be at least 1001 (1001 - 1000 burned = 1 LP for user).
-      // Subsequent: estimate from BOTH reserves
       let minLp = '1001';
-
-      // [SECURITY] F-8: Pre-check user balances before submission
-      // [V7-FIX] Subtract gas buffer (0.01 OCT equivalent = 10000 base units) to
-      // account for tx fees that may deduct balance between this check and
-      // the on-chain pull. Without this, with minimal balance the pull
-      // would revert on the contract side.
       const GAS_BUFFER = 10000n;
       const checkBalance = (raw: bigint, bal: string, symbol: string, isNative: boolean) => {
         if (bal === '0' || bal === '') return;
         const balBN = BigInt(bal);
         const safeBal = isNative && balBN > GAS_BUFFER ? balBN - GAS_BUFFER : balBN;
-        if (raw > safeBal) {
-          throw new Error(`Insufficient ${symbol} balance (accounting for gas)`);
-        }
+        if (raw > safeBal) throw new Error(`Insufficient ${symbol} balance (accounting for gas)`);
       };
       checkBalance(BigInt(rawA), tokenABalance, validTokenA.symbol, validTokenA.address === '');
       checkBalance(BigInt(rawB), tokenBBalance, validTokenB.symbol, validTokenB.address === '');
@@ -321,7 +321,7 @@ function LiquidityPage() {
         const lpFromA = (BigInt(rawA) * BigInt(totalLP)) / BigInt(reserveA);
         const lpFromB = (BigInt(rawB) * BigInt(totalLP)) / BigInt(reserveB);
         const lpEstimate = lpFromA < lpFromB ? lpFromA : lpFromB;
-        const slippageBps = 1000n; // 10%
+        const slippageBps = 1000n;
         const minLpRaw = lpEstimate - (lpEstimate * slippageBps / 10000n);
         minLp = minLpRaw > 0n ? minLpRaw.toString() : '1';
       }
@@ -336,6 +336,7 @@ function LiquidityPage() {
       updateToast(toastId, 'pending', `Waiting for ${validTokenA.symbol} grant confirmation...`, grantAHash);
       await rpc.waitForReceipt(grantAHash);
 
+      setAddStep({ type: 'granting_b' });
       updateToast(toastId, 'pending', `Approving ${validTokenB.symbol} grant in wallet...`);
       const grantBHash = await walletService.callContract({
         contract: pool.tokenB.address,
@@ -346,6 +347,7 @@ function LiquidityPage() {
       updateToast(toastId, 'pending', `Waiting for ${validTokenB.symbol} grant confirmation...`, grantBHash);
       await rpc.waitForReceipt(grantBHash);
 
+      setAddStep({ type: 'adding_liquidity' });
       updateToast(toastId, 'pending', 'Approving add liquidity in wallet...');
       const addHash = await walletService.callContract({
         contract: pool.address,
@@ -356,15 +358,16 @@ function LiquidityPage() {
       updateToast(toastId, 'pending', 'Waiting for add liquidity confirmation...', addHash);
       await rpc.waitForReceipt(addHash);
 
+      setAddStep({ type: 'done', txHash: addHash });
       updateToast(toastId, 'success', `Add ${amountA} ${validTokenA.symbol} / ${amountB} ${validTokenB.symbol} successful!`, addHash);
       setAmountA('');
       loadPoolInfo();
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : 'An error occurred';
+      setAddStep({ type: 'error', message: errMsg });
       if (toastId) updateToast(toastId, 'error', `Add Liquidity failed: ${errMsg}`);
       else addToast('error', `Add Liquidity failed: ${errMsg}`);
     } finally {
-      // [SECURITY] F-2: Reset ref guard
       addSubmittingRef.current = false;
       setLoading(false);
     }
@@ -372,14 +375,11 @@ function LiquidityPage() {
 
   const handleRemoveLiquidity = async () => {
     if (!pool || selectedPositionId === null) return;
-    // [SECURITY] F-2: Synchronous ref guard
     if (removeSubmittingRef.current) return;
     removeSubmittingRef.current = true;
-    // [V7-FIX] Declare outside try so catch can reference
     let toastId = '';
     try {
       const selectedPosition = positions.find(p => p.id === selectedPositionId);
-      // [SECURITY] F-9: Filter out zero-liquidity positions
       if (!selectedPosition || selectedPosition.liquidity === '0') {
         addToast('error', `Position #${selectedPositionId} has no liquidity to remove.`);
         return;
@@ -398,8 +398,8 @@ function LiquidityPage() {
       }
 
       setLoading(true);
+      setRemoveStep({ type: 'removing' });
       toastId = addToast('pending', 'Remove Liquidity in progress...');
-      // [V7-FIX] Fetch fresh reserves and totalLP at submission time to avoid stale estimates
       const [freshReserves, freshTotalLP] = await Promise.all([
         rpc.getReserves(pool.address),
         rpc.getTotalLpSupply(pool.address),
@@ -411,7 +411,6 @@ function LiquidityPage() {
         ? (BigInt(freshReserves.reserveB) * BigInt(selectedPosition.liquidity) / BigInt(freshTotalLP) * 9000n / 10000n).toString()
         : '1';
 
-      // [V7-FIX] Use chain epoch (not unix timestamp) for deadline
       const epochInfo = await rpc.call<{ epoch_id: number }>('epoch_current');
       const deadline = (epochInfo?.epoch_id || 0) + 300;
 
@@ -425,15 +424,16 @@ function LiquidityPage() {
       updateToast(toastId, 'pending', 'Waiting for remove liquidity confirmation...', removeHash);
       await rpc.waitForReceipt(removeHash);
 
+      setRemoveStep({ type: 'done', txHash: removeHash });
       updateToast(toastId, 'success', `Remove position #${selectedPositionId} successful!`, removeHash);
       setSelectedPositionId(null);
       loadPoolInfo();
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : 'An error occurred';
+      setRemoveStep({ type: 'error', message: errMsg });
       if (toastId) updateToast(toastId, 'error', `Remove Liquidity failed: ${errMsg}`);
       else addToast('error', `Remove Liquidity failed: ${errMsg}`);
     } finally {
-      // [SECURITY] F-2: Reset ref guard
       removeSubmittingRef.current = false;
       setLoading(false);
     }
@@ -559,6 +559,58 @@ function LiquidityPage() {
 
         {tab === 'add' ? (
           <div className="p-6 space-y-3">
+            {addStep.type !== 'idle' && (
+              <div className="bg-[var(--app-panel)] rounded-xl p-4 border border-[var(--app-border)] space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold text-[var(--app-text)]">
+                    {addStep.type === 'done' ? 'Liquidity Added' : addStep.type === 'error' ? 'Add Liquidity Failed' : 'Adding Liquidity'}
+                  </span>
+                  {addStep.type !== 'done' && addStep.type !== 'error' && (
+                    <span className="text-xs font-mono text-[var(--app-muted)]">
+                      Step {ADD_STEPS.findIndex(s => s.key === addStep.type) + 1}/{ADD_STEPS.length}
+                    </span>
+                  )}
+                </div>
+                {addStep.type !== 'done' && addStep.type !== 'error' && (
+                  <div className="h-1.5 bg-[var(--app-panel-soft)] rounded-full overflow-hidden border border-[var(--app-border)]">
+                    <div
+                      className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)]"
+                      style={{ width: `${((ADD_STEPS.findIndex(s => s.key === addStep.type) + 1) / ADD_STEPS.length) * 100}%` }}
+                    />
+                  </div>
+                )}
+                {addStep.type !== 'error' && (
+                  <div className="space-y-1.5">
+                    {ADD_STEPS.map((def, idx) => {
+                      const currentIdx = addStep.type === 'done' ? ADD_STEPS.length : ADD_STEPS.findIndex(s => s.key === addStep.type);
+                      const isDone = idx < currentIdx;
+                      const isCurrent = addStep.type !== 'done' && idx === currentIdx;
+                      return (
+                        <div key={def.key} className={`flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-xs transition-colors ${isCurrent ? 'bg-[var(--app-blue)]/10 text-[var(--app-blue-3)]' : isDone ? 'text-[var(--app-success)]' : 'text-[var(--app-muted)]'}`}>
+                          {isDone ? (
+                            <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                          ) : isCurrent ? (
+                            <div className="w-4 h-4 flex-shrink-0 border-2 border-[var(--app-blue)] border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            <div className="w-4 h-4 flex-shrink-0 rounded-full border border-[var(--app-border)]" />
+                          )}
+                          <span className="font-medium">{idx + 1}. {def.label}</span>
+                          {isCurrent && <span className="ml-auto text-[10px] text-[var(--app-muted)]">sign...</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {addStep.type === 'error' && (
+                  <div className="text-xs text-[var(--app-danger)] bg-red-400/10 rounded-lg px-3 py-2">{addStep.message}</div>
+                )}
+                {(addStep.type === 'done' || addStep.type === 'error') && (
+                  <button onClick={resetAddStep} className="w-full py-2 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] rounded-xl text-sm font-medium hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] transition-colors">
+                    {addStep.type === 'done' ? 'Add More Liquidity' : 'Try Again'}
+                  </button>
+                )}
+              </div>
+            )}
             <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)]">
               <div className="flex justify-between items-center mb-2">
                 <span className="text-xs text-[var(--app-muted)]">{validTokenA.symbol}</span>
@@ -695,6 +747,44 @@ function LiquidityPage() {
           </div>
         ) : (
           <div className="p-6 space-y-3">
+            {removeStep.type !== 'idle' && (
+              <div className="bg-[var(--app-panel)] rounded-xl p-4 border border-[var(--app-border)] space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold text-[var(--app-text)]">
+                    {removeStep.type === 'done' ? 'Liquidity Removed' : removeStep.type === 'error' ? 'Remove Failed' : 'Removing Liquidity'}
+                  </span>
+                  {removeStep.type !== 'done' && removeStep.type !== 'error' && (
+                    <span className="text-xs font-mono text-[var(--app-muted)]">Step 1/1</span>
+                  )}
+                </div>
+                {removeStep.type === 'removing' && (
+                  <div className="h-1.5 bg-[var(--app-panel-soft)] rounded-full overflow-hidden border border-[var(--app-border)]">
+                    <div className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)]" style={{ width: '50%' }} />
+                  </div>
+                )}
+                {removeStep.type === 'removing' && (
+                  <div className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-xs bg-[var(--app-blue)]/10 text-[var(--app-blue-3)]">
+                    <div className="w-4 h-4 flex-shrink-0 border-2 border-[var(--app-blue)] border-t-transparent rounded-full animate-spin" />
+                    <span className="font-medium">1. Remove liquidity</span>
+                    <span className="ml-auto text-[10px] text-[var(--app-muted)]">sign...</span>
+                  </div>
+                )}
+                {removeStep.type === 'done' && (
+                  <div className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-xs text-[var(--app-success)]">
+                    <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                    <span className="font-medium">1. Remove liquidity</span>
+                  </div>
+                )}
+                {removeStep.type === 'error' && (
+                  <div className="text-xs text-[var(--app-danger)] bg-red-400/10 rounded-lg px-3 py-2">{removeStep.message}</div>
+                )}
+                {(removeStep.type === 'done' || removeStep.type === 'error') && (
+                  <button onClick={resetRemoveStep} className="w-full py-2 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] rounded-xl text-sm font-medium hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] transition-colors">
+                    {removeStep.type === 'done' ? 'Done' : 'Try Again'}
+                  </button>
+                )}
+              </div>
+            )}
             <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)]">
               <div className="text-xs text-[var(--app-muted)] mb-1">Your LP Balance</div>
               <div className="text-2xl font-mono">{formatUnits(lpBalance, 12)} LP</div>

@@ -438,22 +438,29 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
     setInitAmountB('');
   };
 
-  const stepLabel = (): string => {
-    switch (step.type) {
-      case 'compiling': return 'Compiling SwapPool contract...';
-      case 'computing_address': return 'Computing pool address...';
-      case 'deploying': return 'Deploying SwapPool (sign transaction)...';
-      case 'setting_tokens': return 'Setting pool tokens (sign transaction)...';
-      case 'setting_fee': return 'Setting pool fee (sign transaction)...';
-      case 'registering': return 'Registering pool on factory (sign transaction)...';
-      case 'granting_a': return `Granting ${metaA?.symbol ?? 'Token A'} to pool (sign transaction)...`;
-      case 'granting_b': return `Granting ${metaB?.symbol ?? 'Token B'} to pool (sign transaction)...`;
-      case 'adding_liquidity': return 'Adding initial liquidity (sign transaction)...';
-      case 'done': return 'Pool created successfully!';
-      case 'error': return 'Error: ' + step.message;
-      default: return '';
-    }
+  const allStepDefs: { key: CreateStep['type']; label: string }[] = [
+    { key: 'compiling', label: 'Compile contract' },
+    { key: 'computing_address', label: 'Compute pool address' },
+    { key: 'deploying', label: 'Deploy SwapPool' },
+    { key: 'setting_tokens', label: 'Set pool tokens' },
+    { key: 'setting_fee', label: 'Set pool fee' },
+    { key: 'registering', label: 'Register pool' },
+    { key: 'granting_a', label: `Grant ${metaA?.symbol ?? 'Token A'}` },
+    { key: 'granting_b', label: `Grant ${metaB?.symbol ?? 'Token B'}` },
+    { key: 'adding_liquidity', label: 'Add initial liquidity' },
+  ];
+
+  const hasInitLiquidity = !!(initAmountA && metaA && initAmountB && metaB
+    && Number(initAmountA) > 0 && Number(initAmountB) > 0);
+  const stepDefs = hasInitLiquidity ? allStepDefs : allStepDefs.slice(0, 6);
+  const totalSteps = stepDefs.length;
+
+  const getStepIndex = (stepType: CreateStep['type']): number => {
+    return stepDefs.findIndex(s => s.key === stepType);
   };
+
+  const stepType = step.type;
+  const stepSnapshot = step;
 
   const feeTiers = [
     { label: '0.01%', value: '0.01' as const },
@@ -637,19 +644,74 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
             {!isConnected ? 'Connect Wallet' : isValidA && isValidB && hasValidPair && initAmountA && initAmountB ? 'Create Pool + Add Liquidity' : 'Create Pool'}
           </button>
         </>
-      ) : (
+      ) : ((stepType === 'idle' || stepType === 'error') ? null : (
         <div className="bg-[var(--app-panel-soft)] rounded-xl p-6 border border-[var(--app-border)] space-y-4">
-          <div className="flex items-center gap-3">
-            <div className="w-5 h-5 border-2 border-[var(--app-blue)] border-t-transparent rounded-full animate-spin" />
-            <span className="text-sm text-[var(--app-blue-3)]">{stepLabel()}</span>
+          {/* Header with step counter */}
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-semibold text-[var(--app-text)]">
+              {stepType === 'done' ? 'Pool Created' : 'Creating Pool'}
+            </span>
+            {stepType !== 'done' && (
+              <span className="text-xs font-mono text-[var(--app-muted)]">
+                Step {getStepIndex(stepType) + 1}/{totalSteps}
+              </span>
+            )}
           </div>
-          {step.type === 'done' && (
+
+          {/* Progress bar */}
+          {stepType !== 'done' && (
+            <div className="h-1.5 bg-[var(--app-panel)] rounded-full overflow-hidden border border-[var(--app-border)]">
+              <div
+                className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)]"
+                style={{ width: `${((getStepIndex(stepType) + 1) / totalSteps) * 100}%` }}
+              />
+            </div>
+          )}
+
+          {/* Step checklist */}
+          <div className="space-y-1.5">
+            {stepDefs.map((def, idx) => {
+              const currentIdx = stepType === 'done' ? totalSteps : getStepIndex(stepType);
+              const isDone = idx < currentIdx;
+              const isCurrent = stepType !== 'done' && idx === currentIdx;
+
+              return (
+                <div
+                  key={def.key}
+                  className={`flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-xs transition-colors ${
+                    isCurrent ? 'bg-[var(--app-blue)]/10 text-[var(--app-blue-3)]' :
+                    isDone ? 'text-[var(--app-success)]' :
+                    'text-[var(--app-muted)]'
+                  }`}
+                >
+                  {isDone ? (
+                    <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  ) : isCurrent ? (
+                    <div className="w-4 h-4 flex-shrink-0 border-2 border-[var(--app-blue)] border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <div className="w-4 h-4 flex-shrink-0 rounded-full border border-[var(--app-border)]" />
+                  )}
+                  <span className="font-medium">
+                    {idx + 1}. {def.label}
+                  </span>
+                  {isCurrent && (
+                    <span className="ml-auto text-[10px] text-[var(--app-muted)]">sign...</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Done state */}
+          {stepType === 'done' && (
             <div className="space-y-3">
               <div className="text-xs text-[var(--app-muted)] break-all font-mono bg-[var(--app-panel-soft)] rounded-lg px-3 py-2">
-                Pool: {step.poolAddress}
+                Pool: {'poolAddress' in stepSnapshot ? stepSnapshot.poolAddress : ''}
               </div>
               <button
-                onClick={() => navigate(`/liquidity?pool=${step.poolAddress}`)}
+                onClick={() => navigate(`/liquidity?pool=${'poolAddress' in stepSnapshot ? stepSnapshot.poolAddress : ''}`)}
                 className="w-full py-2 bg-green-600 hover:bg-green-700 rounded-xl text-sm font-medium transition-colors"
               >
                 Add / Manage Liquidity
@@ -663,7 +725,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
             </div>
           )}
         </div>
-      )}
+      ))}
     </div>
   );
 }
