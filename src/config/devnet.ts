@@ -1,7 +1,14 @@
 import type { TokenInfo } from '../types';
 
 export const RPC_URL = 'https://devnet.octrascan.io/rpc';
-export const INDEXER_URL = 'http://localhost:3123';
+// [AUDIT-FIX H-5] Indexer must be served over HTTPS from a public endpoint.
+// localhost is only a dev fallback; production builds must set VITE_INDEXER_URL.
+// [AUDIT-FIX H-5] INDEXER_URL is env-overridable. Default points at the
+// hosted indexer service (https://everestswap-indexer-avax.zocomputer.io).
+// NOTE: deploying that service requires a plan upgrade (Free = 1 hosted slot,
+// currently used by code-server). Until then, set VITE_INDEXER_URL to an
+// HTTPS-accessible indexer, or price data fails closed (no silent localhost).
+export const INDEXER_URL = import.meta.env.VITE_INDEXER_URL || 'https://everestswap-indexer-avax.zocomputer.io';
 // [SECURITY] Devnet-only test keys. These are public testnet credentials.
 // NEVER use hardcoded keys for mainnet — mainnet deployer values come
 // from VITE_MAINNET_DEPLOYER_* environment variables via config/mainnet.ts

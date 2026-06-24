@@ -35,8 +35,11 @@ export function useIndexer(): IndexerState {
     let healthInterval: ReturnType<typeof setInterval>;
 
     async function checkHealth() {
-      // [V7-SECURITY-FIX] Enforce HTTPS for indexer URL (allow localhost for devnet)
-      if (INDEXER_URL && !INDEXER_URL.startsWith('https://') && !INDEXER_URL.startsWith('http://localhost') && !INDEXER_URL.startsWith('http://127.0.0.1')) {
+      // [V7-SECURITY-FIX] Enforce HTTPS for indexer URL.
+      // [AUDIT-FIX H-5] Removed the http://localhost / http://127.0.0.1 carve-out:
+      // those resolve to the visitor's own machine and are mixed-content on HTTPS origins.
+      // Local dev should set VITE_INDEXER_URL to an HTTPS tunnel or run the indexer over HTTPS.
+      if (INDEXER_URL && !INDEXER_URL.startsWith('https://')) {
         if (!cancelled && mountedRef.current) setState({ available: false, prices: [], loading: false });
         return;
       }

@@ -15,7 +15,10 @@
     "build:devnet": "vite build --mode devnet",
     "build:mainnet": "vite build --mode mainnet",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "verify-contracts": "node ../EverestSwapDEV/scripts/verify-contracts.mjs"
   },
   "dependencies": {
     "@0xio/sdk": "^2.7.1",
@@ -43,6 +46,7 @@
     "tailwindcss": "^4.3.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
-    "vite": "^8.0.12"
+    "vite": "^8.0.12",
+    "vitest": "^3.2.6"
   }
 }
