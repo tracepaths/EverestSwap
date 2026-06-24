@@ -5,6 +5,7 @@ import { walletService } from '../services/walletService';
 import { sanitizeNumericInput } from '../services/swapService';
 import type { TokenLaunchConfig } from '../types';
 import { EXPLORER_URL } from '../config';
+import { cookieStorage } from '../services/cookieStorage';
 
 type LaunchStep =
   | { type: 'idle' }
@@ -83,10 +84,29 @@ function LaunchTokenPage() {
 
   const mountedRef = useRef(true);
   const launchingRef = useRef(false);
+  const configLoadedRef = useRef(false);
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
+
+  useEffect(() => {
+    if (configLoadedRef.current) return;
+    configLoadedRef.current = true;
+    const saved = cookieStorage.loadLaunchConfig();
+    if (saved?.config) {
+      setConfig(saved.config);
+      setWizardStep(saved.wizardStep);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!configLoadedRef.current) return;
+    const handler = setTimeout(() => {
+      cookieStorage.saveLaunchConfig(config, wizardStep);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [config, wizardStep]);
 
   // [V7-FIX] Auto-fill contract name from token name
   useEffect(() => {
@@ -349,6 +369,7 @@ function LaunchTokenPage() {
   };
 
   const reset = () => {
+    cookieStorage.clearLaunchConfig();
     setStep({ type: 'idle' });
     setConfig(INITIAL_CONFIG);
     setWizardStep(1);

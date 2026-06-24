@@ -6,6 +6,7 @@ import { calculateOutput, calculatePriceImpact, formatUnits, parseUnits, sanitiz
 import { useIndexer } from '../hooks/useIndexer';
 import { PoolChart } from '../components/PoolChart';
 import TokenSelectModal from '../components/TokenSelectModal';
+import { cookieStorage } from '../services/cookieStorage';
 
 const HARDCODED_TOKENS = [OCT_TOKEN, WOCT_TOKEN, OES_TOKEN];
 
@@ -19,6 +20,14 @@ function getTokenLabel(address: string): string {
   return address.slice(0, 8) + '...';
 }
 
+function getTokenDecimals(address: string): number {
+  if (!address || address === '') return OCT_TOKEN.decimals;
+  const lower = address.toLowerCase();
+  if (lower === WOCT_TOKEN.address.toLowerCase()) return WOCT_TOKEN.decimals;
+  if (lower === OES_TOKEN.address.toLowerCase()) return OES_TOKEN.decimals;
+  return 6;
+}
+
 function SwapPage() {
   const { rpc, isConnected, walletAddress, addToast, updateToast, connect } = useApp();
   const [fromAmount, setFromAmount] = useState('');
@@ -27,8 +36,6 @@ function SwapPage() {
   const [toAmount, setToAmount] = useState('0');
   const [reserveA, setReserveA] = useState('0');
   const [reserveB, setReserveB] = useState('0');
-  const { available: indexerAvailable, prices, loading: indexerLoading } = useIndexer();
-  const chartData = prices.map(p => ({ time: Math.floor(p.time) as unknown as import('lightweight-charts').Time, value: p.price }));
   const [slippage, setSlippage] = useState(0.5);
   const [priceImpact, setPriceImpact] = useState(0);
   const [fromBalance, setFromBalance] = useState<string | null>(null);
@@ -42,6 +49,44 @@ function SwapPage() {
   const [showFromModal, setShowFromModal] = useState(false);
   const [showToModal, setShowToModal] = useState(false);
   const [poolAddress, setPoolAddress] = useState('');
+  
+  const loadSavedTokens = useCallback(() => {
+    const saved = cookieStorage.load();
+    if (saved && saved.fromToken && saved.fromToken.address) {
+      const found = HARDCODED_TOKENS.find(t => t.address === saved.fromToken!.address);
+      if (found) setFromToken(found);
+    }
+    if (saved && saved.toToken && saved.toToken.address) {
+      const found = HARDCODED_TOKENS.find(t => t.address === saved.toToken!.address);
+      if (found) setToToken(found);
+    }
+  }, []);
+  
+  useEffect(() => {
+    loadSavedTokens();
+  }, [loadSavedTokens]);
+  
+  const { available: indexerAvailable, prices, loading: indexerLoading } = useIndexer();
+  const chartData = prices.map(p => ({ time: Math.floor(p.time) as unknown as import('lightweight-charts').Time, value: p.price }));
+  
+  const saveTokensToCookie = useCallback((from: typeof WOCT_TOKEN, to: typeof OES_TOKEN) => {
+    cookieStorage.save({
+      fromToken: {
+        address: from.address,
+        symbol: from.symbol,
+        name: from.name,
+        decimals: from.decimals,
+        timestamp: Date.now(),
+      },
+      toToken: {
+        address: to.address,
+        symbol: to.symbol,
+        name: to.name,
+        decimals: to.decimals,
+        timestamp: Date.now(),
+      },
+    });
+  }, []);
   // [V7-PASS10] MED-15: flag to indicate pool resolution is in progress
   const [isResolvingPool, setIsResolvingPool] = useState(false);
   // [MULTI-HOP] Multi-hop route state
@@ -331,12 +376,25 @@ function SwapPage() {
         return;
       }
       try {
-        const fee = await rpc.contractView<{ fee_numerator: string; fee_denominator: string }>(
+        const fee = await rpc.contractView<{ fee_numerator: string; fee_denominator: string } | [string, string] | { result: [string, string] }>(
           poolAddress, 'get_fee_params', []
         );
         if (cancelled) return;
-        const num = parseInt(fee?.fee_numerator || '3', 10);
-        const denom = parseInt(fee?.fee_denominator || '1000', 10);
+        let num = 3;
+        let denom = 1000;
+        if (fee && typeof fee === 'object' && 'fee_numerator' in fee) {
+          num = parseInt(fee.fee_numerator || '3', 10);
+          denom = parseInt(fee.fee_denominator || '1000', 10);
+        } else if (Array.isArray(fee) && fee.length >= 2) {
+          num = parseInt(String(fee[0]) || '3', 10);
+          denom = parseInt(String(fee[1]) || '1000', 10);
+        } else if (fee && typeof fee === 'object' && 'result' in fee) {
+          const r = (fee as { result: [string, string] }).result;
+          if (Array.isArray(r) && r.length >= 2) {
+            num = parseInt(String(r[0]) || '3', 10);
+            denom = parseInt(String(r[1]) || '1000', 10);
+          }
+        }
         if (num > 0 && denom > 0 && num < denom) {
           setPoolFee({ num, denom });
         }
@@ -480,6 +538,7 @@ function SwapPage() {
   const switchTokens = () => {
     setFromToken(toToken);
     setToToken(fromToken);
+    saveTokensToCookie(toToken, fromToken);
     setFromAmount('');
     setToAmount('0');
     // [V7-FIX] Reset pool state immediately to avoid stale data
@@ -506,8 +565,11 @@ function SwapPage() {
     };
     if (address === toToken.address) {
       setToToken(found);
+      saveTokensToCookie(found, found);
+    } else {
+      setFromToken(found);
+      saveTokensToCookie(found, toToken);
     }
-    setFromToken(found);
     setShowFromModal(false);
     setFromAmount('');
     // [SECURITY] F-4: Reset balance to loading state when token changes to prevent
@@ -524,8 +586,11 @@ function SwapPage() {
     };
     if (address === fromToken.address) {
       setFromToken(found);
+      saveTokensToCookie(found, found);
+    } else {
+      setToToken(found);
+      saveTokensToCookie(fromToken, found);
     }
-    setToToken(found);
     setShowToModal(false);
     setFromAmount('');
     // [SECURITY] F-4: Reset toToken balance to loading state
@@ -787,7 +852,7 @@ function SwapPage() {
         if (fromToken.address !== '' && fromBalance !== null && BigInt(amountInBN) > BigInt(fromBalance)) {
           throw new Error('Insufficient balance for swap');
         }
-        const freshOutput = calculateOutput(amountInBN, freshReserveIn, freshReserveOut, poolFee.num, poolFee.denom);
+        const freshOutput = calculateOutput(amountInBN, freshReserveIn, freshReserveOut, poolFee.num, poolFee.denom, outputTaxBps, outputAutoBurnBps);
         if (BigInt(freshOutput) <= 0n) {
           throw new Error('Calculated output is zero or negative — pool may be empty or amount too small');
         }
@@ -833,7 +898,7 @@ function SwapPage() {
         const postGrantReserves = await rpc.getReserves(poolAddress);
         const postGrantReserveIn = preSwapFromA ? postGrantReserves.reserveA : postGrantReserves.reserveB;
         const postGrantReserveOut = preSwapFromA ? postGrantReserves.reserveB : postGrantReserves.reserveA;
-        const postGrantOutput = calculateOutput(amountInBN, postGrantReserveIn, postGrantReserveOut, poolFee.num, poolFee.denom);
+        const postGrantOutput = calculateOutput(amountInBN, postGrantReserveIn, postGrantReserveOut, poolFee.num, poolFee.denom, outputTaxBps, outputAutoBurnBps);
         if (BigInt(postGrantOutput) <= 0n) {
           throw new Error('Post-grant pool state is empty — possible sandwich attack');
         }
@@ -1098,8 +1163,8 @@ function SwapPage() {
                   </div>
                 </div>
                 <div className="flex justify-between text-[var(--app-muted)]">
-                  <span>Fee (0.3%)</span>
-                  <span>{fromAmount ? (Number(fromAmount) * 0.003).toFixed(6) : '0'} {fromToken.symbol}</span>
+                  <span>Fee ({((poolFee.num / poolFee.denom) * 100).toFixed(poolFee.denom === 1000 ? 1 : 2)}%)</span>
+                  <span>{fromAmount ? (Number(fromAmount) * poolFee.num / poolFee.denom).toFixed(6) : '0'} {fromToken.symbol}</span>
                 </div>
               </>
             )}
@@ -1135,7 +1200,7 @@ function SwapPage() {
       {showConfirm && (
         // [SECURITY] F-12: aria-modal + role dialog
         <div className="fixed inset-0 bg-black/75 backdrop-blur-xl z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="confirm-swap-title">
-          <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] max-w-md w-full p-6 space-y-4">
+          <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] max-w-[40%] w-full flex flex-col max-h-[50%] p-6 space-y-4 overflow-y-auto">
             <h3 id="confirm-swap-title" className="text-lg font-semibold">Confirm {actionLabel}</h3>
             {mode === 'swap' && pairError && (
               <div className="text-xs text-[var(--app-danger)] bg-red-400/10 rounded-lg px-3 py-2">
@@ -1165,8 +1230,8 @@ function SwapPage() {
                   </div>
                   <div className="border-t border-[var(--app-border)] my-2" />
                   <div className="flex justify-between text-[var(--app-muted)]">
-                    <span>Fee (0.3%)</span>
-                    <span>{(Number(fromAmount) * 0.003).toFixed(6)} {fromToken.symbol}</span>
+                    <span>Fee ({((poolFee.num / poolFee.denom) * 100).toFixed(poolFee.denom === 1000 ? 1 : 2)}%)</span>
+                    <span>{(Number(fromAmount) * poolFee.num / poolFee.denom).toFixed(6)} {fromToken.symbol}</span>
                   </div>
                 </>
               ) : (
@@ -1259,11 +1324,11 @@ function SwapPage() {
           <div className="flex justify-between py-1">
             {/* [V7-FIX] Use actual pool token labels and decimals (was hardcoded "WOCT"/"OES" and fromToken.decimals) */}
             <span>{getTokenLabel(poolTokenA)} Reserve:</span>
-            <span>{formatUnits(reserveA, 6)}</span>
+            <span>{formatUnits(reserveA, getTokenDecimals(poolTokenA))}</span>
           </div>
           <div className="flex justify-between py-1">
             <span>{getTokenLabel(poolTokenB)} Reserve:</span>
-            <span>{formatUnits(reserveB, 6)}</span>
+            <span>{formatUnits(reserveB, getTokenDecimals(poolTokenB))}</span>
           </div>
         </div>
       </div>

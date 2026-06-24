@@ -60,6 +60,17 @@ function LiquidityPage() {
     }
   }, [showPoolSelect]);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const epochRes = await rpc.call<{ epoch_id: number }>('epoch_current');
+        if (!cancelled && epochRes?.epoch_id) setCurrentEpoch(epochRes.epoch_id);
+      } catch { /* noop */ }
+    })();
+    return () => { cancelled = true; };
+  }, [rpc]);
+
   const filteredPools = useMemo(() => {
     if (!poolQuery) return pools;
     const q = poolQuery.toLowerCase();
@@ -370,6 +381,7 @@ function LiquidityPage() {
       const selectedPosition = positions.find(p => p.id === selectedPositionId);
       // [SECURITY] F-9: Filter out zero-liquidity positions
       if (!selectedPosition || selectedPosition.liquidity === '0') {
+        addToast('error', `Position #${selectedPositionId} has no liquidity to remove.`);
         return;
       }
       if (selectedPosition.unlockTime > currentEpoch) {
@@ -387,21 +399,27 @@ function LiquidityPage() {
 
       setLoading(true);
       toastId = addToast('pending', 'Remove Liquidity in progress...');
+      // [V7-FIX] Fetch fresh reserves and totalLP at submission time to avoid stale estimates
+      const [freshReserves, freshTotalLP] = await Promise.all([
+        rpc.getReserves(pool.address),
+        rpc.getTotalLpSupply(pool.address),
+      ]);
+      const freshMinA = freshTotalLP !== '0' && selectedPosition.liquidity !== '0'
+        ? (BigInt(freshReserves.reserveA) * BigInt(selectedPosition.liquidity) / BigInt(freshTotalLP) * 9000n / 10000n).toString()
+        : '1';
+      const freshMinB = freshTotalLP !== '0' && selectedPosition.liquidity !== '0'
+        ? (BigInt(freshReserves.reserveB) * BigInt(selectedPosition.liquidity) / BigInt(freshTotalLP) * 9000n / 10000n).toString()
+        : '1';
+
       // [V7-FIX] Use chain epoch (not unix timestamp) for deadline
       const epochInfo = await rpc.call<{ epoch_id: number }>('epoch_current');
       const deadline = (epochInfo?.epoch_id || 0) + 300;
-      const minA = removeEstimates.a !== '0'
-        ? (BigInt(parseUnits(removeEstimates.a, validTokenA.decimals)) * 9000n / 10000n).toString()
-        : '1';
-      const minB = removeEstimates.b !== '0'
-        ? (BigInt(parseUnits(removeEstimates.b, validTokenB.decimals)) * 9000n / 10000n).toString()
-        : '1';
 
       updateToast(toastId, 'pending', 'Approving remove liquidity in wallet...');
       const removeHash = await walletService.callContract({
         contract: pool.address,
         method: 'remove_liquidity',
-        params: [selectedPositionId, minA, minB, String(deadline)],
+        params: [selectedPositionId, freshMinA, freshMinB, String(deadline)],
         rpc,
       });
       updateToast(toastId, 'pending', 'Waiting for remove liquidity confirmation...', removeHash);
@@ -479,7 +497,7 @@ function LiquidityPage() {
                 tabIndex={-1}
                 onKeyDown={e => { if (e.key === 'Escape') { setShowPoolSelect(false); setPoolQuery(''); } }}
               >
-                <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] w-full max-w-sm shadow-2xl flex flex-col max-h-[70vh]" onClick={e => e.stopPropagation()}>
+                <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] max-w-[40%] w-full flex flex-col max-h-[50%] shadow-2xl" onClick={e => e.stopPropagation()}>
                   <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--app-border)]">
                     <h3 id="select-pool-title" className="text-sm font-semibold">Select Pool</h3>
                     <button onClick={() => { setShowPoolSelect(false); setPoolQuery(''); }} className="text-[var(--app-muted)] hover:text-[var(--app-text)] transition-colors" aria-label="Close">
