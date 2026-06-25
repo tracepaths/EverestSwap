@@ -50,29 +50,29 @@ export function SnowEffect() {
       context.fillStyle = 'rgba(255, 255, 255, 0.5)'; // soft semi-transparent white
       context.beginPath();
       for (let i = 0; i < maxParticles; i++) {
-        const p = particles[i];
-        context.moveTo(p.x, p.y);
-        context.arc(p.x, p.y, p.r, 0, Math.PI * 2, true);
+        const particle = particles[i];
+        context.moveTo(particle.x, particle.y);
+        context.arc(particle.x, particle.y, particle.r, 0, Math.PI * 2, true);
 
         // Update position
-        p.y += p.speedY;
-        p.x += p.speedX + Math.sin(p.d) * 0.08;
+        particle.y += particle.speedY;
+        particle.x += particle.speedX + Math.sin(particle.d) * 0.08;
 
         // Reset particle if it falls off-screen
-        if (p.y > height) {
+        if (particle.y > height) {
           particles[i] = {
             x: Math.random() * width,
             y: -10,
-            r: p.r,
-            d: p.d,
-            speedY: p.speedY,
-            speedX: p.speedX,
+            r: particle.r,
+            d: particle.d,
+            speedY: particle.speedY,
+            speedX: particle.speedX,
           };
         }
-        if (p.x > width) {
-          p.x = 0;
-        } else if (p.x < 0) {
-          p.x = width;
+        if (particle.x > width) {
+          particle.x = 0;
+        } else if (particle.x < 0) {
+          particle.x = width;
         }
       }
       context.fill();

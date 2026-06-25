@@ -7,6 +7,7 @@ import { useIndexer } from '../hooks/useIndexer';
 import { PoolChart } from '../components/PoolChart';
 import TokenSelectModal from '../components/TokenSelectModal';
 import { cookieStorage } from '../services/cookieStorage';
+import { recordTx } from '../services/txHistory';
 
 const HARDCODED_TOKENS = [OCT_TOKEN, WOCT_TOKEN, OES_TOKEN];
 
@@ -29,7 +30,7 @@ function getTokenDecimals(address: string): number {
 }
 
 function SwapPage() {
-  const { rpc, isConnected, walletAddress, addToast, updateToast, connect } = useApp();
+  const { rpc, isConnected, walletAddress, addToast, updateToast, connect, refreshBalance } = useApp();
   const [fromAmount, setFromAmount] = useState('');
   const [fromToken, setFromToken] = useState(WOCT_TOKEN);
   const [toToken, setToToken] = useState(OES_TOKEN);
@@ -228,9 +229,9 @@ function SwapPage() {
     if (!isConnected || !walletAddress) return { from: '0', to: '0' };
     const fb = await getTokenBalance(fromToken);
     setFromBalance(fb);
-    const tb = await getTokenBalance(toToken);
-    setToBalance(tb);
-    return { from: fb, to: tb };
+    const toBalance = await getTokenBalance(toToken);
+    setToBalance(toBalance);
+    return { from: fb, to: toBalance };
   }, [isConnected, walletAddress, getTokenBalance, fromToken, toToken]);
 
   useEffect(() => {
@@ -287,6 +288,29 @@ function SwapPage() {
     setMultiHopEstimatedOutput('0');
     (async () => {
       try {
+        // [FIX] OCT (native, address='') as endpoint: route via WOCT wrap/unwrap.
+        const woctAddrLocal = WOCT_TOKEN.address.toLowerCase();
+        // toToken is OCT → swap fromToken→WOCT via pool, then unwrap WOCT→OCT (handled in handleSwap)
+        if (tokenB === '' && tokenA !== '' && tokenA.toLowerCase() !== woctAddrLocal) {
+          const woctPool = await rpc.getPoolAddress(CONTRACTS.factory, tokenA, WOCT_TOKEN.address);
+          if (cancelled) return;
+          if (woctPool) {
+            setPoolAddress(woctPool);
+            setPairError('');
+            return;
+          }
+        }
+        // fromToken is OCT → wrap OCT→WOCT, then swap WOCT→toToken via pool
+        if (tokenA === '' && tokenB !== '' && tokenB.toLowerCase() !== woctAddrLocal) {
+          const woctPool = await rpc.getPoolAddress(CONTRACTS.factory, WOCT_TOKEN.address, tokenB);
+          if (cancelled) return;
+          if (woctPool) {
+            setPoolAddress(woctPool);
+            setPairError('');
+            return;
+          }
+        }
+
         // First try direct pool
         const foundPool = await rpc.getPoolAddress(CONTRACTS.factory, tokenA, tokenB);
         if (cancelled) return;
@@ -952,6 +976,13 @@ function SwapPage() {
         }
 
         updateProgress(100, 'Swap completed', false);
+        recordTx({
+          hash: swapHash,
+          type: 'swap',
+          summary: `Swap ${fromAmount} ${fromToken.symbol} -> ${toToken.symbol}`,
+          timestamp: Date.now(),
+          status: 'success',
+        });
         const finalDisplay = toToken.address === ''
           ? `Swap ${fromAmount} ${fromToken.symbol} → ${formatUnits(postGrantOutput, WOCT_TOKEN.decimals)} WOCT → unwrapped to OCT successful!`
           : `Swap ${fromAmount} ${fromToken.symbol} → ${freshToAmount} ${toToken.symbol} successful!`;
@@ -961,6 +992,7 @@ function SwapPage() {
 
       try { await loadBalances(); } catch { /* noop */ }
       try { await loadReserves(); } catch { /* noop */ }
+      refreshBalance();
     } catch (e) {
       failed = true;
       const errMsg = e instanceof Error ? e.message : 'An error occurred';

@@ -5,6 +5,7 @@ import { walletService } from '../services/walletService';
 import { CONTRACTS } from '../types';
 import { formatUnits, parseUnits, sanitizeNumericInput } from '../services/swapService';
 import type { LpPosition } from '../services/octraRpc';
+import { recordTx } from '../services/txHistory';
 
 interface DynamicPool {
   address: string;
@@ -32,7 +33,7 @@ type RemoveLiquidityStep =
   | { type: 'error'; message: string };
 
 function LiquidityPage() {
-  const { rpc, isConnected, walletAddress, addToast, updateToast, connect } = useApp();
+  const { rpc, isConnected, walletAddress, addToast, updateToast, connect, refreshBalance } = useApp();
   const [searchParams] = useSearchParams();
   const [tab, setTab] = useState<Tab>('add');
   const [pools, setPools] = useState<DynamicPool[]>([]);
@@ -92,10 +93,10 @@ function LiquidityPage() {
 
   const filteredPools = useMemo(() => {
     if (!poolQuery) return pools;
-    const q = poolQuery.toLowerCase();
+    const queryLower = poolQuery.toLowerCase();
     return pools.filter(p =>
-      p.label.toLowerCase().includes(q) ||
-      p.address.toLowerCase().includes(q)
+      p.label.toLowerCase().includes(queryLower) ||
+      p.address.toLowerCase().includes(queryLower)
     );
   }, [pools, poolQuery]);
 
@@ -360,8 +361,16 @@ function LiquidityPage() {
 
       setAddStep({ type: 'done', txHash: addHash });
       updateToast(toastId, 'success', `Add ${amountA} ${validTokenA.symbol} / ${amountB} ${validTokenB.symbol} successful!`, addHash);
+      recordTx({
+        hash: addHash,
+        type: 'add_liquidity',
+        summary: `Add ${amountA} ${validTokenA.symbol} / ${amountB} ${validTokenB.symbol}`,
+        timestamp: Date.now(),
+        status: 'success',
+      });
       setAmountA('');
       loadPoolInfo();
+      refreshBalance();
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : 'An error occurred';
       setAddStep({ type: 'error', message: errMsg });
@@ -426,8 +435,16 @@ function LiquidityPage() {
 
       setRemoveStep({ type: 'done', txHash: removeHash });
       updateToast(toastId, 'success', `Remove position #${selectedPositionId} successful!`, removeHash);
+      recordTx({
+        hash: removeHash,
+        type: 'remove_liquidity',
+        summary: `Remove position #${selectedPositionId}`,
+        timestamp: Date.now(),
+        status: 'success',
+      });
       setSelectedPositionId(null);
       loadPoolInfo();
+      refreshBalance();
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : 'An error occurred';
       setRemoveStep({ type: 'error', message: errMsg });

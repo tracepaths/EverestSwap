@@ -66,8 +66,8 @@ export function useIndexer(): IndexerState {
               const hd = await hr.json();
               if (cancelled || !mountedRef.current) return;
               if (hd.status === 'ok') {
-                const pr = await fetchWithTimeout(`${INDEXER_URL}/api/prices`);
-                const pp: PricePoint[] = pr.ok ? await pr.json() : [];
+                const priceResponse = await fetchWithTimeout(`${INDEXER_URL}/api/prices`);
+                const pp: PricePoint[] = priceResponse.ok ? await priceResponse.json() : [];
                 if (!cancelled && mountedRef.current) setState(s => ({ ...s, prices: pp }));
               } else {
                 if (!cancelled && mountedRef.current) setState(s => ({ ...s, available: false }));

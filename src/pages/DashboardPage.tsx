@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useApp } from '../contexts/AppContext';
 import { CONTRACTS } from '../types';
 import { formatUnits } from '../services/swapService';
+import { getTxHistory, type TxRecord } from '../services/txHistory';
 
 interface DashboardStats {
   octBalance: string;
@@ -32,12 +33,60 @@ function StatCard({ title, value, change, loading }: {
   );
 }
 
-function RecentTxTable() {
+const TYPE_STYLES: Record<string, { label: string; color: string }> = {
+  swap: { label: 'Swap', color: 'text-[var(--app-blue-3)]' },
+  add_liquidity: { label: 'Add LP', color: 'text-green-400' },
+  remove_liquidity: { label: 'Remove LP', color: 'text-[var(--app-warning)]' },
+};
+
+function RecentTxTable({ wallet }: { wallet: string }) {
+  const [txs, setTxs] = useState<TxRecord[]>([]);
+
+  useEffect(() => {
+    setTxs(getTxHistory());
+  }, [wallet]);
+
+  if (txs.length === 0) {
+    return (
+      <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl p-5 border border-[var(--app-border)]">
+        <h3 className="text-base font-semibold mb-4">Recent Transactions</h3>
+        <div className="text-center py-8 text-sm text-[var(--app-muted)]">
+          No recent transactions
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl p-5 border border-[var(--app-border)]">
       <h3 className="text-base font-semibold mb-4">Recent Transactions</h3>
-      <div className="text-center py-8 text-sm text-[var(--app-muted)]">
-        No recent transactions
+      <div className="space-y-2">
+        {txs.map(tx => {
+          const style = TYPE_STYLES[tx.type] ?? { label: tx.type, color: 'text-[var(--app-muted)]' };
+          return (
+            <div key={tx.hash + tx.timestamp} className="flex items-center justify-between py-2 px-3 rounded-lg bg-[var(--app-panel-soft)]">
+              <div className="flex items-center gap-3 min-w-0">
+                <span className={`text-xs font-semibold ${style.color} whitespace-nowrap`}>{style.label}</span>
+                <span className="text-sm text-[var(--app-text)] truncate">{tx.summary}</span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-xs text-[var(--app-muted)] whitespace-nowrap">
+                  {new Date(tx.timestamp).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                </span>
+                {tx.hash && (
+                  <a
+                    href={`https://devnet.octrascan.io/tx/${tx.hash}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-[var(--app-blue-3)] hover:underline"
+                  >
+                    ↗
+                  </a>
+                )}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -102,7 +151,6 @@ function DashboardPage() {
         <button
           onClick={fetchStats}
           disabled={statsLoading}
-          // [SECURITY] FM-13: Manual refresh button for users who want immediate update
           className="text-xs px-3 py-1.5 rounded-lg bg-[var(--app-panel-soft)] hover:bg-[var(--app-hover)] text-[var(--app-muted)] hover:text-[var(--app-text)] transition-colors disabled:opacity-50"
         >
           {statsLoading ? 'Refreshing...' : 'Refresh'}
@@ -116,7 +164,7 @@ function DashboardPage() {
         <StatCard title="LP Positions" value={isConnected ? displayLP : '-'} loading={statsLoading} />
       </div>
 
-      <RecentTxTable />
+      <RecentTxTable wallet={walletAddress || ''} />
     </div>
   );
 }

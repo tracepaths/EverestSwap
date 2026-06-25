@@ -126,9 +126,9 @@ export class WalletService {
       if (typeof result === 'string') return { signature: result };
       if (result && typeof result === 'object') {
         const sig = (result as Record<string, unknown>).signature;
-        const pk = (result as Record<string, unknown>).publicKey;
+        const publicKey = (result as Record<string, unknown>).publicKey;
         if (typeof sig === 'string') {
-          return { signature: sig, publicKey: typeof pk === 'string' ? pk : undefined };
+          return { signature: sig, publicKey: typeof publicKey === 'string' ? publicKey : undefined };
         }
       }
     } catch { /* noop */ }

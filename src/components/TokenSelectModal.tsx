@@ -190,21 +190,21 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
 
   const filteredMine = useMemo(() => {
     if (!query) return myTokens;
-    const q = query.toLowerCase();
+    const queryLower = query.toLowerCase();
     return myTokens.filter(t =>
-      t.symbol.toLowerCase().includes(q) ||
-      t.name.toLowerCase().includes(q) ||
-      t.address.toLowerCase().includes(q)
+      t.symbol.toLowerCase().includes(queryLower) ||
+      t.name.toLowerCase().includes(queryLower) ||
+      t.address.toLowerCase().includes(queryLower)
     );
   }, [query, myTokens]);
 
   const filteredOthers = useMemo(() => {
     if (!query) return otherTokens;
-    const q = query.toLowerCase();
+    const queryLower = query.toLowerCase();
     return otherTokens.filter(t =>
-      t.symbol.toLowerCase().includes(q) ||
-      t.name.toLowerCase().includes(q) ||
-      t.address.toLowerCase().includes(q)
+      t.symbol.toLowerCase().includes(queryLower) ||
+      t.name.toLowerCase().includes(queryLower) ||
+      t.address.toLowerCase().includes(queryLower)
     );
   }, [query, otherTokens]);
 
