@@ -418,7 +418,7 @@ function LiquidityPage() {
       const removeHash = await walletService.callContract({
         contract: pool.address,
         method: 'remove_liquidity',
-        params: [selectedPositionId, freshMinA, freshMinB, String(deadline)],
+        params: [String(selectedPositionId), freshMinA, freshMinB, String(deadline)],
         rpc,
       });
       updateToast(toastId, 'pending', 'Waiting for remove liquidity confirmation...', removeHash);
@@ -497,7 +497,7 @@ function LiquidityPage() {
                 tabIndex={-1}
                 onKeyDown={e => { if (e.key === 'Escape') { setShowPoolSelect(false); setPoolQuery(''); } }}
               >
-                <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] max-w-[40%] w-full flex flex-col max-h-[50%] shadow-2xl" onClick={e => e.stopPropagation()}>
+                <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] max-w-[52%] w-full flex flex-col max-h-[65%] shadow-2xl" onClick={e => e.stopPropagation()}>
                   <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--app-border)]">
                     <h3 id="select-pool-title" className="text-sm font-semibold">Select Pool</h3>
                     <button onClick={() => { setShowPoolSelect(false); setPoolQuery(''); }} className="text-[var(--app-muted)] hover:text-[var(--app-text)] transition-colors" aria-label="Close">

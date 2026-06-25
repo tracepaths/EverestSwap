@@ -338,7 +338,7 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
     >
       <div
         ref={dialogRef}
-        className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] max-w-[40%] w-full flex flex-col max-h-[50%] shadow-2xl"
+        className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] max-w-[52%] w-full flex flex-col max-h-[65%] shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--app-border)]">

@@ -1200,7 +1200,7 @@ function SwapPage() {
       {showConfirm && (
         // [SECURITY] F-12: aria-modal + role dialog
         <div className="fixed inset-0 bg-black/75 backdrop-blur-xl z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="confirm-swap-title">
-          <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] max-w-[40%] w-full flex flex-col max-h-[50%] p-6 space-y-4 overflow-y-auto">
+          <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] max-w-[52%] w-full flex flex-col max-h-[65%] p-6 space-y-4 overflow-y-auto">
             <h3 id="confirm-swap-title" className="text-lg font-semibold">Confirm {actionLabel}</h3>
             {mode === 'swap' && pairError && (
               <div className="text-xs text-[var(--app-danger)] bg-red-400/10 rounded-lg px-3 py-2">
