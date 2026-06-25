@@ -452,6 +452,31 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
 
   const hasInitLiquidity = !!(initAmountA && metaA && initAmountB && metaB
     && Number(initAmountA) > 0 && Number(initAmountB) > 0);
+
+  // [SIM] Pool price simulation — computed live from initial liquidity inputs.
+  // Uses BigInt for LP/K precision (matches contract sqrt geometric-mean math).
+  function bigintSqrt(n: bigint): bigint {
+    if (n < 2n) return n;
+    let x = n, y = (x + 1n) / 2n;
+    while (y < x) { x = y; y = (x + n / x) / 2n; }
+    return x;
+  }
+  const sim = (() => {
+    if (!hasInitLiquidity || !metaA || !metaB) return null;
+    try {
+      const rawA = BigInt(parseUnits(initAmountA, metaA.decimals));
+      const rawB = BigInt(parseUnits(initAmountB, metaB.decimals));
+      if (rawA <= 0n || rawB <= 0n) return null;
+      const k = rawA * rawB;
+      const lpGross = bigintSqrt(k);
+      const MIN_LIQ = 1000n;
+      const lpNet = lpGross > MIN_LIQ ? lpGross - MIN_LIQ : 0n;
+      const priceAinB = Number(initAmountB) / Number(initAmountA);
+      const priceBinA = Number(initAmountA) / Number(initAmountB);
+      const sharePct = 100; // first LP owns 100% after burn
+      return { rawA, rawB, k, lpGross, lpNet, priceAinB, priceBinA, sharePct };
+    } catch { return null; }
+  })();
   const stepDefs = hasInitLiquidity ? allStepDefs : allStepDefs.slice(0, 6);
   const totalSteps = stepDefs.length;
 
@@ -589,31 +614,68 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
             )}
           </div>
 
-          <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)] space-y-3">
-            <div className="text-xs text-[var(--app-muted)] font-medium">Initial Liquidity (optional)</div>
-            <div>
-              <label className="text-[10px] text-[var(--app-muted-2)]">{metaA?.symbol ?? 'Token A'} Amount</label>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={initAmountA}
-                // [SECURITY] F-1: Sanitize input
-                onChange={e => setInitAmountA(sanitizeNumericInput(e.target.value))}
-                placeholder="0.0"
-                className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-1.5 text-sm font-mono outline-none mt-1"
-              />
+          <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+            <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)] space-y-3">
+              <div className="text-xs text-[var(--app-muted)] font-medium">Initial Liquidity (optional)</div>
+              <div>
+                <label className="text-[10px] text-[var(--app-muted-2)]">{metaA?.symbol ?? 'Token A'} Amount</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={initAmountA}
+                  // [SECURITY] F-1: Sanitize input
+                  onChange={e => setInitAmountA(sanitizeNumericInput(e.target.value))}
+                  placeholder="0.0"
+                  className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-1.5 text-sm font-mono outline-none mt-1"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-[var(--app-muted-2)]">{metaB?.symbol ?? 'Token B'} Amount</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={initAmountB}
+                  // [SECURITY] F-1: Sanitize input
+                  onChange={e => setInitAmountB(sanitizeNumericInput(e.target.value))}
+                  placeholder="0.0"
+                  className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-1.5 text-sm font-mono outline-none mt-1"
+                />
+              </div>
             </div>
-            <div>
-              <label className="text-[10px] text-[var(--app-muted-2)]">{metaB?.symbol ?? 'Token B'} Amount</label>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={initAmountB}
-                // [SECURITY] F-1: Sanitize input
-                onChange={e => setInitAmountB(sanitizeNumericInput(e.target.value))}
-                placeholder="0.0"
-                className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-1.5 text-sm font-mono outline-none mt-1"
-              />
+
+            <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)] space-y-3">
+              <div className="text-xs text-[var(--app-muted)] font-medium">Price Simulation</div>
+              {sim ? (
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[var(--app-muted-2)]">Price 1 {metaA?.symbol}</span>
+                    <span className="font-mono">{sim.priceAinB.toLocaleString(undefined, { maximumFractionDigits: 12 })} {metaB?.symbol}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[var(--app-muted-2)]">Price 1 {metaB?.symbol}</span>
+                    <span className="font-mono">{sim.priceBinA.toLocaleString(undefined, { maximumFractionDigits: 12 })} {metaA?.symbol}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[var(--app-muted-2)]">LP minted</span>
+                    <span className="font-mono">{formatUnits(sim.lpNet.toString(), 6)}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[var(--app-muted-2)]">K invariant</span>
+                    <span className="font-mono truncate text-right">{sim.k.toString()}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[var(--app-muted-2)]">Pool share</span>
+                    <span className="font-mono">{sim.sharePct.toFixed(0)}%</span>
+                  </div>
+                  <div className="text-[11px] text-[var(--app-muted)] pt-1 border-t border-[var(--app-border)]">
+                    Harga awal dihitung dari rasio Token A dan Token B. Saat salah satu nilai berubah, simulasi ini ikut berubah.
+                  </div>
+                </div>
+              ) : (
+                <div className="text-xs text-[var(--app-muted)] leading-relaxed">
+                  Masukkan jumlah Token A dan Token B untuk melihat harga awal, LP minted, dan invariant pool secara langsung.
+                </div>
+              )}
             </div>
           </div>
 
