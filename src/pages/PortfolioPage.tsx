@@ -32,6 +32,13 @@ export default function PortfolioPage() {
   const [lpLimit, setLpLimit] = useState<number>(5);
   const [txsLimit, setTxsLimit] = useState<number>(5);
 
+  type ModalState =
+    | { kind: 'asset'; data: AssetItem }
+    | { kind: 'position'; data: typeof lpPositions[number] }
+    | { kind: 'activity'; data: TxRecord }
+    | null;
+  const [modal, setModal] = useState<ModalState>(null);
+
   const loadPortfolio = useCallback(async () => {
     if (!isConnected || !walletAddress) return;
     setLoading(true);
@@ -188,7 +195,7 @@ export default function PortfolioPage() {
                 <button
                   key={asset.address}
                   type="button"
-                  onClick={() => navigate(`/swap?token=${encodeURIComponent(asset.address)}`)}
+                  onClick={() => setModal({ kind: 'asset', data: asset })}
                   className="w-full text-left bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-xl p-4 flex items-center justify-between gap-4 hover:border-[var(--app-blue)]/40 hover:bg-[var(--app-panel)]/60 transition-colors cursor-pointer"
                 >
                   <div>
@@ -241,7 +248,7 @@ export default function PortfolioPage() {
                 <button
                   key={`${pos.pool}-${idx}`}
                   type="button"
-                  onClick={() => navigate(`/pool?pool=${encodeURIComponent(pos.pool)}`)}
+                  onClick={() => setModal({ kind: 'position', data: pos })}
                   className="w-full text-left bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-xl p-3 sm:p-4 hover:border-[var(--app-blue)]/40 hover:bg-[var(--app-panel)]/60 transition-colors cursor-pointer"
                 >
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -288,14 +295,12 @@ export default function PortfolioPage() {
               {txs.length === 0 ? (
                 <EmptyState title="No recent activity" body="Your swaps and liquidity actions will appear here." />
               ) : txs.slice(0, txsLimit).map(tx => {
-                const explorerUrl = getExplorerTxUrl(tx.hash);
                 return (
-                <a
+                <button
                   key={tx.hash}
-                  href={explorerUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-xl p-4 hover:border-[var(--app-blue)]/40 hover:bg-[var(--app-panel)]/60 transition-colors cursor-pointer"
+                  type="button"
+                  onClick={() => setModal({ kind: 'activity', data: tx })}
+                  className="block w-full text-left bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-xl p-4 hover:border-[var(--app-blue)]/40 hover:bg-[var(--app-panel)]/60 transition-colors cursor-pointer"
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div>
@@ -305,7 +310,7 @@ export default function PortfolioPage() {
                     <Badge label={tx.status === 'success' ? 'Success' : 'Failed'} tone={tx.status === 'success' ? 'success' : 'danger'} />
                   </div>
                   <div className="mt-2 text-xs text-[var(--app-muted-2)] font-mono break-all underline-offset-2 group-hover:underline">{tx.hash}</div>
-                </a>
+                </button>
                 );
               })}
             </div>
@@ -325,6 +330,7 @@ export default function PortfolioPage() {
           </section>
         </aside>
       </div>
+      <PortfolioDetailModal modal={modal} onClose={() => setModal(null)} onSwap={addr => { setModal(null); navigate(`/swap?token=${encodeURIComponent(addr)}`); }} onAddLiquidity={pool => { setModal(null); navigate(`/liquidity?pool=${encodeURIComponent(pool)}`); }} getExplorerTxUrl={getExplorerTxUrl} decimalsOf={decimalsOf} />
     </div>
   );
 }
@@ -373,4 +379,225 @@ function tickerColor(symbol: string): string {
     hash = (hash * 31 + symbol.charCodeAt(i)) >>> 0;
   }
   return palette[hash % palette.length];
+}
+
+function PortfolioDetailModal({
+  modal,
+  onClose,
+  onSwap,
+  onAddLiquidity,
+  getExplorerTxUrl,
+  decimalsOf,
+}: {
+  modal:
+    | { kind: 'asset'; data: { symbol: string; name: string; address: string; balance: string; valueUsd: number; source: string } }
+    | { kind: 'position'; data: { pool: string; lp: string; tokenA: string; tokenB: string; share: number } }
+    | { kind: 'activity'; data: TxRecord }
+    | null;
+  onClose: () => void;
+  onSwap: (address: string) => void;
+  onAddLiquidity: (poolAddress: string) => void;
+  getExplorerTxUrl: (hash: string) => string;
+  decimalsOf: (address: string) => number;
+}) {
+  const [copied, setCopied] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!modal) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [modal, onClose]);
+
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(null), 1500);
+    return () => clearTimeout(t);
+  }, [copied]);
+
+  if (!modal) return null;
+
+  const copyText = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(label);
+    } catch {
+      // noop
+    }
+  };
+
+  const explorerUrl = modal.kind === 'activity' ? getExplorerTxUrl(modal.data.hash) : '';
+
+  const title =
+    modal.kind === 'asset' ? 'Asset details'
+    : modal.kind === 'position' ? 'Pool position details'
+    : 'Transaction details';
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/75 backdrop-blur-xl z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="portfolio-modal-title"
+    >
+      <div
+        className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] w-full max-w-lg shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--app-border)]">
+          <h3 id="portfolio-modal-title" className="text-base font-semibold">{title}</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="text-[var(--app-muted)] hover:text-[var(--app-fg)] transition-colors"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="px-5 py-4 space-y-4 max-h-[70vh] overflow-auto">
+          {modal.kind === 'asset' && (() => {
+            const a = modal.data;
+            const dec = decimalsOf(a.address);
+            return (
+              <>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-lg font-semibold">{a.symbol}</span>
+                    <Badge label={a.source === 'trusted' ? 'Trusted' : a.source === 'lp' ? 'LP' : 'Saved'} />
+                  </div>
+                  <div className="text-sm text-[var(--app-muted)]">{a.name}</div>
+                </div>
+                <Row label="Address" mono>
+                  <span className="break-all">{a.address}</span>
+                  <CopyButton onClick={() => copyText(a.address, 'address')} copied={copied === 'address'} />
+                </Row>
+                <Row label="Balance">
+                  <span className="font-mono">{formatUnits(a.balance, dec)} {a.symbol}</span>
+                </Row>
+                <Row label="USD value">
+                  <span className="font-mono">~${a.valueUsd.toFixed(2)}</span>
+                </Row>
+                <Row label="Decimals">
+                  <span className="font-mono">{dec}</span>
+                </Row>
+              </>
+            );
+          })()}
+
+          {modal.kind === 'position' && (() => {
+            const p = modal.data;
+            return (
+              <>
+                <div>
+                  <div className="text-lg font-semibold">{p.tokenA} / {p.tokenB}</div>
+                  <div className="text-sm text-[var(--app-muted)]">LP position in this pool</div>
+                </div>
+                <Row label="Pool address" mono>
+                  <span className="break-all">{p.pool}</span>
+                  <CopyButton onClick={() => copyText(p.pool, 'pool')} copied={copied === 'pool'} />
+                </Row>
+                <Row label="LP tokens">
+                  <span className="font-mono">{formatUnits(p.lp, 12)} LP</span>
+                </Row>
+                <Row label="Pool share">
+                  <span className="font-mono">{p.share ? p.share.toFixed(4) + '%' : '—'}</span>
+                </Row>
+              </>
+            );
+          })()}
+
+          {modal.kind === 'activity' && (() => {
+            const tx = modal.data;
+            const ts = tx.timestamp ? new Date(tx.timestamp).toLocaleString() : '—';
+            return (
+              <>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-lg font-semibold capitalize">{tx.type.replaceAll('_', ' ')}</span>
+                    <Badge label={tx.status === 'success' ? 'Success' : 'Failed'} tone={tx.status === 'success' ? 'success' : 'danger'} />
+                  </div>
+                  <div className="text-sm text-[var(--app-muted)]">{tx.summary}</div>
+                </div>
+                <Row label="Tx hash" mono>
+                  <span className="break-all">{tx.hash}</span>
+                  <CopyButton onClick={() => copyText(tx.hash, 'hash')} copied={copied === 'hash'} />
+                </Row>
+                <Row label="Time">
+                  <span className="font-mono">{ts}</span>
+                </Row>
+                <Row label="Status">
+                  <span className="font-mono capitalize">{tx.status}</span>
+                </Row>
+              </>
+            );
+          })()}
+        </div>
+
+        <div className="border-t border-[var(--app-border)] px-5 py-3 flex flex-wrap items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3 py-2 text-sm rounded-lg bg-[var(--app-panel-soft)] border border-[var(--app-border)] hover:border-[var(--app-blue)]/40 transition-colors"
+          >
+            Close
+          </button>
+          {modal.kind === 'asset' && (
+            <button
+              type="button"
+              onClick={() => onSwap(modal.data.address)}
+              className="px-3 py-2 text-sm font-medium rounded-lg bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] transition-colors text-white"
+            >
+              Swap this token
+            </button>
+          )}
+          {modal.kind === 'position' && (
+            <button
+              type="button"
+              onClick={() => onAddLiquidity(modal.data.pool)}
+              className="px-3 py-2 text-sm font-medium rounded-lg bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] transition-colors text-white"
+            >
+              Add liquidity
+            </button>
+          )}
+          {modal.kind === 'activity' && (
+            <a
+              href={explorerUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3 py-2 text-sm font-medium rounded-lg bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] transition-colors text-white"
+            >
+              View on explorer
+            </a>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Row({ label, children, mono }: { label: string; children: React.ReactNode; mono?: boolean }) {
+  return (
+    <div className="space-y-1">
+      <div className="text-[10px] uppercase tracking-wider text-[var(--app-muted-2)] font-semibold">{label}</div>
+      <div className={`flex items-center gap-2 text-sm ${mono ? 'font-mono' : ''} text-[var(--app-fg)]`}>{children}</div>
+    </div>
+  );
+}
+
+function CopyButton({ onClick, copied }: { onClick: () => void; copied: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Copy"
+      className="ml-auto shrink-0 inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-md bg-[var(--app-panel-soft)] border border-[var(--app-border)] hover:border-[var(--app-blue)]/40 text-[var(--app-muted)] hover:text-[var(--app-fg)] transition-colors"
+    >
+      {copied ? 'Copied' : 'Copy'}
+    </button>
+  );
 }
