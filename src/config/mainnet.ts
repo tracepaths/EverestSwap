@@ -50,10 +50,13 @@ export const CONTRACTS = {
 } as const;
 
 // [V7-FIX] Mainnet explorer URL fully configurable via env vars
-// Default mainnet: https://octrascan.io with /tx/<hash> path
+// Default mainnet: https://octrascan.io with /tx.html?hash=<hash>
+// path. EXPLORER_TX_PATH may contain the literal placeholder "{hash}"
+// (e.g. "/tx.html?hash={hash}") or be a plain prefix concatenated with
+// the hash (e.g. "/tx/") for backward compatibility.
 // Override with VITE_EXPLORER_URL_MAINNET and VITE_EXPLORER_TX_PATH
 export const EXPLORER_URL = import.meta.env.VITE_EXPLORER_URL_MAINNET || 'https://octrascan.io';
-export const EXPLORER_TX_PATH = import.meta.env.VITE_EXPLORER_TX_PATH || '/tx/';
+export const EXPLORER_TX_PATH = import.meta.env.VITE_EXPLORER_TX_PATH || '/tx.html?hash={hash}';
 
 export function assertMainnetConfigured(): void {
   if (!MAINNET_CONFIGURED) {

@@ -42,4 +42,17 @@ export const CONTRACTS = isMainnet ? MAIN_CONTRACTS : DEV_CONTRACTS;
 // [V7-FIX] Network-aware explorer URL config
 export const EXPLORER_URL: string = isMainnet ? MAIN_EXPLORER_URL : DEV_EXPLORER_URL;
 export const EXPLORER_TX_PATH: string = isMainnet ? MAIN_EXPLORER_TX_PATH : DEV_EXPLORER_TX_PATH;
+
+// [V7-FIX] Build a full explorer URL for a transaction hash.
+// EXPLORER_TX_PATH may either contain the literal "{hash}" placeholder
+// (Octra explorer format: "/tx.html?hash={hash}") or be a plain prefix
+// concatenated with the hash ("/tx/") for backward compatibility.
+export function buildExplorerTxUrl(hash: string): string {
+  const template = EXPLORER_TX_PATH;
+  if (template.includes('{hash}')) {
+    return `${EXPLORER_URL}${template.replace(/\{hash\}/g, hash)}`;
+  }
+  return `${EXPLORER_URL}${template}${hash}`;
+}
+
 export { MAINNET_CONFIGURED, assertMainnetConfigured };

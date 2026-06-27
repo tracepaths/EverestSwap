@@ -30,11 +30,11 @@ const themes = [
 
 type HeaderMenu = 'network' | 'theme' | 'activity' | null;
 
-// [V7-FIX] Get explorer URL using env-based config
-// Format: {EXPLORER_URL}{EXPLORER_TX_PATH}{hash}
-// Default: https://devnet.octrascan.io/tx/<hash> or https://octrascan.io/tx/<hash>
+// [V7-FIX] Get explorer URL using env-based config.
+// Honors either "/tx.html?hash={hash}" (Octra) or "/tx/" (legacy) path
+// templates via buildExplorerTxUrl.
 function getExplorerTxUrl(hash: string): string {
-  return `${EXPLORER_URL}${EXPLORER_TX_PATH}${hash}`;
+  return buildExplorerTxUrl(hash);
 }
 
 interface ActivityItem {
