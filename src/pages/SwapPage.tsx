@@ -8,6 +8,7 @@ import { PoolChart } from '../components/PoolChart';
 import TokenSelectModal from '../components/TokenSelectModal';
 import { cookieStorage } from '../services/cookieStorage';
 import { recordTx } from '../services/txHistory';
+import { usePriceService } from '../hooks/usePriceService';
 
 const HARDCODED_TOKENS = [OCT_TOKEN, WOCT_TOKEN, OES_TOKEN];
 
@@ -31,6 +32,7 @@ function getTokenDecimals(address: string): number {
 
 function SwapPage() {
   const { rpc, isConnected, walletAddress, addToast, updateToast, connect, refreshBalance } = useApp();
+  const { getTokenUsd, octPrice } = usePriceService(rpc);
   const [fromAmount, setFromAmount] = useState('');
   const [fromToken, setFromToken] = useState(WOCT_TOKEN);
   const [toToken, setToToken] = useState(OES_TOKEN);
@@ -69,6 +71,38 @@ function SwapPage() {
   
   const { available: indexerAvailable, prices, loading: indexerLoading } = useIndexer();
   const chartData = prices.map(p => ({ time: Math.floor(p.time) as unknown as import('lightweight-charts').Time, value: p.price }));
+
+  const [fromTokenUsdPrice, setFromTokenUsdPrice] = useState(0);
+  const [toTokenUsdPrice, setToTokenUsdPrice] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function fetch() {
+      const [fp, tp] = await Promise.all([
+        getTokenUsd(fromToken.address),
+        getTokenUsd(toToken.address),
+      ]);
+      if (!cancelled) { setFromTokenUsdPrice(fp); setToTokenUsdPrice(tp); }
+    }
+    fetch();
+    return () => { cancelled = true; };
+  }, [fromToken.address, toToken.address, getTokenUsd]);
+
+  const fromUsdValue = useMemo(() => {
+    if (!fromAmount || fromTokenUsdPrice <= 0) return '';
+    const num = parseFloat(fromAmount);
+    if (!Number.isFinite(num) || num <= 0) return '';
+    const usd = num * fromTokenUsdPrice;
+    return `≈ $${usd.toFixed(2)}`;
+  }, [fromAmount, fromTokenUsdPrice]);
+
+  const toUsdValue = useMemo(() => {
+    if (!toAmount || toTokenUsdPrice <= 0) return '';
+    const num = parseFloat(toAmount);
+    if (!Number.isFinite(num) || num <= 0) return '';
+    const usd = num * toTokenUsdPrice;
+    return `≈ $${usd.toFixed(2)}`;
+  }, [toAmount, toTokenUsdPrice]);
   
   const saveTokensToCookie = useCallback((from: typeof WOCT_TOKEN, to: typeof OES_TOKEN) => {
     cookieStorage.save({
@@ -1048,6 +1082,9 @@ function SwapPage() {
 
               </div>
             </div>
+            {fromUsdValue && (
+              <div className="text-xs text-[var(--app-muted)] mt-1">{fromUsdValue}</div>
+            )}
             <div className="flex gap-1 mt-2">
               {[10, 25, 50, 100].map(pct => {
                 const bal = fromBalance ?? '0';
@@ -1143,6 +1180,9 @@ function SwapPage() {
 
               </div>
             </div>
+            {toUsdValue && (
+              <div className="text-xs text-[var(--app-muted)] mt-1">{toUsdValue}</div>
+            )}
           </div>
 
           <div className="bg-[var(--app-panel-soft)] rounded-xl p-3 space-y-1.5 text-xs">
@@ -1150,6 +1190,12 @@ function SwapPage() {
               <span>Rate</span>
               <span>1 {fromToken.symbol} = {Number(price).toFixed(6)} {toToken.symbol}</span>
             </div>
+            {octPrice > 0 && (
+              <div className="flex justify-between text-[var(--app-muted)]">
+                <span>OCT Price</span>
+                <span>${octPrice.toFixed(4)}</span>
+              </div>
+            )}
             {mode === 'swap' && (
               <>
                 <div className="flex justify-between text-[var(--app-muted)]">

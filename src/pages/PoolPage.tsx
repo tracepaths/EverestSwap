@@ -7,6 +7,7 @@ import { formatUnits, parseUnits, sanitizeNumericInput } from '../services/swapS
 import { walletService } from '../services/walletService';
 import TokenTrustBadge from '../components/TokenTrustBadge';
 import TokenSelectModal from '../components/TokenSelectModal';
+import { usePriceService } from '../hooks/usePriceService';
 
 interface PoolDisplay {
   address: string;
@@ -795,9 +796,11 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
 function PoolPage() {
   const { rpc, isConnected, connect, walletAddress } = useApp();
   const navigate = useNavigate();
+  const { getTokenUsd, octPrice } = usePriceService(rpc);
   const [pools, setPools] = useState<PoolDisplay[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
+  const [poolPrices, setPoolPrices] = useState<Record<string, { priceA: number; priceB: number; tvlUsd: number }>>({});
 
   const mountedRef = useRef(true);
 
@@ -866,6 +869,27 @@ function PoolPage() {
     return () => { mountedRef.current = false; };
   }, [loadPools]);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchPoolPrices() {
+      const prices: Record<string, { priceA: number; priceB: number; tvlUsd: number }> = {};
+      for (const p of pools) {
+        const [priceA, priceB] = await Promise.all([
+          getTokenUsd(p.tokenA),
+          getTokenUsd(p.tokenB),
+        ]);
+        const humanA = parseFloat(formatUnits(p.reserveA, p.decimalsA));
+        const humanB = parseFloat(formatUnits(p.reserveB, p.decimalsB));
+        const tvlUsd = (Number.isFinite(humanA) ? humanA : 0) * priceA
+                     + (Number.isFinite(humanB) ? humanB : 0) * priceB;
+        prices[p.address] = { priceA, priceB, tvlUsd };
+      }
+      if (!cancelled && mountedRef.current) setPoolPrices(prices);
+    }
+    if (pools.length > 0) fetchPoolPrices();
+    return () => { cancelled = true; };
+  }, [pools, getTokenUsd]);
+
   // [V7-SECURITY-FIX] Use BigInt to avoid precision loss on large LP values
   const totalLPAll = pools.reduce((sum, p) => {
     try { return sum + BigInt(p.totalLP); } catch { return sum; }
@@ -925,10 +949,13 @@ function PoolPage() {
                         <div className="text-xs text-[var(--app-muted)]">{p.feeTier} fee tier</div>
                       </div>
                     </div>
-                    <div className="text-right text-sm">
-                      <div className="font-mono">{formatUnits(p.totalLP, 12)} LP</div>
-                      <div className="text-xs text-[var(--app-muted)]">Total Liquidity</div>
-                    </div>
+      <div className="text-right text-sm">
+        <div className="font-mono">{formatUnits(p.totalLP, 12)} LP</div>
+        <div className="text-xs text-[var(--app-muted)]">Total Liquidity</div>
+        {poolPrices[p.address] && poolPrices[p.address].tvlUsd > 0 && (
+          <div className="text-xs font-mono text-[var(--app-blue)]">~$${poolPrices[p.address].tvlUsd.toFixed(2)}</div>
+        )}
+      </div>
                   </div>
                   <div className="grid grid-cols-4 gap-4 mt-4 text-sm">
                     <div>
@@ -972,25 +999,25 @@ function PoolPage() {
       </div>
 
       <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] p-5">
-        <h3 className="text-sm font-semibold mb-3">Pool Analytics</h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-          <div>
-            <div className="text-xs text-[var(--app-muted)]">Total Pools</div>
-            <div className="font-medium mt-0.5">{pools.length}</div>
-          </div>
-          <div>
-            <div className="text-xs text-[var(--app-muted)]">Total Liquidity</div>
-            <div className="font-medium mt-0.5">{formatUnits(totalLPAll.toString(), 12)} LP</div>
-          </div>
-          <div>
-            <div className="text-xs text-[var(--app-muted)]">24h Volume</div>
-            <div className="font-medium mt-0.5">--</div>
-          </div>
-          <div>
-            <div className="text-xs text-[var(--app-muted)]">24h Fees</div>
-            <div className="font-medium mt-0.5">--</div>
-          </div>
+      <h3 className="text-sm font-semibold mb-3">Pool Analytics</h3>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+        <div>
+          <div className="text-xs text-[var(--app-muted)]">Total Pools</div>
+          <div className="font-medium mt-0.5">{pools.length}</div>
         </div>
+        <div>
+          <div className="text-xs text-[var(--app-muted)]">Total Liquidity</div>
+          <div className="font-medium mt-0.5">{formatUnits(totalLPAll.toString(), 12)} LP</div>
+        </div>
+        <div>
+          <div className="text-xs text-[var(--app-muted)]">OCT Price</div>
+          <div className="font-medium mt-0.5 font-mono">{octPrice > 0 ? `$${octPrice.toFixed(4)}` : '...'}</div>
+        </div>
+        <div>
+          <div className="text-xs text-[var(--app-muted)]">Total Pools TVL</div>
+          <div className="font-medium mt-0.5">{Object.values(poolPrices).reduce((s, v) => s + v.tvlUsd, 0) > 0 ? `~$${Object.values(poolPrices).reduce((s, v) => s + v.tvlUsd, 0).toFixed(2)}` : '...'}</div>
+        </div>
+      </div>
       </div>
     </div>
   );

@@ -7,6 +7,7 @@ import { getCachedMeta } from '../services/tokenCache';
 import { MAINNET_CONFIGURED, CONTRACTS, type TokenInfo } from '../types';
 import { buildExplorerTxUrl } from '../config';
 import { formatUnits, truncateAddress } from '../services/swapService';
+import { usePriceService } from '../hooks/usePriceService';
 
 type AssetItem = {
   symbol: string;
@@ -20,6 +21,7 @@ type AssetItem = {
 export default function PortfolioPage() {
   const navigate = useNavigate();
   const { walletAddress, isConnected, walletBalance, rpc } = useApp();
+  const { getTokenUsd, calculateUsdValue, loading: priceLoading, octPrice } = usePriceService(rpc);
 
   const [trustedTokens, setTrustedTokens] = useState<TokenInfo[]>([]);
   const [savedTokens, setSavedTokens] = useState<TokenInfo[]>([]);
@@ -124,22 +126,48 @@ export default function PortfolioPage() {
     return buildExplorerTxUrl(hash);
   }
 
+  const [assetPrices, setAssetPrices] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchPrices() {
+      if (!isConnected || !walletAddress) return;
+      const prices: Record<string, number> = {};
+      for (const token of [...trustedTokens, ...savedTokens]) {
+        if (!cancelled) {
+          const price = await getTokenUsd(token.address);
+          prices[token.address] = price;
+        }
+      }
+      if (!cancelled) setAssetPrices(prices);
+    }
+    fetchPrices();
+    return () => { cancelled = true; };
+  }, [isConnected, walletAddress, trustedTokens, savedTokens, getTokenUsd]);
+
   const assets = useMemo<AssetItem[]>(() => {
     const list: AssetItem[] = [];
     for (const token of trustedTokens) {
       const balance = tokenBalances[token.address] ?? '0';
-      list.push({ symbol: token.symbol, name: token.name, address: token.address, balance, valueUsd: 0, source: 'trusted' });
+      const dec = decimalsOf(token.address);
+      const price = assetPrices[token.address] ?? 0;
+      const valueUsd = calculateUsdValue(balance, dec, price);
+      list.push({ symbol: token.symbol, name: token.name, address: token.address, balance, valueUsd, source: 'trusted' });
     }
     for (const token of savedTokens) {
       if (list.some(item => item.address === token.address)) continue;
       const balance = tokenBalances[token.address] ?? '0';
-      list.push({ symbol: token.symbol, name: token.name, address: token.address, balance, valueUsd: 0, source: 'wallet' });
+      const dec = decimalsOf(token.address);
+      const price = assetPrices[token.address] ?? 0;
+      const valueUsd = calculateUsdValue(balance, dec, price);
+      list.push({ symbol: token.symbol, name: token.name, address: token.address, balance, valueUsd, source: 'wallet' });
     }
     return list.sort((a, b) => Number(b.balance) - Number(a.balance));
-  }, [trustedTokens, savedTokens, tokenBalances]);
+  }, [trustedTokens, savedTokens, tokenBalances, assetPrices, decimalsOf, calculateUsdValue]);
 
   const totalTokens = assets.length;
   const totalPositions = lpPositions.length;
+  const totalValueUsd = assets.reduce((sum, a) => sum + a.valueUsd, 0);
 
   if (!isConnected) {
     return (
@@ -172,10 +200,11 @@ export default function PortfolioPage() {
         </button>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-4">
+        <StatCard label="Portfolio Value" value={totalValueUsd > 0 ? `$${totalValueUsd.toFixed(2)}` : priceLoading ? '...' : '--'} helper="Total USD value" />
         <StatCard label="Assets tracked" value={String(totalTokens)} helper="Trusted + saved tokens" />
         <StatCard label="LP positions" value={String(totalPositions)} helper="All active pools" />
-        <StatCard label="Native balance" value={walletBalance || '0'} helper="OCT in wallet" />
+        <StatCard label="Native balance" value={walletBalance || '0'} helper={`OCT in wallet${octPrice > 0 ? ` (~$${(parseFloat(formatUnits(walletBalance || '0', 6)) * octPrice).toFixed(2)})` : ''}`} />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.25fr_0.85fr]">
@@ -208,7 +237,7 @@ export default function PortfolioPage() {
                   </div>
                   <div className="text-right">
                     <div className="font-semibold font-mono">{formatUnits(asset.balance, decimalsOf(asset.address))} <span className="text-[var(--app-muted)] text-xs">{asset.symbol}</span></div>
-                    <div className="text-xs text-[var(--app-muted)]">~${asset.valueUsd.toFixed(2)}</div>
+                    <div className="text-xs text-[var(--app-muted)]">{asset.valueUsd > 0 ? `~$${asset.valueUsd.toFixed(2)}` : '--'}</div>
                   </div>
                 </button>
               ))
@@ -479,9 +508,9 @@ function PortfolioDetailModal({
                 <Row label="Balance">
                   <span className="font-mono">{formatUnits(a.balance, dec)} {a.symbol}</span>
                 </Row>
-                <Row label="USD value">
-                  <span className="font-mono">~${a.valueUsd.toFixed(2)}</span>
-                </Row>
+                 <Row label="USD value">
+                   <span className="font-mono">{a.valueUsd > 0 ? `~$${a.valueUsd.toFixed(2)}` : '--'}</span>
+                 </Row>
                 <Row label="Decimals">
                   <span className="font-mono">{dec}</span>
                 </Row>
