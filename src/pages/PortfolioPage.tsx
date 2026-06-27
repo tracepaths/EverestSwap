@@ -5,7 +5,7 @@ import { getTxHistory, type TxRecord } from '../services/txHistory';
 import { tokenStorage } from '../services/tokenStorage';
 import { getCachedMeta } from '../services/tokenCache';
 import { MAINNET_CONFIGURED, CONTRACTS, type TokenInfo } from '../types';
-import { EXPLORER_URL, EXPLORER_TX_PATH } from '../config';
+import { buildExplorerTxUrl } from '../config';
 import { formatUnits, truncateAddress } from '../services/swapService';
 
 type AssetItem = {
