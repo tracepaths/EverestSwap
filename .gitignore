@@ -6,3 +6,4 @@ dist/
 opencode.json
 # TUI dump file
 35.save
+.github-config
