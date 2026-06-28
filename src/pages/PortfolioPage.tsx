@@ -4,7 +4,7 @@ import { useApp } from '../contexts/AppContext';
 import { getTxHistory, type TxRecord } from '../services/txHistory';
 import { tokenStorage } from '../services/tokenStorage';
 import { getCachedMeta } from '../services/tokenCache';
-import { MAINNET_CONFIGURED, CONTRACTS, type TokenInfo } from '../types';
+import { MAINNET_CONFIGURED, CONTRACTS, WOCT_TOKEN, type TokenInfo } from '../types';
 import { buildExplorerTxUrl } from '../config';
 import { formatUnits, truncateAddress } from '../services/swapService';
 import { usePriceService } from '../hooks/usePriceService';
@@ -72,20 +72,30 @@ export default function PortfolioPage() {
         allPools.map(async poolAddr => {
           const pos = await rpc.getPositions(poolAddr, walletAddress).catch(() => [] as Awaited<ReturnType<typeof rpc.getPositions>>);
           if (pos.length === 0) return [];
-          const metaA = await rpc.getTokenMeta(await rpc.contractView<string>(poolAddr, 'get_token_a', []).catch(() => '' as string)).catch(() => null);
-          const metaB = await rpc.getTokenMeta(await rpc.contractView<string>(poolAddr, 'get_token_b', []).catch(() => '' as string)).catch(() => null);
-          const totalLP = await rpc.contractView<string>(poolAddr, 'total_lp_supply', []).catch(() => '0');
-      const totalLpNum = Number(totalLP);
-      return pos.map(p => {
+          const info = await rpc.getPoolInfo(poolAddr).catch(() => null);
+          if (!info || !info.tokenA || !info.tokenB) return [];
+          const [metaA, metaB] = await Promise.all([
+            rpc.getTokenMeta(info.tokenA).catch(() => null),
+            rpc.getTokenMeta(info.tokenB).catch(() => null),
+          ]);
+          const totalLP = info.totalLP;
+          const totalLpNum = Number(totalLP);
+          return pos.map(p => {
             const lpNum = Number(p.liquidity);
             const share = totalLpNum > 0 ? (lpNum / totalLpNum) * 100 : 0;
+            const resolveSymbol = (addr: string, meta: { symbol?: string } | null): string => {
+              if (meta?.symbol && meta.symbol !== '???') return meta.symbol;
+              if (addr === '') return 'OCT';
+              if (addr.toLowerCase() === WOCT_TOKEN.address.toLowerCase()) return 'WOCT';
+              return addr.slice(0, 6);
+            };
             return {
               pool: poolAddr,
               lp: String(p.liquidity),
               lpNum,
               share,
-              tokenA: metaA?.symbol ?? poolAddr.slice(0, 6),
-              tokenB: metaB?.symbol ?? poolAddr.slice(4, 10),
+              tokenA: resolveSymbol(info.tokenA, metaA),
+              tokenB: resolveSymbol(info.tokenB, metaB),
             };
           });
         }),
