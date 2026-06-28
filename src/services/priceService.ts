@@ -33,7 +33,8 @@ export async function fetchOctUsdPrice(): Promise<number> {
     if (!Number.isFinite(price) || price <= 0) throw new Error('Invalid price');
     cache = { octUsd: price, timestamp: now };
     return price;
-  } catch {
+  } catch (err) {
+    console.error('[priceService] DexScreener fetch failed:', err);
     if (cache) return cache.octUsd;
     return 0;
   }
@@ -80,8 +81,8 @@ export async function getUsdPriceForToken(
         return rateWoctPerToken * octPrice;
       }
     }
-  } catch {
-    // fallback
+  } catch (err) {
+    console.error('[priceService] Token price lookup failed:', tokenAddress, err);
   }
 
   return 0;
