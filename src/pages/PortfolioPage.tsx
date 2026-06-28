@@ -167,7 +167,8 @@ export default function PortfolioPage() {
 
   const totalTokens = assets.length;
   const totalPositions = lpPositions.length;
-  const totalValueUsd = assets.reduce((sum, a) => sum + a.valueUsd, 0);
+  const nativeOctUsd = (parseFloat(walletBalance || '0') || 0) * octPrice;
+  const totalValueUsd = assets.reduce((sum, a) => sum + a.valueUsd, 0) + nativeOctUsd;
 
   if (!isConnected) {
     return (
@@ -204,7 +205,7 @@ export default function PortfolioPage() {
         <StatCard label="Portfolio Value" value={totalValueUsd > 0 ? `$${totalValueUsd.toFixed(2)}` : priceLoading ? '...' : '--'} helper="Total USD value" />
         <StatCard label="Assets tracked" value={String(totalTokens)} helper="Trusted + saved tokens" />
         <StatCard label="LP positions" value={String(totalPositions)} helper="All active pools" />
-        <StatCard label="Native balance" value={walletBalance || '0'} helper={`OCT in wallet${octPrice > 0 ? ` (~$${(parseFloat(formatUnits(walletBalance || '0', 6)) * octPrice).toFixed(2)})` : ''}`} />
+        <StatCard label="Native balance" value={walletBalance || '0'} helper={`OCT in wallet${octPrice > 0 ? ` (~$${(parseFloat(walletBalance || '0') * octPrice).toFixed(2)})` : ''}`} />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.25fr_0.85fr]">

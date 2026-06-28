@@ -1,5 +1,5 @@
 import { OCT_ETHEREUM_ADDRESS, DEXSCREENER_API, PRICE_CACHE_TTL_MS } from '../config/prices';
-import { WOCT_TOKEN } from '../config';
+import { WOCT_TOKEN, CONTRACTS } from '../config';
 import type { OctraRpc } from './octraRpc';
 import { formatUnits } from './swapService';
 
@@ -54,7 +54,7 @@ export async function getUsdPriceForToken(
   if (isOCTorWOCT(tokenAddress)) return octPrice;
 
   try {
-    const factoryAddr = (await import('../config')).CONTRACTS.factory;
+    const factoryAddr = CONTRACTS.factory;
     const poolAddrs = await rpc.getAllPools(factoryAddr);
     const woctAddr = WOCT_TOKEN.address.toLowerCase();
     const tokenAddrLower = tokenAddress.toLowerCase();

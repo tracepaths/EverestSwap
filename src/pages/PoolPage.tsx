@@ -949,13 +949,13 @@ function PoolPage() {
                         <div className="text-xs text-[var(--app-muted)]">{p.feeTier} fee tier</div>
                       </div>
                     </div>
-      <div className="text-right text-sm">
-        <div className="font-mono">{formatUnits(p.totalLP, 12)} LP</div>
-        <div className="text-xs text-[var(--app-muted)]">Total Liquidity</div>
-        {poolPrices[p.address] && poolPrices[p.address].tvlUsd > 0 && (
-          <div className="text-xs font-mono text-[var(--app-blue)]">~$${poolPrices[p.address].tvlUsd.toFixed(2)}</div>
-        )}
-      </div>
+                    <div className="text-right text-sm">
+                      <div className="font-mono">{formatUnits(p.totalLP, 12)} LP</div>
+                      <div className="text-xs text-[var(--app-muted)]">Total Liquidity</div>
+                      {poolPrices[p.address] && poolPrices[p.address].tvlUsd > 0 && (
+                        <div className="text-xs font-mono text-[var(--app-blue)]">{'~$' + poolPrices[p.address].tvlUsd.toFixed(2)}</div>
+                      )}
+                    </div>
                   </div>
                   <div className="grid grid-cols-4 gap-4 mt-4 text-sm">
                     <div>
