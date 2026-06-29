@@ -28,7 +28,7 @@ import {
   assertMainnetConfigured,
 } from './mainnet';
 
-const network = import.meta.env.VITE_NETWORK || 'devnet';
+const network = import.meta.env.EVERESTSWAP_NETWORK || 'devnet';
 const isMainnet = network === 'mainnet';
 
 export const RPC_URL: string = isMainnet ? MAIN_RPC_URL : DEV_RPC_URL;

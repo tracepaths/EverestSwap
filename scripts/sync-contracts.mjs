@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const PROJECT_ROOT = join(__dirname, '..');
-const BACKEND_REPO = process.env.BACKEND_PATH || join(PROJECT_ROOT, '..', 'everestswap-dev');
+const BACKEND_REPO = process.env.EVERESTSWAP_BACKEND_PATH || join(PROJECT_ROOT, '..', 'everestswap-dev');
 const BACKEND_CONTRACTS = join(BACKEND_REPO, 'contracts');
 const PUBLIC_CONTRACTS = join(PROJECT_ROOT, 'public', 'contracts');
 
@@ -91,7 +91,7 @@ function main() {
     // repo (e.g., CI pipelines, frontend-only dev setups, renamed backend dir).
     warn(`[sync] WARNING: backend repo not found at ${BACKEND_REPO}`);
     warn(`[sync] Skipping contract sync check.`);
-    warn(`[sync] Set BACKEND_PATH env var or clone everestswap-dev next to everestswap-frontend.`);
+    warn(`[sync] Set EVERESTSWAP_BACKEND_PATH env var or clone everestswap-dev next to everestswap-frontend.`);
     process.exit(0);
   }
 

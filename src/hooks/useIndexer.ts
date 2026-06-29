@@ -38,7 +38,7 @@ export function useIndexer(): IndexerState {
       // [V7-SECURITY-FIX] Enforce HTTPS for indexer URL.
       // [AUDIT-FIX H-5] Removed the http://localhost / http://127.0.0.1 carve-out:
       // those resolve to the visitor's own machine and are mixed-content on HTTPS origins.
-      // Local dev should set VITE_INDEXER_URL to an HTTPS tunnel or run the indexer over HTTPS.
+      // Local dev should set EVERESTSWAP_DEVNET_INDEXER_URL to an HTTPS tunnel or run the indexer over HTTPS.
       if (INDEXER_URL && !INDEXER_URL.startsWith('https://')) {
         if (!cancelled && mountedRef.current) setState({ available: false, prices: [], loading: false });
         return;
