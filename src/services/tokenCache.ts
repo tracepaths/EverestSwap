@@ -18,6 +18,13 @@ interface CacheEntry<T> {
 const metaCache = new Map<string, CacheEntry<TokenMeta>>();
 const trustedCache = new Map<string, CacheEntry<string[]>>();
 const isTrustedCache = new Map<string, CacheEntry<boolean>>();
+// [V8] Trust rating caches
+const votesCache = new Map<string, CacheEntry<number>>();
+const ownerCache = new Map<string, CacheEntry<string>>();
+const ratingCache = new Map<string, CacheEntry<number>>();
+const VOTES_TTL = 30 * 1000;   // 30s for vote counts
+const OWNER_TTL = 5 * 60 * 1000; // 5min for token owners (rarely changes)
+const RATING_TTL = 60 * 1000;  // 60s for computed ratings
 
 function cacheKey(scope: string, ...parts: string[]): string {
   return [activeNetwork, scope, ...parts].join(':');
@@ -75,8 +82,54 @@ export function getCachedIsTrusted(factoryAddress: string, tokenAddress: string)
   return entry.data;
 }
 
+// [V8] Trust rating cache functions
+export function getCachedVotes(factoryAddress: string, tokenAddress: string): number | null {
+  const entry = votesCache.get(cacheKey('votes', factoryAddress, tokenAddress));
+  if (entry === undefined) return null;
+  if (Date.now() - entry.timestamp >= VOTES_TTL) {
+    votesCache.delete(cacheKey('votes', factoryAddress, tokenAddress));
+    return null;
+  }
+  return entry.data;
+}
+
+export function setCachedVotes(factoryAddress: string, tokenAddress: string, votes: number): void {
+  votesCache.set(cacheKey('votes', factoryAddress, tokenAddress), { data: votes, timestamp: Date.now() });
+}
+
+export function getCachedOwner(tokenAddress: string): string | null {
+  const entry = ownerCache.get(cacheKey('owner', tokenAddress));
+  if (entry === undefined) return null;
+  if (Date.now() - entry.timestamp >= OWNER_TTL) {
+    ownerCache.delete(cacheKey('owner', tokenAddress));
+    return null;
+  }
+  return entry.data;
+}
+
+export function setCachedOwner(tokenAddress: string, owner: string): void {
+  ownerCache.set(cacheKey('owner', tokenAddress), { data: owner, timestamp: Date.now() });
+}
+
+export function getCachedRating(factoryAddress: string, tokenAddress: string, walletAddress: string): number | null {
+  const entry = ratingCache.get(cacheKey('rating', factoryAddress, tokenAddress, walletAddress));
+  if (entry === undefined) return null;
+  if (Date.now() - entry.timestamp >= RATING_TTL) {
+    ratingCache.delete(cacheKey('rating', factoryAddress, tokenAddress, walletAddress));
+    return null;
+  }
+  return entry.data;
+}
+
+export function setCachedRating(factoryAddress: string, tokenAddress: string, walletAddress: string, rating: number): void {
+  ratingCache.set(cacheKey('rating', factoryAddress, tokenAddress, walletAddress), { data: rating, timestamp: Date.now() });
+}
+
 export function clearTokenCache(): void {
   metaCache.clear();
   trustedCache.clear();
   isTrustedCache.clear();
+  votesCache.clear();
+  ownerCache.clear();
+  ratingCache.clear();
 }

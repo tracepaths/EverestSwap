@@ -707,6 +707,48 @@ export class OctraRpc {
     throw new Error(`Transaction ${txHash} not confirmed after 60s — check explorer for status`);
   }
 
+  // [V8] Trust rating — voting RPC methods
+
+  async voteToken(factoryAddress: string, tokenAddress: string): Promise<string> {
+    const caller = (await import('./walletService')).walletService.address;
+    if (!caller) throw new Error('Wallet not connected');
+    return this.contractCall(factoryAddress, 'vote_token', [tokenAddress], caller);
+  }
+
+  async unvoteToken(factoryAddress: string, tokenAddress: string): Promise<string> {
+    const caller = (await import('./walletService')).walletService.address;
+    if (!caller) throw new Error('Wallet not connected');
+    return this.contractCall(factoryAddress, 'unvote_token', [tokenAddress], caller);
+  }
+
+  async getTokenVotes(factoryAddress: string, tokenAddress: string): Promise<number> {
+    try {
+      const raw: unknown = await this.contractView(factoryAddress, 'get_token_votes', [tokenAddress]);
+      return this.extractNumber(raw, 0);
+    } catch {
+      return 0;
+    }
+  }
+
+  async hasVoted(factoryAddress: string, voterAddress: string, tokenAddress: string): Promise<boolean> {
+    try {
+      const raw: unknown = await this.contractView(factoryAddress, 'has_voted', [voterAddress, tokenAddress]);
+      const obj = raw as Record<string, unknown> | undefined;
+      return obj?.result === true || obj?.result === 'true' || raw === true || raw === 'true';
+    } catch {
+      return false;
+    }
+  }
+
+  async getTokenOwner(tokenAddress: string): Promise<string> {
+    try {
+      const raw: unknown = await this.contractView(tokenAddress, 'get_owner', []);
+      return this.extractString(raw);
+    } catch {
+      return '';
+    }
+  }
+
   clearCache(): void {
     clearTokenCache();
   }

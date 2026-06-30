@@ -8,6 +8,8 @@ import { MAINNET_CONFIGURED, CONTRACTS, WOCT_TOKEN, type TokenInfo } from '../ty
 import { buildExplorerTxUrl } from '../config';
 import { formatUnits, truncateAddress } from '../services/swapService';
 import { usePriceService } from '../hooks/usePriceService';
+import { calculateRating } from '../services/trustRating';
+import TokenTrustBadge from '../components/TokenTrustBadge';
 
 type AssetItem = {
   symbol: string;
@@ -16,6 +18,10 @@ type AssetItem = {
   balance: string;
   valueUsd: number;
   source: 'wallet' | 'trusted' | 'lp';
+  rating: number;
+  votes: number;
+  hasVoted: boolean;
+  hasLockedLp: boolean;
 };
 
 export default function PortfolioPage() {
@@ -33,6 +39,7 @@ export default function PortfolioPage() {
   const [assetsLimit, setAssetsLimit] = useState<number>(5);
   const [lpLimit, setLpLimit] = useState<number>(5);
   const [txsLimit, setTxsLimit] = useState<number>(5);
+  const [trustVoteState, setTrustVoteState] = useState<Record<string, { rating: number; votes: number; hasVoted: boolean; hasLockedLp: boolean }>>({});
 
   type ModalState =
     | { kind: 'asset'; data: AssetItem }
@@ -112,6 +119,67 @@ export default function PortfolioPage() {
     void loadPortfolio();
   }, [loadPortfolio]);
 
+  // [V8] Load trust ratings and vote eligibility for portfolio tokens
+  useEffect(() => {
+    if (!isConnected || !walletAddress) return;
+    let cancelled = false;
+    async function loadTrustRatings() {
+      const allTokens = [...trustedTokens, ...savedTokens];
+      const newState: Record<string, { rating: number; votes: number; hasVoted: boolean; hasLockedLp: boolean }> = {};
+      
+      // Get all pools to check locked LP
+      const allPools = await rpc.getAllPools(CONTRACTS.factory).catch(() => []);
+      const lockedTokens = new Set<string>();
+      
+      // Check locked LP for each pool
+      for (const poolAddr of allPools) {
+        if (cancelled) break;
+        try {
+          const [info, lockedLp] = await Promise.all([
+            rpc.getPoolInfo(poolAddr),
+            rpc.getLockedLiquidity(poolAddr, walletAddress),
+          ]);
+          if (lockedLp > 0) {
+            // User has locked LP in this pool
+            lockedTokens.add(info.tokenA);
+            lockedTokens.add(info.tokenB);
+          }
+        } catch {
+          // Skip this pool
+        }
+      }
+      
+      // Calculate ratings for tokens with locked LP
+      for (const token of allTokens) {
+        if (cancelled) break;
+        const hasLockedLp = lockedTokens.has(token.address);
+        try {
+          const ratingInfo = await calculateRating({
+            rpc,
+            factoryAddress: CONTRACTS.factory,
+            tokenAddress: token.address,
+            walletAddress,
+            isTrusted: trustedTokens.some(t => t.address === token.address),
+          });
+          newState[token.address] = {
+            rating: ratingInfo.rating,
+            votes: ratingInfo.votes,
+            hasVoted: ratingInfo.hasVoted,
+            hasLockedLp,
+          };
+        } catch {
+          newState[token.address] = { rating: 1, votes: 0, hasVoted: false, hasLockedLp };
+        }
+      }
+      
+      if (!cancelled) {
+        setTrustVoteState(newState);
+      }
+    }
+    void loadTrustRatings();
+    return () => { cancelled = true; };
+  }, [isConnected, walletAddress, rpc, trustedTokens, savedTokens]);
+
   const decimalsByAddress = useMemo(() => {
     const map: Record<string, number> = {};
     for (const t of [...trustedTokens, ...savedTokens]) {
@@ -136,6 +204,23 @@ export default function PortfolioPage() {
     return buildExplorerTxUrl(hash);
   }
 
+  const handleVote = useCallback(async (address: string) => {
+    if (!isConnected || !walletAddress || !address) return;
+    const current = trustVoteState[address];
+    if (!current || !current.hasLockedLp) return;
+    try {
+      if (current.hasVoted) {
+        await rpc.unvoteToken(CONTRACTS.factory, address);
+      } else {
+        await rpc.voteToken(CONTRACTS.factory, address);
+      }
+      // Refresh portfolio to update vote state
+      await loadPortfolio();
+    } catch (err) {
+      console.error('[PortfolioPage] Vote failed:', err);
+    }
+  }, [isConnected, walletAddress, rpc, trustVoteState, loadPortfolio]);
+
   const [assetPrices, setAssetPrices] = useState<Record<string, number>>({});
 
   useEffect(() => {
@@ -157,12 +242,14 @@ export default function PortfolioPage() {
 
   const assets = useMemo<AssetItem[]>(() => {
     const list: AssetItem[] = [];
+    const state = trustVoteState;
     for (const token of trustedTokens) {
       const balance = tokenBalances[token.address] ?? '0';
       const dec = decimalsOf(token.address);
       const price = assetPrices[token.address] ?? 0;
       const valueUsd = calculateUsdValue(balance, dec, price);
-      list.push({ symbol: token.symbol, name: token.name, address: token.address, balance, valueUsd, source: 'trusted' });
+      const info = state[token.address] || { rating: 1, votes: 0, hasVoted: false, hasLockedLp: false };
+      list.push({ symbol: token.symbol, name: token.name, address: token.address, balance, valueUsd, source: 'trusted', rating: info.rating, votes: info.votes, hasVoted: info.hasVoted, hasLockedLp: info.hasLockedLp });
     }
     for (const token of savedTokens) {
       if (list.some(item => item.address === token.address)) continue;
@@ -170,10 +257,11 @@ export default function PortfolioPage() {
       const dec = decimalsOf(token.address);
       const price = assetPrices[token.address] ?? 0;
       const valueUsd = calculateUsdValue(balance, dec, price);
-      list.push({ symbol: token.symbol, name: token.name, address: token.address, balance, valueUsd, source: 'wallet' });
+      const info = state[token.address] || { rating: 1, votes: 0, hasVoted: false, hasLockedLp: false };
+      list.push({ symbol: token.symbol, name: token.name, address: token.address, balance, valueUsd, source: 'wallet', rating: info.rating, votes: info.votes, hasVoted: info.hasVoted, hasLockedLp: info.hasLockedLp });
     }
     return list.sort((a, b) => Number(b.balance) - Number(a.balance));
-  }, [trustedTokens, savedTokens, tokenBalances, assetPrices, decimalsOf, calculateUsdValue]);
+  }, [trustedTokens, savedTokens, tokenBalances, assetPrices, decimalsOf, calculateUsdValue, trustVoteState]);
 
   const totalTokens = assets.length;
   const totalPositions = lpPositions.length;
@@ -370,7 +458,7 @@ export default function PortfolioPage() {
           </section>
         </aside>
       </div>
-      <PortfolioDetailModal modal={modal} onClose={() => setModal(null)} onSwap={addr => { setModal(null); navigate(`/swap?token=${encodeURIComponent(addr)}`); }} onAddLiquidity={pool => { setModal(null); navigate(`/liquidity?pool=${encodeURIComponent(pool)}`); }} getExplorerTxUrl={getExplorerTxUrl} decimalsOf={decimalsOf} />
+      <PortfolioDetailModal modal={modal} onClose={() => setModal(null)} onSwap={addr => { setModal(null); navigate(`/swap?token=${encodeURIComponent(addr)}`); }} onAddLiquidity={pool => { setModal(null); navigate(`/liquidity?pool=${encodeURIComponent(pool)}`); }} onVote={handleVote} getExplorerTxUrl={getExplorerTxUrl} decimalsOf={decimalsOf} />
     </div>
   );
 }
@@ -426,21 +514,24 @@ function PortfolioDetailModal({
   onClose,
   onSwap,
   onAddLiquidity,
+  onVote,
   getExplorerTxUrl,
   decimalsOf,
 }: {
   modal:
-    | { kind: 'asset'; data: { symbol: string; name: string; address: string; balance: string; valueUsd: number; source: string } }
+    | { kind: 'asset'; data: { symbol: string; name: string; address: string; balance: string; valueUsd: number; source: string; rating: number; votes: number; hasVoted: boolean; hasLockedLp: boolean } }
     | { kind: 'position'; data: { pool: string; lp: string; tokenA: string; tokenB: string; share: number } }
     | { kind: 'activity'; data: TxRecord }
     | null;
   onClose: () => void;
   onSwap: (address: string) => void;
   onAddLiquidity: (poolAddress: string) => void;
+  onVote: (address: string) => void;
   getExplorerTxUrl: (hash: string) => string;
   decimalsOf: (address: string) => number;
 }) {
   const [copied, setCopied] = useState<string | null>(null);
+  const [voting, setVoting] = useState(false);
 
   useEffect(() => {
     if (!modal) return;
@@ -508,6 +599,7 @@ function PortfolioDetailModal({
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-lg font-semibold">{a.symbol}</span>
+                    <TokenTrustBadge rating={a.rating} size="md" />
                     <Badge label={a.source === 'trusted' ? 'Trusted' : a.source === 'lp' ? 'LP' : 'Saved'} />
                   </div>
                   <div className="text-sm text-[var(--app-muted)]">{a.name}</div>
@@ -587,13 +679,28 @@ function PortfolioDetailModal({
             Close
           </button>
           {modal.kind === 'asset' && (
-            <button
-              type="button"
-              onClick={() => onSwap(modal.data.address)}
-              className="px-3 py-2 text-sm font-medium rounded-lg bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] transition-colors text-white"
-            >
-              Swap this token
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => onSwap(modal.data.address)}
+                className="px-3 py-2 text-sm font-medium rounded-lg bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] transition-colors text-white"
+              >
+                Swap this token
+              </button>
+              {modal.data.address && modal.data.hasLockedLp && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setVoting(true);
+                    onVote(modal.data.address).finally(() => setVoting(false));
+                  }}
+                  disabled={voting}
+                  className="px-3 py-2 text-sm font-medium rounded-lg bg-gradient-to-r from-[var(--app-warning)]/80 to-[var(--app-warning)] hover:from-[var(--app-warning)] hover:to-[var(--app-warning)]/80 transition-colors text-white disabled:opacity-50"
+                >
+                  {voting ? '...' : modal.data.hasVoted ? `Unvote ★ ${modal.data.votes}` : `Vote ★ ${modal.data.votes}`}
+                </button>
+              )}
+            </>
           )}
           {modal.kind === 'position' && (
             <button
