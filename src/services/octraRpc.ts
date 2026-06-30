@@ -710,15 +710,15 @@ export class OctraRpc {
   // [V8] Trust rating — voting RPC methods
 
   async voteToken(factoryAddress: string, tokenAddress: string): Promise<string> {
-    const caller = (await import('./walletService')).walletService.address;
-    if (!caller) throw new Error('Wallet not connected');
-    return this.contractCall(factoryAddress, 'vote_token', [tokenAddress], caller);
+    const { walletService } = await import('./walletService');
+    if (!walletService.address) throw new Error('Wallet not connected');
+    return walletService.callContract({ contract: factoryAddress, method: 'vote_token', params: [tokenAddress] });
   }
 
   async unvoteToken(factoryAddress: string, tokenAddress: string): Promise<string> {
-    const caller = (await import('./walletService')).walletService.address;
-    if (!caller) throw new Error('Wallet not connected');
-    return this.contractCall(factoryAddress, 'unvote_token', [tokenAddress], caller);
+    const { walletService } = await import('./walletService');
+    if (!walletService.address) throw new Error('Wallet not connected');
+    return walletService.callContract({ contract: factoryAddress, method: 'unvote_token', params: [tokenAddress] });
   }
 
   async getTokenVotes(factoryAddress: string, tokenAddress: string): Promise<number> {

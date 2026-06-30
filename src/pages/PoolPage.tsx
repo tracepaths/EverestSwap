@@ -522,7 +522,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
                   <div className="font-medium text-[var(--app-blue-3)]">{metaA.symbol}</div>
                   <div className="text-[var(--app-muted)] truncate">{metaA.name}</div>
                   <div className="text-[var(--app-muted)]">Decimals: {metaA.decimals}</div>
-                  <TokenTrustBadge isTrusted={trustedA} />
+                  <TokenTrustBadge rating={trustedA ? 5 : 1} />
                   {walletAddress && (
                     <div className="text-[10px] text-[var(--app-muted)]">
                       Balance: {balanceA === null ? '...' : formatUnits(balanceA, metaA.decimals)}
@@ -554,7 +554,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
                   <div className="font-medium text-[var(--app-blue-3)]">{metaB.symbol}</div>
                   <div className="text-[var(--app-muted)] truncate">{metaB.name}</div>
                   <div className="text-[var(--app-muted)]">Decimals: {metaB.decimals}</div>
-                  <TokenTrustBadge isTrusted={trustedB} />
+                  <TokenTrustBadge rating={trustedB ? 5 : 1} />
                   {walletAddress && (
                     <div className="text-[10px] text-[var(--app-muted)]">
                       Balance: {balanceB === null ? '...' : formatUnits(balanceB, metaB.decimals)}

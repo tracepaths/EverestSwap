@@ -139,7 +139,7 @@ export default function PortfolioPage() {
             rpc.getPoolInfo(poolAddr),
             rpc.getLockedLiquidity(poolAddr, walletAddress),
           ]);
-          if (lockedLp > 0) {
+          if (Number(lockedLp) > 0) {
             // User has locked LP in this pool
             lockedTokens.add(info.tokenA);
             lockedTokens.add(info.tokenB);
@@ -526,7 +526,7 @@ function PortfolioDetailModal({
   onClose: () => void;
   onSwap: (address: string) => void;
   onAddLiquidity: (poolAddress: string) => void;
-  onVote: (address: string) => void;
+  onVote: (address: string) => Promise<void>;
   getExplorerTxUrl: (hash: string) => string;
   decimalsOf: (address: string) => number;
 }) {

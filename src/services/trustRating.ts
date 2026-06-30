@@ -165,7 +165,7 @@ async function getLockedLpPct(rpc: OctraRpc, factoryAddress: string, tokenAddres
     ]);
 
     if (!totalLp || totalLp === 0) return 0;
-    return Math.round((totalLocked / totalLp) * 100);
+    return Math.round((Number(totalLocked) / totalLp) * 100);
   } catch {
     return 0;
   }
