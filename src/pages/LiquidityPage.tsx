@@ -61,6 +61,11 @@ function LiquidityPage() {
   const [userEditedB, setUserEditedB] = useState(false);
   const [addStep, setAddStep] = useState<AddLiquidityStep>({ type: 'idle' });
   const [removeStep, setRemoveStep] = useState<RemoveLiquidityStep>({ type: 'idle' });
+  // [V9] Probe result for `add_liquidity` readiness. When the pool's stored
+  // factory address is invalid (not a contract, or doesn't implement
+  // validate_initial_price), the very first add_liquidity silently reverts
+  // with no actionable detail. We surface that here as a non-blocking banner.
+  const [poolSupport, setPoolSupport] = useState<{ ok: boolean; factory: string; error?: string } | null>(null);
 
   const pool = pools[selectedPoolIdx];
   const mountedRef = useRef(true);
@@ -216,6 +221,14 @@ function LiquidityPage() {
         if (mountedRef.current && pool?.address === targetPoolAddr) setTotalLockedLp(locked);
       } catch { /* noop */ }
     }
+    // [V9] Probe pool's factory-callback readiness (works regardless of wallet
+    // connection — this is a pool-level check, not a user-action check).
+    try {
+      const support = await rpc.checkPoolLiquiditySupport(poolAddr);
+      if (mountedRef.current && pool?.address === targetPoolAddr) {
+        setPoolSupport(support);
+      }
+    } catch { /* noop */ }
   // [BUG-FIX] Remove selectedPositionId from deps — it caused loadPoolInfo to recreate
   // every time user selects a position, triggering interval reset every 10s.
   // selectedPositionId state is set inside this function (first-time), no circular dep.
@@ -320,8 +333,11 @@ function LiquidityPage() {
         lockDuration = days * 24 * 60;
       }
 
-      const epochInfo = await rpc.call<{ epoch_id: number }>('epoch_current');
-      const deadline = (epochInfo?.epoch_id || 0) + 300;
+      // [V9] Deadline is fetched RIGHT BEFORE the add_liquidity call (see below).
+      // The earlier two grant transactions + their waitForReceipt polls can take
+      // long enough that this pool's 1-300 epoch window would expire, producing
+      // a premature "deadline must be 1-300 seconds from now" revert. Recomputing
+      // immediately before submission fixes the race for slow wallets/networks.
 
       // [BUG-FIX] For initial liquidity (isEmptyPool), use minLp='1'
       let minLp = '1';
@@ -365,6 +381,16 @@ function LiquidityPage() {
       updateToast(toastId, 'pending', `Waiting for ${validTokenB.symbol} grant confirmation...`, grantBHash);
       await rpc.waitForReceipt(grantBHash);
 
+      // [V9] Race fix + epoch guard: re-fetch deadline immediately before
+      // submitting add_liquidity, AND reject the call if the RPC failed to
+      // return a usable epoch_id (a missing/wrong epoch would yield deadline=300,
+      // which the contract will reject with "deadline must be > epoch").
+      const epochInfo = await rpc.call<{ epoch_id: number }>('epoch_current');
+      if (!epochInfo?.epoch_id || epochInfo.epoch_id <= 0) {
+        throw new Error('Could not fetch current epoch — try again in a few seconds');
+      }
+      const deadline = epochInfo.epoch_id + 300;
+
       setAddStep({ type: 'adding_liquidity' });
       updateToast(toastId, 'pending', 'Approving add liquidity in wallet...');
       const addHash = await walletService.callContract({
@@ -392,7 +418,21 @@ function LiquidityPage() {
       loadPoolInfo();
       refreshBalance();
     } catch (e) {
-      const errMsg = e instanceof Error ? e.message : 'An error occurred';
+      const rawErr = e instanceof Error ? e.message : 'An error occurred';
+      // [V9] When the underlying RPC error is a generic "execution reverted" /
+      // "bytecode not found" / "Transaction failed" AND the pool-support probe
+      // already flagged a factory misconfiguration, append a likely-cause hint
+      // so the user knows what's actually wrong.
+      const isGenericRevert = /\b(?:execution reverted|bytecode not found|transaction failed|reverted?)\b/i.test(rawErr)
+        && rawErr.length < 120;
+      const isFactoryProblem = !!poolSupport && poolSupport.ok === false &&
+        (poolSupport.error === 'factory_callback_invalid' ||
+         poolSupport.error === 'pool_factory_unset' ||
+         poolSupport.error === 'factory_callback_returns_false' ||
+         poolSupport.error === 'pool_tokens_not_set');
+      const errMsg = (isGenericRevert && isFactoryProblem)
+        ? `${rawErr}\n\nLikely cause: this pool's factory address (${poolSupport.factory || 'unset'}) is misconfigured. The pool's add_liquidity requires the factory to implement validate_initial_price, but the stored address has no bytecode or returns false. The pool owner must call set_factory(<factory_address>) on this pool before any liquidity can be added.`
+        : rawErr;
       setAddStep({ type: 'error', message: errMsg });
       if (toastId) updateToast(toastId, 'error', `Add Liquidity failed: ${errMsg}`);
       else addToast('error', `Add Liquidity failed: ${errMsg}`);
@@ -596,6 +636,23 @@ function LiquidityPage() {
 
         {tab === 'add' ? (
           <div className="p-6 space-y-3">
+            {/* [V9] Surface pool-level misconfig BEFORE user signs anything. */}
+            {poolSupport && poolSupport.ok === false && (
+              <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 text-xs text-red-300 space-y-1">
+                <div className="font-semibold flex items-center gap-1.5">
+                  <span>⚠️</span>
+                  <span>Pool factory misconfigured — add_liquidity will revert</span>
+                </div>
+                <div className="text-[11px] leading-relaxed text-red-200/80">
+                  Reason: <code className="bg-black/30 px-1 rounded">{poolSupport.error || 'unknown'}</code>.
+                  {' '}This pool's stored factory address
+                  {poolSupport.factory ? <> is <code className="bg-black/30 px-1 rounded">{poolSupport.factory.slice(0, 8)}…{poolSupport.factory.slice(-4)}</code></> : <> is unset (still = origin)</>}
+                  {' '}and does not implement <code className="bg-black/30 px-1 rounded">validate_initial_price</code>.
+                  Add liquidity will fail until the pool owner calls
+                  {' '}<code className="bg-black/30 px-1 rounded">set_factory(factory_address)</code> on this contract.
+                </div>
+              </div>
+            )}
             {addStep.type !== 'idle' && (
               <div className="bg-[var(--app-panel)] rounded-xl p-4 border border-[var(--app-border)] space-y-3">
                 <div className="flex items-center justify-between">

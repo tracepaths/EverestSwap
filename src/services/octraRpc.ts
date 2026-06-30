@@ -488,6 +488,95 @@ export class OctraRpc {
     return '0';
   }
 
+  // [V9] checkPoolLiquiditySupport: pre-flight probe for add_liquidity readiness.
+  // The single most common cause of the opaque "Add Liquidity Failed / execution
+  // reverted" error on everestswap is a misconfigured pool `factory` address —
+  // either `set_factory` was never called (factory = origin sentinel) or was set
+  // to a non-deployed / non-AMM-aware address. The pool's `add_liquidity` does
+  // `require(call(self.factory, "validate_initial_price", ...))` on first add,
+  // which silently returns false when factory bytecode is missing, causing the
+  // whole tx to revert with no actionable detail in the UI.
+  //
+  // This probe runs as a read-only `contract_call` against the stored factory
+  // and returns a structured diagnosis the UI can render before the user signs.
+  //
+  // [V9-PERF] Cache results per poolAddress — loadPoolInfo re-runs every 10s,
+  // so without caching we'd fire 6+ RPC calls/min per kept-open Liquidity tab.
+  // Cache invalidates on setNetwork().
+  private _poolSupportCache: Map<string, { result: { ok: boolean; factory: string; factoryOk: boolean; tokensOk: boolean; reservesZero: boolean; error?: string }; ts: number }> = new Map();
+  private static readonly POOL_SUPPORT_TTL_MS = 60_000;
+  async checkPoolLiquiditySupport(poolAddress: string): Promise<{
+    ok: boolean;
+    factory: string;
+    factoryOk: boolean;
+    tokensOk: boolean;
+    reservesZero: boolean;
+    error?: string;
+  }> {
+    // [V9-PERF] Cached hit (within TTL) — return immediately.
+    const cached = this._poolSupportCache.get(poolAddress);
+    if (cached && Date.now() - cached.ts < OctraRpc.POOL_SUPPORT_TTL_MS) {
+      return cached.result;
+    }
+    const base = { ok: false, factory: '', factoryOk: false, tokensOk: false, reservesZero: false };
+    try {
+      const raw = await this.contractView<unknown>(poolAddress, 'get_pool_info', []);
+      if (!raw || typeof raw !== 'object') {
+        return { ...base, error: 'pool_get_pool_info_failed' };
+      }
+      const obj = raw as Record<string, unknown>;
+      const storage = obj.storage as Record<string, unknown> | undefined;
+      if (!storage) {
+        return { ...base, error: 'pool_storage_unavailable' };
+      }
+      const factory = String(storage.factory ?? '');
+      const tokenA = String(storage.token_a ?? '');
+      const tokenB = String(storage.token_b ?? '');
+      const reserveA = String(storage.reserve_a ?? '0');
+      const reserveB = String(storage.reserve_b ?? '0');
+      const reservesZero = reserveA === '0' && reserveB === '0';
+      const factoryValid = !!factory && factory !== '' && factory !== '0' && factory !== 'origin';
+      const tokensSet = !!tokenA && !!tokenB && tokenA !== '' && tokenB !== '' && tokenA !== 'origin' && tokenB !== 'origin';
+      const out = { ...base, factory: factoryValid ? factory : '', reservesZero };
+      if (!tokensSet) {
+        return { ...out, error: 'pool_tokens_not_set' };
+      }
+      if (!factoryValid) {
+        return { ...out, error: 'pool_factory_unset' };
+      }
+      // Probe stored factory: if it has no bytecode (wrong addr or undo deploy),
+      // contract_call throws with "bytecode not found". If factory doesn't
+      // implement `validate_initial_price`, it reverts. Either failure means
+      // the pool's add_liquidity will revert with "equilibrium price check failed".
+      try {
+        const probeResult = await this.contractView<unknown>(factory, 'validate_initial_price', [tokenA, tokenB, '1000000', '1000000']);
+        const inner = probeResult && typeof probeResult === 'object'
+          ? (probeResult as Record<string, unknown>).result
+          : probeResult;
+        out.factoryOk = inner === true || inner === 'true' || inner === 1;
+      } catch {
+        return { ...out, factoryOk: false, error: 'factory_callback_invalid' };
+      }
+      out.tokensOk = true;
+      out.ok = out.factoryOk;
+      if (!out.ok) {
+        out.error = out.error || 'factory_callback_returns_false';
+      }
+      return out;
+    } catch (e) {
+      const result = { ...base, error: e instanceof Error ? e.message : 'probe_failed' };
+      // [V9-PERF] Cache the resolved result (including error) so we don't keep
+      // hitting a broken factory every 10s.
+      this._poolSupportCache.set(poolAddress, { result, ts: Date.now() });
+      return result;
+    }
+  }
+
+  /** [V9-PERF] Invalidate cached pool-support probes (e.g. on network switch). */
+  clearPoolSupportCache(): void {
+    this._poolSupportCache.clear();
+  }
+
   async getPoolInfo(poolAddress: string): Promise<{ tokenA: string; tokenB: string; reserveA: string; reserveB: string; totalLP: string; active: boolean }> {
     if (!this.isValidOctraAddress(poolAddress)) {
       throw new Error('Invalid pool address');

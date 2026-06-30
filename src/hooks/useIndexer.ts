@@ -1,13 +1,18 @@
 import { useState, useEffect, useRef } from 'react';
 import { INDEXER_URL } from '../types';
+import {
+  probeLocalIndexer,
+  isAllowedIndexerUrl,
+  isIndexerMainnetBuild,
+} from '../services/indexerProbe';
 
-// [V7-SECURITY-FIX] Timeout wrapper for indexer fetch
+// [V7-SECURITY-FIX] Timeout wrapper for indexer fetch (10 s default for live
+// reads — health and prices are short reads).
 async function fetchWithTimeout(url: string, timeoutMs = 10000): Promise<Response> {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { signal: controller.signal });
-    return res;
+    return await fetch(url, { signal: controller.signal });
   } finally {
     clearTimeout(id);
   }
@@ -24,67 +29,73 @@ interface IndexerState {
   loading: boolean;
 }
 
+// [DEVNET-LOCAL-FIRST] Two-tier indexer URL resolution:
+//   1. Devnet only: probe http://localhost:3123/health with a tight 1.5 s
+//      timeout. If alive, use it (loopback HTTP is allowed by the carve-out
+//      in isAllowedIndexerUrl + by CSP).
+//   2. Otherwise: fall through to the configured INDEXER_URL. The H-5 guard
+//      still applies via isAllowedIndexerUrl — https anywhere, http only on
+//      loopback, http on public hosts is rejected.
+//   3. If neither resolves, return null and the hook fails closed. The chart
+//      stays hidden; the rest of the app keeps working via rpc + DexScreener.
+async function resolveIndexerUrl(): Promise<string | null> {
+  if (!isIndexerMainnetBuild()) {
+    const local = await probeLocalIndexer(1500);
+    if (local) return local;
+  }
+  if (INDEXER_URL && isAllowedIndexerUrl(INDEXER_URL)) {
+    return INDEXER_URL;
+  }
+  return null;
+}
+
 export function useIndexer(): IndexerState {
   const [state, setState] = useState<IndexerState>({ available: false, prices: [], loading: true });
   const mountedRef = useRef(true);
+  // Cache the winning URL across visibility events — never re-probe on tab
+  // focus. Restarting the local indexer requires a manual page refresh.
+  const resolvedUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
-    // [SECURITY] FM-7: Use a local cancelled flag in addition to mountedRef
     let cancelled = false;
-    let healthInterval: ReturnType<typeof setInterval>;
+    let healthInterval: ReturnType<typeof setInterval> | undefined;
 
-    async function checkHealth() {
-      // [V7-SECURITY-FIX] Enforce HTTPS for indexer URL.
-      // [AUDIT-FIX H-5] Removed the http://localhost / http://127.0.0.1 carve-out:
-      // those resolve to the visitor's own machine and are mixed-content on HTTPS origins.
-      // Local dev should set EVERESTSWAP_DEVNET_INDEXER_URL to an HTTPS tunnel or run the indexer over HTTPS.
-      if (INDEXER_URL && !INDEXER_URL.startsWith('https://')) {
-        if (!cancelled && mountedRef.current) setState({ available: false, prices: [], loading: false });
-        return;
-      }
+    async function poll(url: string): Promise<void> {
+      if (cancelled || !mountedRef.current) return;
       try {
-        const res = await fetchWithTimeout(`${INDEXER_URL}/health`);
+        const hr = await fetchWithTimeout(`${url}/health`, 5000);
         if (cancelled || !mountedRef.current) return;
-        if (!res.ok) throw new Error('not ok');
-        const data = await res.json();
+        if (!hr.ok) throw new Error('not ok');
+        const hd = await hr.json();
         if (cancelled || !mountedRef.current) return;
-        if (data.status === 'ok') {
-          const pricesRes = await fetchWithTimeout(`${INDEXER_URL}/api/prices`);
+        if (hd?.status === 'ok') {
+          const pricesRes = await fetchWithTimeout(`${url}/api/prices`, 8000);
           if (cancelled || !mountedRef.current) return;
-          const prices: PricePoint[] = pricesRes.ok ? await pricesRes.json() : [];
-          if (cancelled || !mountedRef.current) return;
-          setState({ available: true, prices, loading: false });
-          if (cancelled || !mountedRef.current) return;
-          healthInterval = setInterval(async () => {
-            if (cancelled || !mountedRef.current) {
-              clearInterval(healthInterval);
-              return;
-            }
-            try {
-              const hr = await fetchWithTimeout(`${INDEXER_URL}/health`);
-              const hd = await hr.json();
-              if (cancelled || !mountedRef.current) return;
-              if (hd.status === 'ok') {
-                const priceResponse = await fetchWithTimeout(`${INDEXER_URL}/api/prices`);
-                const pp: PricePoint[] = priceResponse.ok ? await priceResponse.json() : [];
-                if (!cancelled && mountedRef.current) setState(s => ({ ...s, prices: pp }));
-              } else {
-                if (!cancelled && mountedRef.current) setState(s => ({ ...s, available: false }));
-              }
-            } catch {
-              if (!cancelled && mountedRef.current) setState(s => ({ ...s, available: false }));
-            }
-          }, 30000);
+          const pp: PricePoint[] = pricesRes.ok ? await pricesRes.json() : [];
+          if (!cancelled && mountedRef.current) setState({ available: true, prices: pp, loading: false });
         } else {
           if (!cancelled && mountedRef.current) setState({ available: false, prices: [], loading: false });
         }
       } catch {
-        if (!cancelled && mountedRef.current) setState({ available: false, prices: [], loading: false });
+        if (!cancelled && mountedRef.current) setState(s => ({ ...s, available: false }));
       }
     }
 
-    checkHealth();
+    (async () => {
+      const resolvedUrl = await resolveIndexerUrl();
+      if (cancelled || !mountedRef.current) return;
+      resolvedUrlRef.current = resolvedUrl;
+      if (!resolvedUrl) {
+        // Neither local nor public indexer reachable — fail closed (chart
+        // hidden, app keeps working via rpc + DexScreener).
+        setState({ available: false, prices: [], loading: false });
+        return;
+      }
+      await poll(resolvedUrl);
+      if (cancelled || !mountedRef.current) return;
+      healthInterval = setInterval(() => { void poll(resolvedUrl); }, 30000);
+    })();
 
     return () => {
       // [SECURITY] FM-7: Set cancelled flag and clear interval on unmount
@@ -94,24 +105,24 @@ export function useIndexer(): IndexerState {
     };
   }, []);
 
-  // [SECURITY] FM-12: Refresh when tab becomes visible (catches missed updates
-  // when user returns from another tab/wallet)
+  // [SECURITY] FM-12: Refresh when tab becomes visible. Only re-polls the
+  // already-resolved URL — does NOT re-probe localhost (cache holds the
+  // result for the page session).
   useEffect(() => {
     const onVisible = () => {
-      if (document.visibilityState === 'visible' && mountedRef.current) {
-        // Trigger a re-check by dispatching a custom event consumed by the hook above
-        // (we simply re-fetch health; safe and cheap)
-        fetchWithTimeout(`${INDEXER_URL}/health`, 5000)
-          .then(r => r.json())
-          .then(hd => {
-            if (mountedRef.current && hd?.status === 'ok') {
-              setState(s => ({ ...s, available: true }));
-            } else if (mountedRef.current) {
-              setState(s => ({ ...s, available: false }));
-            }
-          })
-          .catch(() => { if (mountedRef.current) setState(s => ({ ...s, available: false })); });
-      }
+      if (document.visibilityState !== 'visible' || !mountedRef.current) return;
+      const url = resolvedUrlRef.current;
+      if (!url) return;
+      fetchWithTimeout(`${url}/health`, 5000)
+        .then(r => r.json())
+        .then(hd => {
+          if (mountedRef.current && hd?.status === 'ok') {
+            setState(s => ({ ...s, available: true }));
+          } else if (mountedRef.current) {
+            setState(s => ({ ...s, available: false }));
+          }
+        })
+        .catch(() => { if (mountedRef.current) setState(s => ({ ...s, available: false })); });
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
