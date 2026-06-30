@@ -23,7 +23,7 @@ export const OCT_TOKEN: TokenInfo = {
 };
 
 export const WOCT_TOKEN: TokenInfo = {
-  address: import.meta.env.EVERESTSWAP_DEVNET_WOCT_ADDRESS || 'octE7bttbCKJLQskNzHs8MiqCXDjuF2k1JdADv44axxA8LK',
+  address: import.meta.env.EVERESTSWAP_DEVNET_WOCT_ADDRESS || 'octLtzi5z7Ls6BFdrBgdGQKiqBKxDPojpfHLpWhHfbDbF8c',
   symbol: 'WOCT',
   name: 'Wrapped OCT',
   decimals: 6,
@@ -37,11 +37,11 @@ export const OES_TOKEN: TokenInfo = {
 };
 
 export const CONTRACTS = {
-  factory: import.meta.env.EVERESTSWAP_DEVNET_FACTORY_ADDRESS || 'octFmVqADVjj8v1WSr4ex6EJd2TPRf1JjUVHb3tK29YTXTV',
-  pool: import.meta.env.EVERESTSWAP_DEVNET_POOL_ADDRESS || 'octFh3NNUj2JmAorPcrLfcy4bzf5tdk88qDCdFnmjHt12X3',
-  router: import.meta.env.EVERESTSWAP_DEVNET_ROUTER_ADDRESS || 'octFxNmmEQ9VbnefP9zGGhyPexsWnU7CnHMTB3vxPubNyZG',
+  factory: import.meta.env.EVERESTSWAP_DEVNET_FACTORY_ADDRESS || 'octF2kc1Spgxo6BsUazFrg4gCYUMLffEPbcReg6SmmApa2F',
+  pool: import.meta.env.EVERESTSWAP_DEVNET_POOL_ADDRESS || 'oct8KN8bSHrNyBjRWt5GPY2RacS31Vwgr3Ga4ZXXGsJcGUe',
+  router: import.meta.env.EVERESTSWAP_DEVNET_ROUTER_ADDRESS || 'octAAy94fnLmCavamhcL3LVHB7pa2amxv9By53UqNGMLDgr',
   oes: import.meta.env.EVERESTSWAP_DEVNET_OES_ADDRESS || 'oct9LgGSpkrqbpWPQpYervyryzDtbGYph2hHvcBi9ZppNvD',
-  woct: import.meta.env.EVERESTSWAP_DEVNET_WOCT_ADDRESS || 'octE7bttbCKJLQskNzHs8MiqCXDjuF2k1JdADv44axxA8LK',
+  woct: import.meta.env.EVERESTSWAP_DEVNET_WOCT_ADDRESS || 'octLtzi5z7Ls6BFdrBgdGQKiqBKxDPojpfHLpWhHfbDbF8c',
 } as const;
 
 // [V7-FIX] Explorer URL fully configurable via env vars
