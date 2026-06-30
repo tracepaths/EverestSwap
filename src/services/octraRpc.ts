@@ -308,16 +308,27 @@ export class OctraRpc {
   }
 
   // [SECURITY] F-1: Cap loops to prevent DoS via huge nextId/count from malicious pool
-  // [V7-FIX] Use user's actual count (not nextId) to bound loop. nextId can be
-  // much larger than user's count if many other users have positions.
-  // Cap at 5000 (reasonable upper bound for active user positions).
+  // [BUG-FIX] Position IDs are globally sequential across ALL users, not per-user.
+  // A user's count=1 does NOT mean their position is at ID 1 — it could be at ID 500
+  // if 499 other users created positions first. We must search up to the global
+  // next_position_id, not count*2. Use count as the stop condition (found enough).
+  // Cap at 5000 to prevent DoS against a pool with massive position history.
   async getPositions(poolAddress: string, userAddress: string): Promise<LpPosition[]> {
     const count = await this.getPositionCount(poolAddress, userAddress);
-    // Bound loop by user's count * safety factor (allow some deleted positions)
-    const maxIterations = Math.min(Math.max(count * 2, 1), 5000);
+    if (count === 0) return [];
+    // Get the global next position ID (upper bound for search)
+    let maxId: number;
+    try {
+      maxId = await this.getNextPositionId(poolAddress);
+    } catch {
+      // Fallback: if we can't get next_position_id, use count * 100 as a heuristic
+      maxId = count * 100;
+    }
+    // Cap at 5000 to prevent DoS
+    const upperBound = Math.min(maxId, 5001);
     const positions: LpPosition[] = [];
     // [SECURITY] FM-8: Skip position 0 (contract doesn't have position 0)
-    for (let id = 1; id <= maxIterations && positions.length < count; id++) {
+    for (let id = 1; id < upperBound && positions.length < count; id++) {
       const position = await this.getPosition(poolAddress, id);
       if (position.owner === userAddress && position.liquidity !== '0') {
         positions.push(position);

@@ -216,7 +216,11 @@ function LiquidityPage() {
         if (mountedRef.current && pool?.address === targetPoolAddr) setTotalLockedLp(locked);
       } catch { /* noop */ }
     }
-  }, [rpc, isConnected, walletAddress, pool, selectedPositionId]);
+  // [BUG-FIX] Remove selectedPositionId from deps — it caused loadPoolInfo to recreate
+  // every time user selects a position, triggering interval reset every 10s.
+  // selectedPositionId state is set inside this function (first-time), no circular dep.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rpc, isConnected, walletAddress, pool]);
 
   // [V7-FIX] Split into two effects: one for initial load, one for periodic refresh
   // Avoids re-creating interval on every pool/position change
@@ -243,7 +247,8 @@ function LiquidityPage() {
     }
   }, [amountA, reserveA, reserveB, isEmptyPool, validTokenA.decimals, validTokenB.decimals, userEditedB]);
 
-  const poolShare = totalLP !== '0' && lpBalance !== '0'
+  // [BUG-FIX] Guard against BigInt division by zero: totalLP could be '0' for empty pool
+  const poolShare = totalLP !== '0' && lpBalance !== '0' && BigInt(totalLP) > 0n
     ? Number(BigInt(lpBalance) * 10000n / BigInt(totalLP)) / 100
     : 0;
 
@@ -279,16 +284,27 @@ function LiquidityPage() {
         addToast('error', 'Enter a valid amount for ' + validTokenA.symbol);
         return;
       }
-      if (isEmptyPool && (!/^\d+(\.\d+)?$/.test(trimmedB) || Number(trimmedB) <= 0)) {
-        addToast('error', 'Enter a valid amount for ' + validTokenB.symbol);
-        return;
+      // [BUG-FIX] For initial liquidity, both amounts must be explicitly provided by user
+      if (isEmptyPool) {
+        if (!/^\d+(\.\d+)?$/.test(trimmedB) || Number(trimmedB) <= 0) {
+          addToast('error', 'Enter a valid amount for ' + validTokenB.symbol + ' (initial liquidity requires both amounts)');
+          return;
+        }
       }
       setLoading(true);
       setAddStep({ type: 'granting_a' });
       toastId = addToast('pending', 'Add Liquidity in progress...');
 
       const rawA = parseUnits(trimmedA, validTokenA.decimals);
-      const rawB = parseUnits(trimmedB, validTokenB.decimals);
+      // [BUG-FIX] For non-empty pool, use auto-computed amountB. Fallback safely.
+      const rawB = isEmptyPool
+        ? parseUnits(trimmedB, validTokenB.decimals)
+        : (amountB && amountB !== '0'
+            ? parseUnits(amountB, validTokenB.decimals)
+            : parseUnits(trimmedB, validTokenB.decimals));
+
+      if (rawA === '0' || rawA === '') throw new Error(`Amount for ${validTokenA.symbol} is too small`);
+      if (rawB === '0' || rawB === '') throw new Error(`Amount for ${validTokenB.symbol} is too small`);
 
       let lockDuration = 0;
       if (lockOption === '30d') {
@@ -307,7 +323,8 @@ function LiquidityPage() {
       const epochInfo = await rpc.call<{ epoch_id: number }>('epoch_current');
       const deadline = (epochInfo?.epoch_id || 0) + 300;
 
-      let minLp = '1001';
+      // [BUG-FIX] For initial liquidity (isEmptyPool), use minLp='1'
+      let minLp = '1';
       const GAS_BUFFER = 10000n;
       const checkBalance = (raw: bigint, bal: string, symbol: string, isNative: boolean) => {
         if (bal === '0' || bal === '') return;
@@ -318,7 +335,7 @@ function LiquidityPage() {
       checkBalance(BigInt(rawA), tokenABalance, validTokenA.symbol, validTokenA.address === '');
       checkBalance(BigInt(rawB), tokenBBalance, validTokenB.symbol, validTokenB.address === '');
 
-      if (totalLP !== '0' && reserveA !== '0' && reserveB !== '0') {
+      if (!isEmptyPool && totalLP !== '0' && reserveA !== '0' && reserveB !== '0') {
         const lpFromA = (BigInt(rawA) * BigInt(totalLP)) / BigInt(reserveA);
         const lpFromB = (BigInt(rawB) * BigInt(totalLP)) / BigInt(reserveB);
         const lpEstimate = lpFromA < lpFromB ? lpFromA : lpFromB;
@@ -368,7 +385,10 @@ function LiquidityPage() {
         timestamp: Date.now(),
         status: 'success',
       });
+      // [BUG-FIX] Reset both amounts and userEditedB
       setAmountA('');
+      setAmountB('');
+      setUserEditedB(false);
       loadPoolInfo();
       refreshBalance();
     } catch (e) {
@@ -672,6 +692,10 @@ function LiquidityPage() {
             <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)]">
               <div className="flex justify-between items-center mb-2">
                 <span className="text-xs text-[var(--app-muted)]">{validTokenB.symbol}</span>
+                {/* [BUG-FIX] Show helper hint for initial liquidity */}
+                {isEmptyPool && (
+                  <span className="text-xs text-[var(--app-blue-3)] font-medium">Set initial price ratio</span>
+                )}
               </div>
               <div className="flex items-center gap-3">
                 <input
@@ -679,10 +703,15 @@ function LiquidityPage() {
                   inputMode="decimal"
                   value={amountB}
                   // [SECURITY] F-1: Sanitize input
-                  onChange={e => isEmptyPool ? (setAmountB(sanitizeNumericInput(e.target.value)), setUserEditedB(true)) : undefined}
+                  // [BUG-FIX] Use proper conditional onChange: avoid comma operator pattern
+                  onChange={isEmptyPool ? (e => {
+                    const sanitized = sanitizeNumericInput(e.target.value);
+                    setAmountB(sanitized);
+                    setUserEditedB(true);
+                  }) : undefined}
                   readOnly={!isEmptyPool}
-                  placeholder="0.0"
-                  className="flex-1 bg-transparent text-2xl font-mono outline-none placeholder-[var(--app-muted-2)]"
+                  placeholder={isEmptyPool ? '0.0 (set initial price)' : '0.0'}
+                  className={`flex-1 bg-transparent text-2xl font-mono outline-none placeholder-[var(--app-muted-2)] ${!isEmptyPool ? 'opacity-70' : ''}`}
                 />
                 <span className="font-medium px-3 py-1.5 bg-[var(--app-hover)] rounded-lg">{validTokenB.symbol}</span>
               </div>
@@ -695,9 +724,10 @@ function LiquidityPage() {
                <div className="flex justify-between text-[var(--app-muted)]">
                  <span>Share of Pool</span>
                  <span>
-                   {reserveA !== '0' && amountA && amountA !== '0'
+                   {/* [BUG-FIX] Guard BigInt division by zero for empty pool (reserveA = '0') */}
+                   {!isEmptyPool && reserveA !== '0' && BigInt(reserveA) > 0n && amountA && amountA !== '0'
                      ? `${((BigInt(parseUnits(amountA, validTokenA.decimals)) * 100n) / BigInt(reserveA)).toString()}%`
-                     : '0%'}
+                     : isEmptyPool ? '100%' : '0%'}
                  </span>
                </div>
             </div>

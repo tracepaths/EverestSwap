@@ -351,6 +351,25 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
 
       await rpc.waitForReceipt(regTxHash, 60);
 
+      // [BUG-FIX] Call set_factory on the newly deployed pool so that
+      // validate_initial_price (called during add_liquidity) uses the real factory
+      // address instead of `origin` (the constructor's placeholder).
+      // Without this, the equilibrium price guard call goes to origin and fails silently,
+      // or could route to an unexpected contract in edge cases.
+      try {
+        const setFactoryHash = await walletService.callContract({
+          contract: poolAddress,
+          method: 'set_factory',
+          params: [factoryAddr],
+          rpc,
+        });
+        await rpc.waitForReceipt(setFactoryHash, 60);
+      } catch (sfErr) {
+        // set_factory is a best-effort step — if it fails (e.g. already set),
+        // log and continue. Pool creation can still succeed.
+        console.warn('[PoolPage] set_factory failed (non-fatal):', sfErr instanceof Error ? sfErr.message : String(sfErr));
+      }
+
       // [V7-SECURITY-FIX] Guard against null meta during initial liquidity
       const rawInitA = initAmountA && metaA ? parseUnits(initAmountA, metaA.decimals) : null;
       const rawInitB = initAmountB && metaB ? parseUnits(initAmountB, metaB.decimals) : null;
@@ -389,11 +408,14 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
         // [V7-FIX] Use chain epoch (not unix timestamp) for deadline
         const epochInfo = await rpc.call<{ epoch_id: number }>('epoch_current');
         const deadline = (epochInfo?.epoch_id || 0) + 300;
-        // [V7-FIX] minLp = '1001' for initial pool (contract burns 1000 LP)
+        // [BUG-FIX] Use minLp='1' for initial pool. The contract enforces its own
+        // minimum_liquidity (burns 1000 LP). Using '1001' can cause 'min_lp not satisfied'
+        // if sqrt(rawA * rawB) is between 1001 and 2001. Using '1' lets the contract
+        // do its own minimum check and accept any valid initial liquidity.
         const addHash = await walletService.callContract({
           contract: poolAddress,
           method: 'add_liquidity',
-          params: [rawInitA, rawInitB, '1001', String(deadline), '0'],
+          params: [rawInitA, rawInitB, '1', String(deadline), '0'],
           rpc,
         });
         await rpc.waitForReceipt(addHash, 60);
