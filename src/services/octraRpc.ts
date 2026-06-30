@@ -518,7 +518,11 @@ export class OctraRpc {
     if (cached && Date.now() - cached.ts < OctraRpc.POOL_SUPPORT_TTL_MS) {
       return cached.result;
     }
-    const base = { ok: false, factory: '', factoryOk: false, tokensOk: false, reservesZero: false };
+    // [TYPE-FIX] `out.error = …` below requires `base` (and therefore every
+    // `{ ...base, ... }` / `{ ...out, ... }` spread) to carry an `error?: string`
+    // field. Cast `undefined` to `string | undefined` so TS infers the optional
+    // string field rather than widening to `{}` (which would defeat the type).
+    const base = { ok: false, factory: '', factoryOk: false, tokensOk: false, reservesZero: false, error: undefined as string | undefined };
     try {
       const raw = await this.contractView<unknown>(poolAddress, 'get_pool_info', []);
       if (!raw || typeof raw !== 'object') {

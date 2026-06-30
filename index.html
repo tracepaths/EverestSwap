@@ -4,6 +4,20 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      CSP connect-src note (security reviewers — DO NOT tighten without coordinating):
+
+      `http://localhost:3123` and `http://127.0.0.1:3123` are REQUIRED by the
+      DEVNET-LOCAL-FIRST indexer probe. See src/hooks/useIndexer.ts and
+      src/services/indexerProbe.ts. The probe is gated on
+      `EVERESTSWAP_NETWORK !== 'mainnet'` so production builds never USE
+      these URLs, but the carve-out must remain open for dev builds.
+
+      Removing either host will silently break local-dev price charts with
+      no other failure mode (chart just won't appear). If you need to harden
+      CSP, restrict the carve-out to dev builds via a build-time CSP injection
+      rather than editing this static meta tag.
+    -->
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://*.octrascan.io https://*.octra.network http://localhost:3123 http://127.0.0.1:3123; img-src 'self' data:; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests;" />
     <meta http-equiv="X-Content-Type-Options" content="nosniff" />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
