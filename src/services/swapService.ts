@@ -1,5 +1,5 @@
 // [V7-PASS9] C-9 fix: include tax + auto-burn deduction in output calculation.
-// TokenV2 with tax_bps/10000 + auto_burn_bps/10000 fees charges the recipient,
+// Token with tax_bps/10000 + auto_burn_bps/10000 fees charges the recipient,
 // so user receives `out * (1 - (tax + auto_burn) / 10000)` of the AMM-computed output.
 export function calculateOutput(
   amountIn: string,

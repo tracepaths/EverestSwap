@@ -36,12 +36,21 @@ export const OES_TOKEN: TokenInfo = {
   decimals: 6,
 };
 
+export const DOGO_TOKEN: TokenInfo = {
+  address: import.meta.env.EVERESTSWAP_DEVNET_DOGO_ADDRESS || 'octJ4mZP8bKidAq4VAy5VrcUwgJTh9Dzop5M4fkKqs79J3k',
+  symbol: 'DOGO',
+  name: 'DOGO',
+  decimals: 18,
+};
+
 export const CONTRACTS = {
   factory: import.meta.env.EVERESTSWAP_DEVNET_FACTORY_ADDRESS || 'octF2kc1Spgxo6BsUazFrg4gCYUMLffEPbcReg6SmmApa2F',
   pool: import.meta.env.EVERESTSWAP_DEVNET_POOL_ADDRESS || 'octH8LDfDgQwZYumaSvu3fbdkm6uVNy3BAxJzqNHqsCGm4q',
   router: import.meta.env.EVERESTSWAP_DEVNET_ROUTER_ADDRESS || 'octAAy94fnLmCavamhcL3LVHB7pa2amxv9By53UqNGMLDgr',
   oes: import.meta.env.EVERESTSWAP_DEVNET_OES_ADDRESS || 'oct9LgGSpkrqbpWPQpYervyryzDtbGYph2hHvcBi9ZppNvD',
   woct: import.meta.env.EVERESTSWAP_DEVNET_WOCT_ADDRESS || 'octLtzi5z7Ls6BFdrBgdGQKiqBKxDPojpfHLpWhHfbDbF8c',
+  dogo: import.meta.env.EVERESTSWAP_DEVNET_DOGO_ADDRESS || 'octJ4mZP8bKidAq4VAy5VrcUwgJTh9Dzop5M4fkKqs79J3k',
+  dogoPool: import.meta.env.EVERESTSWAP_DEVNET_DOGO_POOL_ADDRESS || 'oct764KAUBycN5PiqakWCPFvbzWsRJtG4kbhGkVr6KKawpV',
 } as const;
 
 // [V7-FIX] Explorer URL fully configurable via env vars

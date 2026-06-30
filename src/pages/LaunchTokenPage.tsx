@@ -291,8 +291,8 @@ function LaunchTokenPage() {
     try {
       setStep({ type: 'compiling' });
 
-      const sourceResp = await fetch('/contracts/TokenV2.aml');
-      if (!sourceResp.ok) throw new Error('Failed to load TokenV2.aml source');
+      const sourceResp = await fetch('/contracts/Token.aml');
+      if (!sourceResp.ok) throw new Error('Failed to load Token.aml source');
       const source = await sourceResp.text();
 
       const compileResult = await rpc.compileAml(source);
@@ -359,9 +359,9 @@ function LaunchTokenPage() {
 
   const stepLabel = (): string => {
     switch (step.type) {
-      case 'compiling': return 'Compiling TokenV2 contract...';
+      case 'compiling': return 'Compiling Token contract...';
       case 'computing_address': return 'Computing token address...';
-      case 'deploying': return 'Deploying TokenV2 (sign transaction)...';
+      case 'deploying': return 'Deploying Token (sign transaction)...';
       case 'done': return 'Token launched successfully!';
       case 'error': return 'Error: ' + step.message;
       default: return '';

@@ -133,7 +133,7 @@ export class OctraRpc {
     throw new Error('Failed to parse reserves for pool ' + poolAddress);
   }
 
-  // [V7-PASS9] H-13: getTokenStatus fetches pause/blacklist/tax state from TokenV2.
+  // [V7-PASS9] H-13: getTokenStatus fetches pause/blacklist/tax state from Token.
   // Returns a partial status object; missing view fns are treated as "not enabled".
   async getTokenStatus(tokenAddress: string, userAddress?: string): Promise<{
     paused: boolean;

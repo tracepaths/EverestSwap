@@ -520,7 +520,7 @@ function SwapPage() {
   }, [fromAmount, reserveIn, reserveOut, fromToken, toToken, mode, poolFee.num, poolFee.denom, outputTaxBps, outputAutoBurnBps, isMultiHop, multiHopPath, multiHopPoolAddresses]);
 
   // [V7-PASS9] C-9: fetch tax + auto-burn from output token contract
-  // (TokenV2 exposes get_tax_bps / get_auto_burn_bps view functions)
+  // (Token exposes get_tax_bps / get_auto_burn_bps view functions)
   useEffect(() => {
     let cancelled = false;
     async function fetchFees() {
