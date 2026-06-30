@@ -38,7 +38,7 @@ export const OES_TOKEN: TokenInfo = {
 
 export const CONTRACTS = {
   factory: import.meta.env.EVERESTSWAP_DEVNET_FACTORY_ADDRESS || 'octF2kc1Spgxo6BsUazFrg4gCYUMLffEPbcReg6SmmApa2F',
-  pool: import.meta.env.EVERESTSWAP_DEVNET_POOL_ADDRESS || 'oct8KN8bSHrNyBjRWt5GPY2RacS31Vwgr3Ga4ZXXGsJcGUe',
+  pool: import.meta.env.EVERESTSWAP_DEVNET_POOL_ADDRESS || 'octH8LDfDgQwZYumaSvu3fbdkm6uVNy3BAxJzqNHqsCGm4q',
   router: import.meta.env.EVERESTSWAP_DEVNET_ROUTER_ADDRESS || 'octAAy94fnLmCavamhcL3LVHB7pa2amxv9By53UqNGMLDgr',
   oes: import.meta.env.EVERESTSWAP_DEVNET_OES_ADDRESS || 'oct9LgGSpkrqbpWPQpYervyryzDtbGYph2hHvcBi9ZppNvD',
   woct: import.meta.env.EVERESTSWAP_DEVNET_WOCT_ADDRESS || 'octLtzi5z7Ls6BFdrBgdGQKiqBKxDPojpfHLpWhHfbDbF8c',
