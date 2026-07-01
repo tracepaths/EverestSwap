@@ -268,11 +268,20 @@ export class WalletService {
       const canonicalJson = JSON.stringify(canonicalData);
       const sigResult = await this.signMessage(canonicalJson);
 
+      // [V9] Some wallet accounts return publicKey, others don't.
+      // Fetch it explicitly so the chain can verify the signature.
+      const publicKey = sigResult.publicKey || await this.getPublicKey();
+
+      // Verify wallet hasn't changed during signing
+      if (this._address !== addressSnapshot) {
+        throw new Error('Wallet changed during deploy — aborting');
+      }
+
       const signedTx: Record<string, unknown> = {
         ...canonicalData,
         signature: sigResult.signature,
       };
-      if (sigResult.publicKey) signedTx.public_key = sigResult.publicKey;
+      if (publicKey) signedTx.public_key = publicKey;
 
       // Verify wallet hasn't changed during signing
       if (this._address !== addressSnapshot) {
@@ -324,11 +333,12 @@ export class WalletService {
           if (this._address !== addressSnapshot) {
             throw new Error('Wallet changed during deploy retry — aborting', { cause: e });
           }
+          const retryPublicKey = retrySig.publicKey || await this.getPublicKey();
           const retrySignedTx: Record<string, unknown> = {
             ...retryData,
             signature: retrySig.signature,
           };
-          if (retrySig.publicKey) retrySignedTx.public_key = retrySig.publicKey;
+          if (retryPublicKey) retrySignedTx.public_key = retryPublicKey;
           return await submitSigned(retrySignedTx as Record<string, unknown>);
         }
         throw e;
