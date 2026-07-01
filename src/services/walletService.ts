@@ -245,46 +245,34 @@ export class WalletService {
       this.setPendingNonce(addressSnapshot, nonce);
 
       const ou = params.feeOu || '100000';
-      let now = Date.now() / 1000;
-      // Ensure timestamp has a fractional part so JSON.stringify always
-      // produces a decimal point, matching the canonical JSON format.
-      if (now % 1 === 0) now += 0.000001;
-      const tsStr = now.toString();
+      let timestamp = Date.now() / 1000;
+      // Ensure fractional part — chain requires float timestamps
+      if (timestamp % 1 === 0) timestamp += 0.000001;
 
-      // [FIX] Build canonical JSON manually and sign via octra_signMessage.
-      // The SDK's signTransaction validates amount > 0, which rejects deploy txs (amount='0').
-      // Manual signing bypasses this validation.
-      const json_escape = (s: string) =>
-        s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-         .replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
-      let canonical = `{"from":"${json_escape(addressSnapshot)}"`;
-      canonical += `,"to_":"${json_escape(targetAddress)}"`;
-      canonical += `,"amount":"0"`;
-      canonical += `,"nonce":${nonce}`;
-      canonical += `,"ou":"${json_escape(ou)}"`;
-      canonical += `,"timestamp":${tsStr}`;
-      canonical += `,"op_type":"deploy"`;
-      canonical += `,"encrypted_data":"${json_escape(params.bytecode)}"`;
-      if (params.message) {
-        canonical += `,"message":"${json_escape(params.message)}"`;
-      }
-      canonical += `}`;
-
-      const sigResult = await this.signMessage(canonical);
-
-      const signedTx: Record<string, unknown> = {
+      // Build canonical fields in the exact order the chain expects:
+      // from, to_, amount, nonce, ou, timestamp, op_type, encrypted_data, message?
+      const canonicalData: Record<string, unknown> = {
         from: addressSnapshot,
         to_: targetAddress,
         amount: '0',
         nonce,
         ou,
-        timestamp: now,
+        timestamp,
         op_type: 'deploy',
         encrypted_data: params.bytecode,
+      };
+      if (params.message) canonicalData.message = params.message;
+
+      // JSON.stringify guarantees the canonical JSON matches the chain's
+      // reconstruction exactly — both use the same algorithm on the same values.
+      const canonicalJson = JSON.stringify(canonicalData);
+      const sigResult = await this.signMessage(canonicalJson);
+
+      const signedTx: Record<string, unknown> = {
+        ...canonicalData,
         signature: sigResult.signature,
       };
       if (sigResult.publicKey) signedTx.public_key = sigResult.publicKey;
-      if (params.message) signedTx.message = params.message;
 
       // Verify wallet hasn't changed during signing
       if (this._address !== addressSnapshot) {
@@ -318,20 +306,29 @@ export class WalletService {
           );
           const retryTargetAddress = retryAddrResult.address;
 
-          // Re-sign with new nonce using manual canonical JSON approach
-          const retryCanonical = `{"from":"${json_escape(addressSnapshot)}","to_":"${json_escape(retryTargetAddress)}","amount":"0","nonce":${retryNonce},"ou":"${json_escape(ou)}","timestamp":${tsStr},"op_type":"deploy","encrypted_data":"${json_escape(params.bytecode)}"${params.message ? `,"message":"${json_escape(params.message)}"` : ''}}`;
-          const retrySig = await this.signMessage(retryCanonical);
+          // Re-sign with new nonce using same JSON.stringify approach
+          const retryData: Record<string, unknown> = {
+            from: addressSnapshot,
+            to_: retryTargetAddress,
+            amount: '0',
+            nonce: retryNonce,
+            ou,
+            timestamp,
+            op_type: 'deploy',
+            encrypted_data: params.bytecode,
+          };
+          if (params.message) retryData.message = params.message;
+          const retryCanonicalJson = JSON.stringify(retryData);
+          const retrySig = await this.signMessage(retryCanonicalJson);
           // Verify wallet hasn't changed during retry signing
           if (this._address !== addressSnapshot) {
             throw new Error('Wallet changed during deploy retry — aborting', { cause: e });
           }
           const retrySignedTx: Record<string, unknown> = {
-            from: addressSnapshot, to_: retryTargetAddress, amount: '0',
-            nonce: retryNonce, ou, timestamp: now, op_type: 'deploy',
-            encrypted_data: params.bytecode, signature: retrySig.signature,
+            ...retryData,
+            signature: retrySig.signature,
           };
           if (retrySig.publicKey) retrySignedTx.public_key = retrySig.publicKey;
-          if (params.message) retrySignedTx.message = params.message;
           return await submitSigned(retrySignedTx as Record<string, unknown>);
         }
         throw e;
