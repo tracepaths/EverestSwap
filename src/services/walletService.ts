@@ -192,16 +192,13 @@ export class WalletService {
     return txHash;
   }
 
-  // [V7-PASS10] CRITICAL-4: Refactored to use SDK's signTransaction + inject bytecode.
-  // The wallet extension's signMessage produced invalid signatures for deploys
-  // with the message field. The signTransaction path uses the wallet's own
-  // canonical-JSON construction which the chain trusts.
+  // [FIX] Use SDK's signTransaction to fix "invalid signature" error on deploy.
+  // The wallet extension builds the canonical JSON internally for signTransaction,
+  // which the chain trusts. Manual canonical JSON + signMessage produces invalid signatures.
   async signAndSubmitDeployTx(
     rpc: OctraRpc,
     params: {
       bytecode: string;
-      // [V7-PASS9] L-13: primary name is contractAddress (works for any contract
-      // type — pool, token, etc.). poolAddress is kept as deprecated alias.
       contractAddress?: string;
       poolAddress?: string;
       feeOu?: string;
@@ -209,19 +206,16 @@ export class WalletService {
       nonce?: number;
     }
   ): Promise<string> {
-    // [V7-PASS9] L-13: resolve address from new or legacy field
     const targetAddress = params.contractAddress ?? params.poolAddress;
     if (!targetAddress) throw new Error('contractAddress or poolAddress required');
     params = { ...params, contractAddress: targetAddress };
-    // [SECURITY] F-1: Snapshot wallet address at the start of the deploy flow.
     const address = this._address;
     if (!address) throw new Error('Not connected');
     const addressSnapshot = address;
 
-    // [V7-PASS10] CRITICAL-2: acquire per-address submit lock
     const releaseLock = await this.acquireSubmitLock(addressSnapshot);
     try {
-      // [V7-PASS8] M-8: if caller pre-fetched the nonce, use it; otherwise fetch fresh
+      // Use pre-fetched nonce or fetch fresh
       let nonce: number;
       if (typeof params.nonce === 'number' && Number.isFinite(params.nonce) && params.nonce > 0) {
         nonce = params.nonce;
@@ -229,99 +223,57 @@ export class WalletService {
         const balance = await rpc.getBalance(addressSnapshot);
         nonce = balance.nonce + 1;
       }
-      // [V7-PASS10] CRITICAL-2: record pending nonce so concurrent tabs see it
       this.setPendingNonce(addressSnapshot, nonce);
 
-      // [FIX] Build canonical JSON manually (matches webcli reference exactly)
-      // and sign via wallet extension — bypasses SDK's isValidAmount which rejects amount='0'
-      const json_escape = (s: string) =>
-        s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-         .replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
-      const now = Date.now() / 1000;
-      const tsStr = now === Math.floor(now) ? now.toFixed(1) : now.toString();
       const ou = params.feeOu || '100000';
-      let canonical = `{"from":"${json_escape(addressSnapshot)}"`;
-      canonical += `,"to_":"${json_escape(targetAddress)}"`;
-      canonical += `,"amount":"0"`;
-      canonical += `,"nonce":${nonce}`;
-      canonical += `,"ou":"${json_escape(ou)}"`;
-      canonical += `,"timestamp":${tsStr}`;
-      canonical += `,"op_type":"deploy"`;
-      canonical += `,"encrypted_data":"${json_escape(params.bytecode)}"`;
-      if (params.message) {
-        canonical += `,"message":"${json_escape(params.message)}"`;
-      }
-      canonical += `}`;
+      const timestamp = Date.now() / 1000;
 
-      const sigResult = await this.signMessage(canonical);
-
-      const signedTx: Record<string, unknown> = {
-        from: addressSnapshot,
-        to_: targetAddress,
+      // Build tx data for SDK's signTransaction — wallet handles canonical JSON internally
+      const txData: Record<string, unknown> = {
+        to: targetAddress,
         amount: '0',
         nonce,
         ou,
-        timestamp: now,
+        timestamp,
         op_type: 'deploy',
         encrypted_data: params.bytecode,
-        signature: sigResult.signature,
       };
-      if (sigResult.publicKey) signedTx.public_key = sigResult.publicKey;
-      if (params.message) signedTx.message = params.message;
+      if (params.message) txData.message = params.message;
 
-      // [SECURITY] F-1: Verify wallet identity hasn't changed during signing
+      const signedTx = await this.sdk.signTransaction(txData as any);
+
+      // Verify wallet hasn't changed during signing
       if (this._address !== addressSnapshot) {
         throw new Error('Wallet changed during deploy — aborting');
       }
 
-      // [V7-PASS10] CRITICAL-4: try submit, retry once on "nonce too low"
-      let submitResult: { tx_hash: string; status: string; nonce: number; ou_cost: string };
+      // Submit with nonce-retry logic
+      const submitSigned = async (tx: Record<string, unknown>): Promise<string> => {
+        const res = await rpc.call<{ tx_hash: string; status: string; nonce: number; ou_cost: string }>('octra_submit', [tx]);
+        if (!res.tx_hash) throw new Error('Submit succeeded but no tx_hash returned');
+        return res.tx_hash;
+      };
+
       try {
-        submitResult = await rpc.call<{ tx_hash: string; status: string; nonce: number; ou_cost: string }>('octra_submit', [signedTx]);
+        return await submitSigned(signedTx as Record<string, unknown>);
       } catch (e) {
         const errMsg = e instanceof Error ? e.message : String(e);
         if (/nonce too low|invalid nonce|nonce.*low/i.test(errMsg)) {
-          // Refetch and retry once with fresh nonce
+          // Refetch nonce and retry once
           const fresh = await rpc.getBalance(addressSnapshot);
-          signedTx.nonce = fresh.nonce + 1;
-          this.setPendingNonce(addressSnapshot, fresh.nonce + 1);
-          // Re-sign with new nonce using same canonical JSON approach
-          let retryCanonical = `{"from":"${json_escape(addressSnapshot)}"`;
-          retryCanonical += `,"to_":"${json_escape(targetAddress)}"`;
-          retryCanonical += `,"amount":"0"`;
-          retryCanonical += `,"nonce":${fresh.nonce + 1}`;
-          retryCanonical += `,"ou":"${json_escape(ou)}"`;
-          retryCanonical += `,"timestamp":${tsStr}`;
-          retryCanonical += `,"op_type":"deploy"`;
-          retryCanonical += `,"encrypted_data":"${json_escape(params.bytecode)}"`;
-          if (params.message) {
-            retryCanonical += `,"message":"${json_escape(params.message)}"`;
-          }
-          retryCanonical += `}`;
-          const retrySigResult = await this.signMessage(retryCanonical);
-          const retryTx: Record<string, unknown> = {
-            from: addressSnapshot,
-            to_: targetAddress,
-            amount: '0',
-            nonce: fresh.nonce + 1,
-            ou,
-            timestamp: now,
-            op_type: 'deploy',
-            encrypted_data: params.bytecode,
-            signature: retrySigResult.signature,
+          const retryNonce = fresh.nonce + 1;
+          this.setPendingNonce(addressSnapshot, retryNonce);
+
+          const retryTxData: Record<string, unknown> = {
+            ...txData,
+            nonce: retryNonce,
           };
-          if (retrySigResult.publicKey) retryTx.public_key = retrySigResult.publicKey;
-          if (params.message) retryTx.message = params.message;
-          submitResult = await rpc.call<{ tx_hash: string; status: string; nonce: number; ou_cost: string }>('octra_submit', [retryTx]);
-        } else {
-          throw e;
+          const retrySignedTx = await this.sdk.signTransaction(retryTxData as any);
+          return await submitSigned(retrySignedTx as Record<string, unknown>);
         }
+        throw e;
       }
-      const txHash = submitResult.tx_hash;
-      if (!txHash) throw new Error('Submit succeeded but no tx_hash returned');
-      return txHash;
     } finally {
-      // [V7-PASS10] CRITICAL-2: always release the lock
       releaseLock();
     }
   }
