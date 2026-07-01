@@ -7,6 +7,7 @@ import {
   getCachedOwner, setCachedOwner,
   getCachedRating, setCachedRating,
 } from './tokenCache';
+import { WOCT_TOKEN } from '../config';
 
 export interface TrustRating {
   rating: number;        // 1-5
@@ -155,8 +156,8 @@ async function getOwner(rpc: OctraRpc, tokenAddress: string): Promise<string> {
 
 async function getLockedLpPct(rpc: OctraRpc, factoryAddress: string, tokenAddress: string): Promise<number> {
   try {
-    // Find pool for token/WOCT pair
-    const poolAddress = await rpc.getPoolAddress(factoryAddress, tokenAddress, '');
+    // Find pool for token/WOCT pair (use WOCT address, not empty string for native)
+    const poolAddress = await rpc.getPoolAddress(factoryAddress, tokenAddress, WOCT_TOKEN.address);
     if (!poolAddress) return 0;
 
     const [totalLocked, totalLp] = await Promise.all([

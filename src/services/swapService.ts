@@ -103,6 +103,25 @@ export function truncateAddress(address: string, start = 6, end = 4): string {
 // [V7-PASS10] MED-13/14: reject scientific notation (1e18) and negative signs.
 // Returns the cleaned string, or empty if input is empty. Returns 'INVALID' if
 // input contains e/E/-/+ (so callers can show a clear error).
+// [FIX] Parse balance_raw (which may be a human-readable decimal string like "1.500000"
+// or a raw integer string like "1500000") into a safe BigInt string.
+// Returns '0' for invalid input.
+export function parseRawBalance(raw: string | undefined | null, decimals: number = 6): string {
+  if (!raw) return '0';
+  const s = raw.trim();
+  if (!s || s === '0') return '0';
+  // Handle decimal string format
+  if (s.includes('.')) {
+    const [intPart, fracPart = ''] = s.split('.');
+    const padded = intPart + fracPart.padEnd(decimals, '0').slice(0, decimals);
+    const cleaned = padded.replace(/^0+/, '') || '0';
+    return cleaned;
+  }
+  // Already raw integer format — validate it's numeric
+  if (!/^\d+$/.test(s)) return '0';
+  return s;
+}
+
 export function sanitizeNumericInput(input: string): string {
   if (!input) return '';
   // Reject scientific notation and negative signs explicitly

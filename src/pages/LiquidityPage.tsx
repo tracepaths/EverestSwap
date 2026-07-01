@@ -481,10 +481,10 @@ function LiquidityPage() {
         rpc.getTotalLpSupply(pool.address),
       ]);
       const freshMinA = freshTotalLP !== '0' && selectedPosition.liquidity !== '0'
-        ? (BigInt(freshReserves.reserveA) * BigInt(selectedPosition.liquidity) / BigInt(freshTotalLP) * 9000n / 10000n).toString()
+        ? (BigInt(freshReserves.reserveA) * BigInt(selectedPosition.liquidity) * 9000n / (BigInt(freshTotalLP) * 10000n)).toString()
         : '1';
       const freshMinB = freshTotalLP !== '0' && selectedPosition.liquidity !== '0'
-        ? (BigInt(freshReserves.reserveB) * BigInt(selectedPosition.liquidity) / BigInt(freshTotalLP) * 9000n / 10000n).toString()
+        ? (BigInt(freshReserves.reserveB) * BigInt(selectedPosition.liquidity) * 9000n / (BigInt(freshTotalLP) * 10000n)).toString()
         : '1';
 
       const epochInfo = await rpc.call<{ epoch_id: number }>('epoch_current');

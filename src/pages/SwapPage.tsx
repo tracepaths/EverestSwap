@@ -242,11 +242,12 @@ function SwapPage() {
         const bal = await rpc.getBalance(walletAddress);
         const raw = bal.balance_raw || bal.balance || '0';
         // [V7-FIX] balance_raw may be human-readable decimal string (e.g. "0.000001")
-        // in some RPC versions. Convert to raw integer if it contains a dot.
+        // in some RPC versions. Parse precisely without float math.
         if (raw.includes('.')) {
-          const num = Number(raw);
-          if (!Number.isFinite(num)) return '0';
-          return BigInt(Math.floor(num * 10 ** token.decimals)).toString();
+          const [intPart, fracPart = ''] = raw.split('.');
+          const padded = intPart + fracPart.padEnd(token.decimals, '0').slice(0, token.decimals);
+          const cleaned = padded.replace(/^0+/, '') || '0';
+          return cleaned;
         }
         return raw;
       } catch { return '0'; }
@@ -480,10 +481,21 @@ function SwapPage() {
             // Call router's view function to get multi-hop output
             const routerAddr = CONTRACTS.router;
             let amountsOut: string | undefined;
+            // [FIX] contractView returns {result: "..."} object — unwrap it
+            const extractResult = (raw: unknown): string | undefined => {
+              if (raw && typeof raw === 'object') {
+                const inner = (raw as Record<string, unknown>).result;
+                if (inner != null && typeof inner !== 'object') return String(inner);
+              }
+              if (raw != null && typeof raw !== 'object') return String(raw);
+              return undefined;
+            };
             if (multiHopPath.length === 3) {
-              amountsOut = await rpc.contractView<string>(routerAddr, 'get_amounts_out_path_3', [amountInBN.toString(), multiHopPath[0], multiHopPath[1], multiHopPath[2]]);
+              const raw = await rpc.contractView<unknown>(routerAddr, 'get_amounts_out_path_3', [amountInBN.toString(), multiHopPath[0], multiHopPath[1], multiHopPath[2]]);
+              amountsOut = extractResult(raw);
             } else if (multiHopPath.length === 4) {
-              amountsOut = await rpc.contractView<string>(routerAddr, 'get_amounts_out_path_4', [amountInBN.toString(), multiHopPath[0], multiHopPath[1], multiHopPath[2], multiHopPath[3]]);
+              const raw = await rpc.contractView<unknown>(routerAddr, 'get_amounts_out_path_4', [amountInBN.toString(), multiHopPath[0], multiHopPath[1], multiHopPath[2], multiHopPath[3]]);
+              amountsOut = extractResult(raw);
             }
             if (amountsOut) {
               setMultiHopEstimatedOutput(amountsOut);
@@ -749,8 +761,8 @@ function SwapPage() {
         if (fromToken.address === '') {
           // [V7-FIX] Pre-check native OCT balance before auto-wrap. Without this,
           // the wrap would fail on-chain and user pays gas for nothing.
-          if (fromBalance !== null && BigInt(rawAmount) > BigInt(fromBalance)) {
-            throw new Error(`Insufficient OCT balance for wrap+swap (have ${formatUnits(fromBalance, 6)} OCT)`);
+          if (freshFromBal !== null && BigInt(rawAmount) > BigInt(freshFromBal)) {
+            throw new Error(`Insufficient OCT balance for wrap+swap (have ${formatUnits(freshFromBal, 6)} OCT)`);
           }
           updateProgress(10, 'Wrapping OCT to WOCT...', false);
           updateToast(toastId, 'pending', 'Step 1/2: Wrapping OCT to WOCT...');
@@ -785,19 +797,29 @@ function SwapPage() {
           const effectiveToToken = toToken.address === '' ? WOCT_TOKEN : toToken;
           const amountInBN = parseUnits(fromAmount.trim(), effectiveFromToken.decimals);
 
-          // Balance check
-          if (fromToken.address !== '' && fromBalance !== null && BigInt(amountInBN) > BigInt(fromBalance)) {
+          // Balance check (use fresh balance, not stale state)
+          if (fromToken.address !== '' && freshFromBal !== null && BigInt(amountInBN) > BigInt(freshFromBal)) {
             throw new Error('Insufficient balance for swap');
           }
 
           // Calculate expected output via router view
-          let expectedOutput: string;
+          // [FIX] contractView returns {result: "..."} object — unwrap it
+          const extractResult = (raw: unknown): string | undefined => {
+            if (raw && typeof raw === 'object') {
+              const inner = (raw as Record<string, unknown>).result;
+              if (inner != null && typeof inner !== 'object') return String(inner);
+            }
+            if (raw != null && typeof raw !== 'object') return String(raw);
+            return undefined;
+          };
+          let expectedOutput: string | undefined;
           if (multiHopPath.length === 3) {
-            expectedOutput = await rpc.contractView<string>(CONTRACTS.router, 'get_amounts_out_path_3', [amountInBN.toString(), multiHopPath[0], multiHopPath[1], multiHopPath[2]]);
+            const raw = await rpc.contractView<unknown>(CONTRACTS.router, 'get_amounts_out_path_3', [amountInBN.toString(), multiHopPath[0], multiHopPath[1], multiHopPath[2]]);
+            expectedOutput = extractResult(raw);
           } else {
-            expectedOutput = await rpc.contractView<string>(CONTRACTS.router, 'get_amounts_out_path_4', [amountInBN.toString(), multiHopPath[0], multiHopPath[1], multiHopPath[2], multiHopPath[3]]);
+            const raw = await rpc.contractView<unknown>(CONTRACTS.router, 'get_amounts_out_path_4', [amountInBN.toString(), multiHopPath[0], multiHopPath[1], multiHopPath[2], multiHopPath[3]]);
+            expectedOutput = extractResult(raw);
           }
-
           if (!expectedOutput || BigInt(expectedOutput) <= 0n) {
             throw new Error('Multi-hop swap returned zero output — pools may be empty');
           }
@@ -907,7 +929,7 @@ function SwapPage() {
         const freshReserveIn = fromIsTokenA ? freshReserves.reserveA : freshReserves.reserveB;
         const freshReserveOut = fromIsTokenA ? freshReserves.reserveB : freshReserves.reserveA;
         const amountInBN = parseUnits(fromAmount.trim(), actualFromToken.decimals);
-        if (fromToken.address !== '' && fromBalance !== null && BigInt(amountInBN) > BigInt(fromBalance)) {
+        if (fromToken.address !== '' && freshFromBal !== null && BigInt(amountInBN) > BigInt(freshFromBal)) {
           throw new Error('Insufficient balance for swap');
         }
         const freshOutput = calculateOutput(amountInBN, freshReserveIn, freshReserveOut, poolFee.num, poolFee.denom, outputTaxBps, outputAutoBurnBps);

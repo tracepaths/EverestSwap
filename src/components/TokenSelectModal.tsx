@@ -269,6 +269,13 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
   function formatBalance(balance: string, decimals: number): string {
     // [V7-SECURITY-FIX] Clamp decimals to safe range
     const safeDecimals = Math.max(0, Math.min(18, decimals));
+    // [FIX] Handle decimal string format (e.g. "1.500000" for native OCT)
+    // Parse precisely without float math to avoid BigInt("1.500000") throwing
+    if (balance.includes('.')) {
+      const [intPart, fracPart = ''] = balance.split('.');
+      const padded = intPart + fracPart.padEnd(safeDecimals, '0').slice(0, safeDecimals);
+      balance = padded.replace(/^0+/, '') || '0';
+    }
     // [V7-FIX] Use BigInt for precision to handle large balances correctly
     try {
       const balanceBN = BigInt(balance);

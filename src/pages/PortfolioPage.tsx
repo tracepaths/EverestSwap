@@ -260,7 +260,13 @@ export default function PortfolioPage() {
       const info = state[token.address] || { rating: 1, votes: 0, hasVoted: false, hasLockedLp: false };
       list.push({ symbol: token.symbol, name: token.name, address: token.address, balance, valueUsd, source: 'wallet', rating: info.rating, votes: info.votes, hasVoted: info.hasVoted, hasLockedLp: info.hasLockedLp });
     }
-    return list.sort((a, b) => Number(b.balance) - Number(a.balance));
+    return list.sort((a, b) => {
+      const ba = BigInt(a.balance || '0');
+      const bb = BigInt(b.balance || '0');
+      if (bb > ba) return 1;
+      if (bb < ba) return -1;
+      return 0;
+    });
   }, [trustedTokens, savedTokens, tokenBalances, assetPrices, decimalsOf, calculateUsdValue, trustVoteState]);
 
   const totalTokens = assets.length;

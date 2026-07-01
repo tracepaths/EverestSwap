@@ -286,11 +286,21 @@ export class WalletService {
           const retryNonce = fresh.nonce + 1;
           this.setPendingNonce(addressSnapshot, retryNonce);
 
+          // CRITICAL: Recompute contract address with the new nonce
+          // The original targetAddress was computed with the old nonce,
+          // but the chain will deploy bytecode at an address derived
+          // from the new nonce. Without this fix, the retry deploys
+          // to a different address than what the caller expects.
+          const retryAddrResult = await rpc.computeContractAddress(
+            params.bytecode, addressSnapshot, retryNonce
+          );
+          const retryTargetAddress = retryAddrResult.address;
+
           // Re-sign with new nonce using manual canonical JSON approach
-          const retryCanonical = `{"from":"${json_escape(addressSnapshot)}","to_":"${json_escape(targetAddress)}","amount":"0","nonce":${retryNonce},"ou":"${json_escape(ou)}","timestamp":${tsStr},"op_type":"deploy","encrypted_data":"${json_escape(params.bytecode)}"${params.message ? `,"message":"${json_escape(params.message)}"` : ''}}`;
+          const retryCanonical = `{"from":"${json_escape(addressSnapshot)}","to_":"${json_escape(retryTargetAddress)}","amount":"0","nonce":${retryNonce},"ou":"${json_escape(ou)}","timestamp":${tsStr},"op_type":"deploy","encrypted_data":"${json_escape(params.bytecode)}"${params.message ? `,"message":"${json_escape(params.message)}"` : ''}}`;
           const retrySig = await this.signMessage(retryCanonical);
           const retrySignedTx: Record<string, unknown> = {
-            from: addressSnapshot, to_: targetAddress, amount: '0',
+            from: addressSnapshot, to_: retryTargetAddress, amount: '0',
             nonce: retryNonce, ou, timestamp: now, op_type: 'deploy',
             encrypted_data: params.bytecode, signature: retrySig.signature,
           };

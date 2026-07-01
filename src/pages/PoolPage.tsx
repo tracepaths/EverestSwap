@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useApp } from '../contexts/AppContext';
 import type { OctraRpc } from '../services/octraRpc';
 import { CONTRACTS, WOCT_TOKEN } from '../types';
-import { formatUnits, parseUnits, sanitizeNumericInput } from '../services/swapService';
+import { formatUnits, parseUnits, sanitizeNumericInput, parseRawBalance } from '../services/swapService';
 import { walletService } from '../services/walletService';
 import TokenTrustBadge from '../components/TokenTrustBadge';
 import TokenSelectModal from '../components/TokenSelectModal';
@@ -133,7 +133,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
     // Fetch balance
     if (walletAddress) {
       if (address === '') {
-        rpc.getBalance(walletAddress).then(bal => { if (mountedRef.current) setBalanceA(bal.balance_raw || '0'); }).catch(() => { if (mountedRef.current) setBalanceA(null); });
+        rpc.getBalance(walletAddress).then(bal => { if (mountedRef.current) setBalanceA(parseRawBalance(bal.balance_raw, 6)); }).catch(() => { if (mountedRef.current) setBalanceA(null); });
       } else {
         rpc.getTokenBalance(address, walletAddress).then(bal => { if (mountedRef.current) setBalanceA(bal); }).catch(() => { if (mountedRef.current) setBalanceA(null); });
       }
@@ -149,7 +149,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
     // Fetch balance
     if (walletAddress) {
       if (address === '') {
-        rpc.getBalance(walletAddress).then(bal => { if (mountedRef.current) setBalanceB(bal.balance_raw || '0'); }).catch(() => { if (mountedRef.current) setBalanceB(null); });
+        rpc.getBalance(walletAddress).then(bal => { if (mountedRef.current) setBalanceB(parseRawBalance(bal.balance_raw, 6)); }).catch(() => { if (mountedRef.current) setBalanceB(null); });
       } else {
         rpc.getTokenBalance(address, walletAddress).then(bal => { if (mountedRef.current) setBalanceB(bal); }).catch(() => { if (mountedRef.current) setBalanceB(null); });
       }
@@ -262,8 +262,9 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
       const bal = await rpc.getBalance(walletService.address);
       // Need at least 1 OCT (1_000_000 base units at 6 decimals) to safely cover deploy + 5 txs + fees
       const minRequired = 1000000n;
-      if (BigInt(bal.balance_raw || '0') < minRequired) {
-        const octBal = Number(bal.balance_raw || '0') / 1_000_000;
+      const rawOCT = parseRawBalance(bal.balance_raw, 6);
+      if (BigInt(rawOCT) < minRequired) {
+        const octBal = Number(rawOCT) / 1_000_000;
         throw new Error(
           `Insufficient OCT for pool creation. Need at least 1 OCT, have ${octBal.toFixed(6)} OCT.`
         );

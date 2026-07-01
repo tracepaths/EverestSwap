@@ -325,7 +325,10 @@ function LaunchTokenPage() {
         const feeResp = await rpc.getRecommendedFee('deploy');
         feeOu = feeResp.recommended || '100000';
       } catch { /* fallback to 100000 (0.1 OCT) */ }
-      setEstimatedCost((Number(feeOu) / 1_000_000).toFixed(4));
+      // Show combined estimate: compile gas + deploy fee
+      const gasOCT = baseGas / 1_000_000;
+      const feeOCT = Number(feeOu) / 1_000_000;
+      setEstimatedCost((gasOCT + feeOCT).toFixed(4));
 
       // [V7-PASS8] C-10 fix: pass walletSnapshot to build message from same source
       const constructorMessage = buildConstructorMessage(walletSnapshot);
