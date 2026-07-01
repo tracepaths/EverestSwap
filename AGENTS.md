@@ -25,13 +25,13 @@ everestswap/
 - **Frontend**: `tracepaths/EverestSwap` (this repo)
 - **Backend**: `tracepaths/EverestSwapDEV` (contracts, scripts, deployment)
 
-## Contract Addresses (V6 — Devnet)
+## Contract Addresses (V7 — Devnet, Redeployed 2026-06-30)
 
-- OES: `oct9LgGSpkrqbpWPQpYervyryzDtbGYph2hHvcBi9ZppNvD`
-- WOCT: `octLtzi5z7Ls6BFdrBgdGQKiqBKxDPojpfHLpWhHfbDbF8c`
-- SwapPool: `octH8LDfDgQwZYumaSvu3fbdkm6uVNy3BAxJzqNHqsCGm4q`
-- SwapFactory: `octF2kc1Spgxo6BsUazFrg4gCYUMLffEPbcReg6SmmApa2F`
-- Router: `octAAy94fnLmCavamhcL3LVHB7pa2amxv9By53UqNGMLDgr`
+- OES: `oct9LgGSpkrqbpWPQpYervyryzDtbGYph2hHvcBi9ZppNvD` (unchanged)
+- WOCT: `oct4pAKouypxmP7Uk79uGzEpkkidsNAK3fQhxy1HDUmBRLE`
+- SwapPool: `octHzDX3aUCvFVRifUQoPdsaXqSvRLozGqJu3wzSDk2AZ25`
+- SwapFactory: `oct6QAJuPwbfHQUb1uQBsuceQgATK5AqStqwQPhPv29BmQx`
+- Router: `oct27w262B5fscy8mRRdAtTTYrRgpR2sseJyp2HMGWYGaWW`
 
 ## Key Flows
 

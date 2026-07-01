@@ -419,6 +419,9 @@ function LiquidityPage() {
       refreshBalance();
     } catch (e) {
       const rawErr = e instanceof Error ? e.message : 'An error occurred';
+      console.error('[LiquidityPage] add_liquidity error:', rawErr);
+      console.error('[LiquidityPage] poolSupport:', poolSupport);
+      console.error('[LiquidityPage] pool:', pool?.address, 'tokens:', pool?.tokenA, pool?.tokenB);
       // [V9] When the underlying RPC error is a generic "execution reverted" /
       // "bytecode not found" / "Transaction failed" AND the pool-support probe
       // already flagged a factory misconfiguration, append a likely-cause hint
@@ -430,9 +433,13 @@ function LiquidityPage() {
          poolSupport.error === 'pool_factory_unset' ||
          poolSupport.error === 'factory_callback_returns_false' ||
          poolSupport.error === 'pool_tokens_not_set');
-      const errMsg = (isGenericRevert && isFactoryProblem)
-        ? `${rawErr}\n\nLikely cause: this pool's factory address (${poolSupport.factory || 'unset'}) is misconfigured. The pool's add_liquidity requires the factory to implement validate_initial_price, but the stored address has no bytecode or returns false. The pool owner must call set_factory(<factory_address>) on this pool before any liquidity can be added.`
-        : rawErr;
+      let errMsg = rawErr;
+      if (isGenericRevert && isFactoryProblem) {
+        errMsg = `${rawErr}\n\nLikely cause: this pool's factory address (${poolSupport.factory || 'unset'}) is misconfigured. The pool's add_liquidity requires the factory to implement validate_initial_price, but the stored address has no bytecode or returns false. The pool owner must call set_factory(<factory_address>) on this pool before any liquidity can be added.`;
+      } else if (isGenericRevert && poolSupport && poolSupport.ok) {
+        // Factory is OK but still reverted — suggest checking amounts and deadline
+        errMsg = `${rawErr}\n\nPool factory is configured correctly. Check that: (1) you have enough token balance, (2) amounts are > 0, (3) deadline is within 5 minutes.`;
+      }
       setAddStep({ type: 'error', message: errMsg });
       if (toastId) updateToast(toastId, 'error', `Add Liquidity failed: ${errMsg}`);
       else addToast('error', `Add Liquidity failed: ${errMsg}`);
