@@ -581,16 +581,16 @@ function LiquidityPage() {
                 tabIndex={-1}
                 onKeyDown={e => { if (e.key === 'Escape') { setShowPoolSelect(false); setPoolQuery(''); } }}
               >
-                <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] max-w-[52%] w-full flex flex-col max-h-[65%] shadow-2xl" onClick={e => e.stopPropagation()}>
+                <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] max-w-[420px] w-full flex flex-col max-h-[70vh] shadow-2xl" onClick={e => e.stopPropagation()}>
                   <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--app-border)]">
-                    <h3 id="select-pool-title" className="text-sm font-semibold">Select Pool</h3>
+                    <h3 id="select-pool-title" className="text-base font-semibold">Select Pool</h3>
                     <button onClick={() => { setShowPoolSelect(false); setPoolQuery(''); }} className="text-[var(--app-muted)] hover:text-[var(--app-text)] transition-colors" aria-label="Close">
                       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                       </svg>
                     </button>
                   </div>
-                  <div className="px-5 pt-3 pb-1">
+                  <div className="px-4 pt-3 pb-1">
                     <div className="relative">
                       <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--app-muted-2)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -600,19 +600,20 @@ function LiquidityPage() {
                         type="text"
                         value={poolQuery}
                         onChange={e => setPoolQuery(e.target.value)}
-                        placeholder="Search pool..."
-                        className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-xl pl-9 pr-3 py-2 text-sm outline-none placeholder-[var(--app-muted-2)] focus:border-[var(--app-blue)] transition-colors"
+                        placeholder="Search by token name or symbol..."
+                        className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-xl pl-9 pr-3 py-2.5 text-sm outline-none placeholder-[var(--app-muted-2)] focus:border-[var(--app-blue)] transition-colors"
                       />
                     </div>
                   </div>
-                  <div className="overflow-y-auto flex-1 p-2 pb-3 space-y-0.5 min-h-0">
+                  <div className="overflow-y-auto flex-1 p-2 pb-3 space-y-1 min-h-0">
                     {filteredPools.length === 0 ? (
-                      <div className="text-center py-8 text-sm text-[var(--app-muted)]">
+                      <div className="text-center py-10 text-sm text-[var(--app-muted)]">
                         {poolQuery ? 'No pools found' : 'No pools available'}
                       </div>
                     ) : (
                       filteredPools.map((p) => {
                         const origIdx = pools.indexOf(p);
+                        const isSelected = origIdx === selectedPoolIdx;
                         return (
                           <button
                             key={p.address}
@@ -620,16 +621,23 @@ function LiquidityPage() {
                               setSelectedPoolIdx(origIdx);
                               setShowPoolSelect(false);
                               setPoolQuery('');
-                              // [V7-FIX] Reset position selection when pool changes
                               setSelectedPositionId(null);
                             }}
-                            className={`w-full px-4 py-2.5 text-left text-sm rounded-xl transition-colors flex items-center gap-2 ${origIdx === selectedPoolIdx ? 'bg-[var(--app-blue)]/10 text-[var(--app-blue-3)]' : 'hover:bg-[var(--app-hover)]'}`}
+                            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors ${isSelected ? 'bg-[var(--app-blue)]/10 border border-[var(--app-blue)]/30' : 'hover:bg-[var(--app-hover)] border border-transparent'}`}
                           >
-                            <div className="flex -space-x-2">
-                              <div className="w-6 h-6 rounded-full bg-[var(--app-blue)] flex items-center justify-center text-xs font-bold border-2 border-[var(--app-bg)]">{p.tokenA.symbol[0] || '?'}</div>
-                              <div className="w-6 h-6 rounded-full bg-[var(--app-blue-2)] flex items-center justify-center text-xs font-bold border-2 border-[var(--app-bg)]">{p.tokenB.symbol[0] || '?'}</div>
+                            <div className="flex -space-x-1.5">
+                              <div className="w-8 h-8 rounded-full bg-[var(--app-blue)] flex items-center justify-center text-xs font-bold border-2 border-[var(--app-bg)]">{p.tokenA.symbol[0] || '?'}</div>
+                              <div className="w-8 h-8 rounded-full bg-[var(--app-blue-2)] flex items-center justify-center text-xs font-bold border-2 border-[var(--app-bg)]">{p.tokenB.symbol[0] || '?'}</div>
                             </div>
-                            <span className="text-[var(--app-muted)]">{p.label}</span>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm font-medium text-[var(--app-text)]">{p.label}</div>
+                              <div className="text-[11px] text-[var(--app-muted)] truncate">{p.tokenA.symbol}/{p.tokenB.symbol}</div>
+                            </div>
+                            {isSelected && (
+                              <svg className="w-4 h-4 text-[var(--app-blue)] flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                              </svg>
+                            )}
                           </button>
                         );
                       })
