@@ -31,6 +31,25 @@ export class WalletService {
 
   constructor() {
     this.sdk = new ZeroXIOWallet({ appName: 'EverestSwap' });
+    this.setupAccountChangeListener();
+  }
+
+  private setupAccountChangeListener(): void {
+    try {
+      this.sdk.on('accountChanged', (event) => {
+        const data = event.data;
+        if (data?.newAddress && data.newAddress !== this._address) {
+          const prev = this._address;
+          this._address = data.newAddress;
+          if (data.publicKey) this._publicKey = data.publicKey;
+          try {
+            window.dispatchEvent(new CustomEvent('wallet-account-changed', {
+              detail: { address: data.newAddress, prevAddress: prev },
+            }));
+          } catch { /* noop */ }
+        }
+      });
+    } catch { /* SDK may not support events in all environments */ }
   }
 
   // [V7-PASS10] CRITICAL-2: Acquire the per-address submit lock.
@@ -302,6 +321,10 @@ export class WalletService {
           // Re-sign with new nonce using manual canonical JSON approach
           const retryCanonical = `{"from":"${json_escape(addressSnapshot)}","to_":"${json_escape(retryTargetAddress)}","amount":"0","nonce":${retryNonce},"ou":"${json_escape(ou)}","timestamp":${tsStr},"op_type":"deploy","encrypted_data":"${json_escape(params.bytecode)}"${params.message ? `,"message":"${json_escape(params.message)}"` : ''}}`;
           const retrySig = await this.signMessage(retryCanonical);
+          // Verify wallet hasn't changed during retry signing
+          if (this._address !== addressSnapshot) {
+            throw new Error('Wallet changed during deploy retry — aborting', { cause: e });
+          }
           const retrySignedTx: Record<string, unknown> = {
             from: addressSnapshot, to_: retryTargetAddress, amount: '0',
             nonce: retryNonce, ou, timestamp: now, op_type: 'deploy',

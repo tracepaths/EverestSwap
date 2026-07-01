@@ -97,22 +97,45 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const isConnected = walletAddress !== '';
 
+  // [V9] Listen for wallet account changes dispatched by walletService.
+  // Updates React state immediately when the user switches accounts in the
+  // wallet extension, preventing stale-address "invalid signature" errors.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ address: string }>).detail;
+      if (detail?.address && detail.address !== walletAddress) {
+        setWalletAddress(detail.address);
+        walletService.getBalance().then(b => setWalletBalance(b)).catch(() => {});
+      }
+    };
+    window.addEventListener('wallet-account-changed', handler);
+    return () => window.removeEventListener('wallet-account-changed', handler);
+  }, [walletAddress]);
+
   // [V7-FIX] Poll wallet connection to detect external disconnect (user locks
   // extension, uninstalls, etc.). React state doesn't auto-update.
   // [V7-PASS10] CRITICAL-3: debounce — require 2 consecutive empty checks (~10s)
   // before treating the wallet as disconnected. Avoids false disconnects during
   // cold start, locked extension, or slow account switching.
+  // [V9] Also detect account changes (non-empty but different address) as a
+  // fallback in case the custom event listener misses a change.
   useEffect(() => {
     if (!isConnected) return;
     let emptyStreak = 0;
     const i = setInterval(() => {
-      if (walletService.address === '' && walletAddress !== '') {
+      const currentAddress = walletService.address;
+      if (currentAddress === '' && walletAddress !== '') {
         emptyStreak++;
         if (emptyStreak >= 2) {
           setWalletAddress('');
           setWalletBalance('');
           emptyStreak = 0;
         }
+      } else if (currentAddress !== '' && currentAddress !== walletAddress) {
+        // Account changed in wallet extension (fallback detection)
+        setWalletAddress(currentAddress);
+        walletService.getBalance().then(b => setWalletBalance(b)).catch(() => {});
+        emptyStreak = 0;
       } else {
         emptyStreak = 0;
       }
