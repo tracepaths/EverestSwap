@@ -226,8 +226,11 @@ export class WalletService {
       this.setPendingNonce(addressSnapshot, nonce);
 
       const ou = params.feeOu || '100000';
-      const now = Date.now() / 1000;
-      const tsStr = now === Math.floor(now) ? now.toFixed(1) : now.toString();
+      let now = Date.now() / 1000;
+      // Ensure timestamp has a fractional part so JSON.stringify always
+      // produces a decimal point, matching the canonical JSON format.
+      if (now % 1 === 0) now += 0.000001;
+      const tsStr = now.toString();
 
       // [FIX] Build canonical JSON manually and sign via octra_signMessage.
       // The SDK's signTransaction validates amount > 0, which rejects deploy txs (amount='0').
