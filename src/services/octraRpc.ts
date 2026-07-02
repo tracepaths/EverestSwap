@@ -26,6 +26,8 @@ export interface LpPosition {
 
 export class OctraRpc {
   private url: string;
+  // [SECURITY] LOW-7: Max response size to prevent DoS via large RPC responses
+  private static readonly MAX_RPC_BYTES = 8 * 1024 * 1024; // 8MB
 
   constructor(url: string = CONFIG_RPC_URL) {
     this.url = url || 'https://devnet.octrascan.io/rpc';
@@ -47,6 +49,11 @@ export class OctraRpc {
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
+      // [SECURITY] LOW-7: Check response size before parsing to prevent DoS
+      const contentLength = res.headers.get('content-length');
+      if (contentLength && parseInt(contentLength, 10) > OctraRpc.MAX_RPC_BYTES) {
+        throw new Error('RPC response too large');
+      }
       // [SECURITY] F-7: Sanitize RPC error messages before they reach the UI to prevent
       // injection from compromised RPC responses. Cap length, strip control chars.
       let json: { result?: unknown; error?: { message?: string } };
