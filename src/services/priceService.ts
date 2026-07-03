@@ -1,4 +1,4 @@
-import { OCT_ETHEREUM_ADDRESS, DEXSCREENER_API, PRICE_CACHE_TTL_MS } from '../config/prices';
+import { OCT_ETHEREUM_ADDRESS, DEXSCREENER_API, COINGECKO_API, COINGECKO_OCT_ID, PRICE_CACHE_TTL_MS } from '../config/prices';
 import { WOCT_TOKEN, CONTRACTS } from '../config';
 import type { OctraRpc } from './octraRpc';
 import { formatUnits } from './swapService';
@@ -25,19 +25,40 @@ export async function fetchOctUsdPrice(): Promise<number> {
   if (cache && (now - cache.timestamp) < PRICE_CACHE_TTL_MS) {
     return cache.octUsd;
   }
+
+  // Try DexScreener first
   try {
     const res = await fetchWithTimeout(`${DEXSCREENER_API}/${OCT_ETHEREUM_ADDRESS}`);
     if (!res.ok) throw new Error(`DexScreener HTTP ${res.status}`);
     const data = await res.json();
     const price = parseFloat(data?.pairs?.[0]?.priceUsd);
-    if (!Number.isFinite(price) || price <= 0) throw new Error('Invalid price');
-    cache = { octUsd: price, timestamp: now };
-    return price;
+    if (Number.isFinite(price) && price > 0) {
+      cache = { octUsd: price, timestamp: now };
+      return price;
+    }
   } catch (err) {
     console.error('[priceService] DexScreener fetch failed:', err);
-    if (cache) return cache.octUsd;
-    return 0;
   }
+
+  // Fallback to CoinGecko
+  try {
+    const res = await fetchWithTimeout(
+      `${COINGECKO_API}/simple/price?ids=${COINGECKO_OCT_ID}&vs_currencies=usd`
+    );
+    if (!res.ok) throw new Error(`CoinGecko HTTP ${res.status}`);
+    const data = await res.json();
+    const price = data?.[COINGECKO_OCT_ID]?.usd;
+    if (Number.isFinite(price) && price > 0) {
+      cache = { octUsd: price, timestamp: now };
+      return price;
+    }
+  } catch (err) {
+    console.error('[priceService] CoinGecko fetch failed:', err);
+  }
+
+  // Return cached price if available
+  if (cache) return cache.octUsd;
+  return 0;
 }
 
 function isOCTorWOCT(address: string): boolean {
