@@ -2,7 +2,6 @@
 // Automatically reinvests LP rewards to maximize returns
 
 import { OctraRpc } from './octraRpc';
-import { walletService } from './walletService';
 
 export interface CompoundEstimate {
   rewards: bigint;
@@ -102,7 +101,6 @@ export async function autoCompound(
     ]);
     
     const owner = position[0];
-    const liquidity = BigInt(position[1] || '0');
     
     // 2. Check if enough rewards
     const estimate = await calculateCompoundRewards(
@@ -129,7 +127,7 @@ export async function autoCompound(
     return '';
     
   } catch (e) {
-    throw new Error(`Compound failed: ${(e as Error).message}`);
+    throw new Error(`Compound failed: ${(e as Error).message}`, { cause: e });
   }
 }
 
@@ -148,13 +146,19 @@ export function getOptimalCompoundTime(
   // Calculate accumulated rewards
   const accumulatedRewards = rewardsPerEpoch * BigInt(epochsSinceLast);
   
-  // If rewards exceed gas cost threshold, compound now
-  if (accumulatedRewards > 1000000n) { // 1 OCT threshold
+  // Factor in gas cost: wait longer if gas is expensive
+  const gasCostThreshold = 500000n; // Base gas cost estimate
+  const adjustedThreshold = gasCostThreshold * gasPrice / 1000000n;
+  
+  // If rewards exceed adjusted threshold, compound now
+  if (accumulatedRewards > adjustedThreshold) {
     return currentEpoch;
   }
   
   // Otherwise, wait more epochs
-  const epochsToWait = Math.ceil(Number(1000000n / rewardsPerEpoch));
+  const epochsToWait = adjustedThreshold > 0n 
+    ? Math.ceil(Number(adjustedThreshold / (rewardsPerEpoch || 1n)))
+    : Math.ceil(Number(1000000n / (rewardsPerEpoch || 1n)));
   return currentEpoch + epochsToWait;
 }
 
