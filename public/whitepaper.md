@@ -24,7 +24,6 @@ Octra is an FHE blockchain network developed by **Octra Labs** (a non-profit ass
 
 Key capabilities:
 
-- **Account-Based Model**: Octra uses an account-based ledger (not UTXO). Each address has a nonce, public balance, encrypted balance, and registered keys.
 - **HFHE Encryption**: Hypergraph Fully Homomorphic Encryption enables computation on encrypted data without decryption.
 - **Circles**: Isolated execution environments hosting **programs** with dedicated application logic and encrypted data storage.
 - **OVM**: Octra Virtual Machine supporting AppliedML (native), Rust, C++, OCaml, and WASM.
