@@ -459,7 +459,7 @@ function LaunchTokenPage() {
           <button
             type="button"
             onClick={fillRandom}
-            className="text-xs px-3 py-1.5 rounded-lg bg-[var(--app-panel-soft)] hover:bg-[var(--app-hover)] text-[var(--app-muted)] hover:text-[var(--app-text)] transition-colors border border-[var(--app-border)] whitespace-nowrap"
+            className="text-base px-3 py-1.5 rounded-lg bg-[var(--app-panel-soft)] hover:bg-[var(--app-hover)] text-[var(--app-muted)] hover:text-[var(--app-text)] transition-colors border border-[var(--app-border)] whitespace-nowrap"
           >
             🎲 Random Fill
           </button>
@@ -483,7 +483,7 @@ function LaunchTokenPage() {
                     else if (s === 3 && step1Valid && step2Valid) setWizardStep(3);
                     else if (s === 4 && step1Valid && step2Valid && step3Valid) setWizardStep(4);
                   }}
-                  className={`flex-1 py-2 px-3 rounded-xl border-2 text-sm font-medium transition-colors ${
+                  className={`flex-1 py-2 px-3 rounded-xl border-2 text-base font-medium transition-colors ${
                     isActive
                       ? 'border-[var(--app-blue)] bg-[var(--app-blue)]/10 text-[var(--app-blue-3)]'
                       : isComplete

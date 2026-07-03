@@ -533,7 +533,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
               <label className="text-xs text-[var(--app-muted)]">Token A</label>
               <button
                 onClick={() => setShowTokenASelect(true)}
-                className={`w-full flex items-center justify-between bg-[var(--app-panel-soft)] text-sm font-medium outline-none rounded-lg px-3 py-2 border border-[var(--app-border)] hover:border-[#3B82F6] transition-colors ${tokenA ? '' : 'text-[var(--app-muted-2)]'}`}
+                className={`w-full flex items-center justify-between bg-[var(--app-panel-soft)] text-base font-medium outline-none rounded-lg px-3 py-2 border border-[var(--app-border)] hover:border-[#3B82F6] transition-colors ${tokenA ? '' : 'text-[var(--app-muted-2)]'}`}
               >
                 <span>{tokenA && metaA ? metaA.symbol : 'Select token'}</span>
                 <svg className="w-4 h-4 text-[var(--app-muted)] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -565,7 +565,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
               <label className="text-xs text-[var(--app-muted)]">Token B</label>
               <button
                 onClick={() => setShowTokenBSelect(true)}
-                className={`w-full flex items-center justify-between bg-[var(--app-panel-soft)] text-sm font-medium outline-none rounded-lg px-3 py-2 border border-[var(--app-border)] hover:border-[#3B82F6] transition-colors ${tokenB ? '' : 'text-[var(--app-muted-2)]'}`}
+                className={`w-full flex items-center justify-between bg-[var(--app-panel-soft)] text-base font-medium outline-none rounded-lg px-3 py-2 border border-[var(--app-border)] hover:border-[#3B82F6] transition-colors ${tokenB ? '' : 'text-[var(--app-muted-2)]'}`}
               >
                 <span>{tokenB && metaB ? metaB.symbol : 'Select token'}</span>
                 <svg className="w-4 h-4 text-[var(--app-muted)] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -602,7 +602,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
                 <button
                   key={f.value}
                   onClick={() => setFeeTier(f.value)}
-                  className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  className={`flex-1 py-2 rounded-lg text-base font-medium transition-colors ${
                     feeTier === f.value
                       ? 'bg-[var(--app-blue)] text-[var(--app-text)]'
                       : 'bg-[var(--app-hover)] hover:bg-[var(--app-hover)]'
@@ -620,7 +620,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
                     type="number"
                     value={customNum}
                     onChange={e => setCustomNum(e.target.value)}
-                    className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-1.5 text-sm font-mono outline-none mt-1"
+                    className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-1.5 text-base font-mono outline-none mt-1"
                     min="1"
                   />
                 </div>
@@ -630,7 +630,7 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
                     type="number"
                     value={customDenom}
                     onChange={e => setCustomDenom(e.target.value)}
-                    className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-1.5 text-sm font-mono outline-none mt-1"
+                    className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-1.5 text-base font-mono outline-none mt-1"
                     min="1"
                   />
                 </div>

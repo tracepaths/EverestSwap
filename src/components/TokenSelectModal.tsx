@@ -311,15 +311,15 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
         </div>
         <div className="flex-1 text-left min-w-0">
           <div className="flex items-center gap-1.5">
-            <span className="font-medium text-sm">{item.symbol}</span>
+            <span className="font-medium text-base">{item.symbol}</span>
             {item.isTrusted && (
               <span className="text-[10px] text-[var(--app-warning)] shrink-0" title="Trusted">★★★★★</span>
             )}
           </div>
-          <div className="text-xs text-[var(--app-muted)] truncate">{item.name}</div>
+          <div className="text-base text-[var(--app-muted)] truncate">{item.name}</div>
         </div>
         {item.balance !== null && (
-          <span className="text-xs text-[var(--app-text)] font-mono shrink-0">
+          <span className="text-base text-[var(--app-text)] font-mono shrink-0">
             {formatBalance(item.balance, item.decimals)}
           </span>
         )}
@@ -368,7 +368,7 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
               value={query}
               onChange={e => setQuery(e.target.value)}
               placeholder="Search name or paste address"
-              className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-xl pl-9 pr-3 py-2.5 text-sm outline-none placeholder-[var(--app-muted-2)] focus:border-[var(--app-blue)] transition-colors"
+              className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-xl pl-9 pr-3 py-2.5 text-base outline-none placeholder-[var(--app-muted-2)] focus:border-[var(--app-blue)] transition-colors"
             />
           </div>
         </div>
@@ -381,7 +381,7 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
               ))}
             </div>
           ) : filteredMine.length === 0 && filteredOthers.length === 0 ? (
-            <div className="text-center py-8 text-sm text-[var(--app-muted)]">
+            <div className="text-center py-8 text-base text-[var(--app-muted)]">
               {query ? 'No tokens found' : 'No tokens available'}
             </div>
           ) : (
@@ -426,7 +426,7 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
           {!importMode ? (
             <button
               onClick={() => { setImportMode(true); setImportAddr(''); setImportMeta(null); }}
-              className="w-full flex items-center gap-2 text-sm text-[var(--app-blue-3)] hover:text-[var(--app-blue-3)] transition-colors"
+              className="w-full flex items-center gap-2 text-base text-[var(--app-blue-3)] hover:text-[var(--app-blue-3)] transition-colors"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m0 0l4-4m-4 4l-4-4" />
@@ -445,12 +445,12 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
                   onChange={e => { setImportAddr(e.target.value); setImportMeta(null); }}
                   placeholder="oct..."
                   maxLength={50}
-                  className="flex-1 bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-1.5 text-sm font-mono outline-none placeholder-[var(--app-muted-2)]"
+                  className="flex-1 bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-1.5 text-base font-mono outline-none placeholder-[var(--app-muted-2)]"
                 />
                 <button
                   onClick={handleImport}
                   disabled={importing || !isValidOctraAddress(importAddr)}
-                  className="px-3 py-1.5 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-lg text-sm font-medium transition-colors"
+                  className="px-3 py-1.5 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-lg text-base font-medium transition-colors"
                 >
                   {importing ? '...' : 'Import'}
                 </button>
@@ -468,14 +468,14 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
                       {importMeta.symbol[0] || '?'}
                     </div>
                     <div>
-                      <div className="text-sm font-medium">{importMeta.symbol}</div>
-                      <div className="text-xs text-[var(--app-muted)]">{importMeta.name}</div>
+                      <div className="text-base font-medium">{importMeta.symbol}</div>
+                      <div className="text-base text-[var(--app-muted)]">{importMeta.name}</div>
                     </div>
                   </div>
                   <button
                     onClick={handleImportSelect}
                     disabled={importMeta.symbol === '???'}
-                    className="px-3 py-1 text-xs bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-lg font-medium transition-colors"
+                    className="px-3 py-1 text-base bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-lg font-medium transition-colors"
                   >
                     Select
                   </button>
@@ -483,7 +483,7 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
               )}
               <button
                 onClick={() => setImportMode(false)}
-                className="text-xs text-[var(--app-muted)] hover:text-[var(--app-text)] transition-colors"
+                className="text-base text-[var(--app-muted)] hover:text-[var(--app-text)] transition-colors"
               >
                 Cancel
               </button>

@@ -40,11 +40,11 @@ function WalletConnector() {
       <div className="relative" ref={dropdownRef}>
         <button
           onClick={() => setDropdownOpen(prev => !prev)}
-          className="flex items-center gap-2 bg-[var(--app-panel)] hover:bg-[var(--app-hover)] backdrop-blur-xl px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+          className="flex items-center gap-2 bg-[var(--app-panel)] hover:bg-[var(--app-hover)] backdrop-blur-xl px-3 py-1.5 rounded-lg text-base font-medium transition-colors"
         >
           <span className="w-2 h-2 rounded-full bg-green-500" />
           <span className="hidden sm:inline">{truncateAddress(walletAddress)}</span>
-          <span className="text-xs text-[var(--app-muted)]">
+          <span className="text-base text-[var(--app-muted)]">
             {/* [V7-FIX] Adaptive formatting — use 6 decimals for sub-0.01 OCT to
                 show actual balance, 2 decimals otherwise */}
             {walletBalance ? formatOctBalance(walletBalance) : ''}
@@ -58,13 +58,13 @@ function WalletConnector() {
             />
             <div className="absolute right-0 mt-2 w-56 bg-[var(--app-dropdown-bg)] border border-[var(--app-border)] rounded-xl shadow-xl overflow-hidden z-50">
               <div className="px-4 py-3 border-b border-[var(--app-border)]">
-                <div className="text-xs text-[var(--app-muted)]">Connected</div>
-                <div className="text-sm font-medium mt-0.5 font-mono">{truncateAddress(walletAddress, 10, 8)}</div>
+                <div className="text-base text-[var(--app-muted)]">Connected</div>
+                <div className="text-base font-medium mt-0.5 font-mono">{truncateAddress(walletAddress, 10, 8)}</div>
               </div>
               {walletBalance && (
                 <div className="px-4 py-2 border-b border-[var(--app-border)]">
-                  <div className="text-xs text-[var(--app-muted)]">Balance</div>
-                  <div className="text-sm font-medium">{formatOctBalance(walletBalance, 6)}</div>
+                  <div className="text-base text-[var(--app-muted)]">Balance</div>
+                  <div className="text-base font-medium">{formatOctBalance(walletBalance, 6)}</div>
                 </div>
               )}
               <button
@@ -74,7 +74,7 @@ function WalletConnector() {
                   try { disconnect(); } catch { /* noop */ }
                   setDropdownOpen(false);
                 }}
-                className="w-full text-left px-4 py-2.5 text-sm text-[var(--app-danger)] hover:bg-[var(--app-panel)] transition-colors"
+                className="w-full text-left px-4 py-2.5 text-base text-[var(--app-danger)] hover:bg-[var(--app-panel)] transition-colors"
               >
                 Disconnect
               </button>

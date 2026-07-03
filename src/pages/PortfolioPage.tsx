@@ -680,7 +680,7 @@ function PortfolioDetailModal({
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-2 text-sm rounded-lg bg-[var(--app-panel-soft)] border border-[var(--app-border)] hover:border-[var(--app-blue)]/40 transition-colors"
+            className="px-3 py-2 text-base rounded-lg bg-[var(--app-panel-soft)] border border-[var(--app-border)] hover:border-[var(--app-blue)]/40 transition-colors"
           >
             Close
           </button>
@@ -689,7 +689,7 @@ function PortfolioDetailModal({
               <button
                 type="button"
                 onClick={() => onSwap(modal.data.address)}
-                className="px-3 py-2 text-sm font-medium rounded-lg bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] transition-colors text-white"
+                className="px-3 py-2 text-base font-medium rounded-lg bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] transition-colors text-white"
               >
                 Swap this token
               </button>
@@ -701,7 +701,7 @@ function PortfolioDetailModal({
                     onVote(modal.data.address).finally(() => setVoting(false));
                   }}
                   disabled={voting}
-                  className="px-3 py-2 text-sm font-medium rounded-lg bg-gradient-to-r from-[var(--app-warning)]/80 to-[var(--app-warning)] hover:from-[var(--app-warning)] hover:to-[var(--app-warning)]/80 transition-colors text-white disabled:opacity-50"
+                  className="px-3 py-2 text-base font-medium rounded-lg bg-gradient-to-r from-[var(--app-warning)]/80 to-[var(--app-warning)] hover:from-[var(--app-warning)] hover:to-[var(--app-warning)]/80 transition-colors text-white disabled:opacity-50"
                 >
                   {voting ? '...' : modal.data.hasVoted ? `Unvote ★ ${modal.data.votes}` : `Vote ★ ${modal.data.votes}`}
                 </button>
@@ -712,7 +712,7 @@ function PortfolioDetailModal({
             <button
               type="button"
               onClick={() => onAddLiquidity(modal.data.pool)}
-              className="px-3 py-2 text-sm font-medium rounded-lg bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] transition-colors text-white"
+              className="px-3 py-2 text-base font-medium rounded-lg bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] transition-colors text-white"
             >
               Add liquidity
             </button>
@@ -722,7 +722,7 @@ function PortfolioDetailModal({
               href={explorerUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="px-3 py-2 text-sm font-medium rounded-lg bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] transition-colors text-white"
+              className="px-3 py-2 text-base font-medium rounded-lg bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] transition-colors text-white"
             >
               View on explorer
             </a>

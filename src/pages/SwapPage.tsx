@@ -1135,7 +1135,7 @@ function SwapPage() {
                   <button
                     key={pct}
                     onClick={() => setFromAmount(formatUnits(rawPct.toString(), fromToken.decimals))}
-                    className="text-xs px-2 py-0.5 rounded bg-[var(--app-hover)] hover:bg-[var(--app-hover)] text-[var(--app-muted)] hover:text-[var(--app-text)] transition-colors"
+                    className="text-base px-2 py-0.5 rounded bg-[var(--app-hover)] hover:bg-[var(--app-hover)] text-[var(--app-muted)] hover:text-[var(--app-text)] transition-colors"
                     title={tip}
                   >
                     {pct}%

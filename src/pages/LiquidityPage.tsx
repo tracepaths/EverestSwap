@@ -540,13 +540,13 @@ function LiquidityPage() {
         <div className="flex border-b border-[var(--app-border)]">
           <button
             onClick={() => setTab('add')}
-            className={`flex-1 py-3 text-sm font-medium text-center transition-colors ${tab === 'add' ? 'bg-[var(--app-blue)]/10 text-[var(--app-blue-3)] border-b-2 border-[var(--app-blue)]' : 'text-[var(--app-muted)] hover:text-[var(--app-text)]'}`}
+            className={`flex-1 py-3 text-base font-medium text-center transition-colors ${tab === 'add' ? 'bg-[var(--app-blue)]/10 text-[var(--app-blue-3)] border-b-2 border-[var(--app-blue)]' : 'text-[var(--app-muted)] hover:text-[var(--app-text)]'}`}
           >
             Add Liquidity
           </button>
           <button
             onClick={() => setTab('remove')}
-            className={`flex-1 py-3 text-sm font-medium text-center transition-colors ${tab === 'remove' ? 'bg-[var(--app-blue)]/10 text-[var(--app-blue-3)] border-b-2 border-[var(--app-blue)]' : 'text-[var(--app-muted)] hover:text-[var(--app-text)]'}`}
+            className={`flex-1 py-3 text-base font-medium text-center transition-colors ${tab === 'remove' ? 'bg-[var(--app-blue)]/10 text-[var(--app-blue-3)] border-b-2 border-[var(--app-blue)]' : 'text-[var(--app-muted)] hover:text-[var(--app-text)]'}`}
           >
             Remove Liquidity
           </button>
@@ -566,7 +566,7 @@ function LiquidityPage() {
                   {validTokenB.symbol[0] || '?'}
                 </div>
               </div>
-              <span className="font-medium text-sm flex-1">{pool?.label || 'Select Pool'}</span>
+              <span className="font-medium text-base flex-1">{pool?.label || 'Select Pool'}</span>
               <svg className="w-4 h-4 text-[var(--app-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
               </svg>
@@ -601,13 +601,13 @@ function LiquidityPage() {
                         value={poolQuery}
                         onChange={e => setPoolQuery(e.target.value)}
                         placeholder="Search by token name or symbol..."
-                        className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-xl pl-9 pr-3 py-2.5 text-sm outline-none placeholder-[var(--app-muted-2)] focus:border-[var(--app-blue)] transition-colors"
+                        className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-xl pl-9 pr-3 py-2.5 text-base outline-none placeholder-[var(--app-muted-2)] focus:border-[var(--app-blue)] transition-colors"
                       />
                     </div>
                   </div>
                   <div className="overflow-y-auto flex-1 p-2 pb-3 space-y-1 min-h-0">
                     {filteredPools.length === 0 ? (
-                      <div className="text-center py-10 text-sm text-[var(--app-muted)]">
+                      <div className="text-center py-10 text-base text-[var(--app-muted)]">
                         {poolQuery ? 'No pools found' : 'No pools available'}
                       </div>
                     ) : (
@@ -630,7 +630,7 @@ function LiquidityPage() {
                               <div className="w-8 h-8 rounded-full bg-[var(--app-blue-2)] flex items-center justify-center text-xs font-bold border-2 border-[var(--app-bg)]">{p.tokenB.symbol[0] || '?'}</div>
                             </div>
                             <div className="flex-1 min-w-0">
-                              <div className="text-sm font-medium text-[var(--app-text)]">{p.label}</div>
+                              <div className="text-base font-medium text-[var(--app-text)]">{p.label}</div>
                               <div className="text-[11px] text-[var(--app-muted)] truncate">{p.tokenA.symbol}/{p.tokenB.symbol}</div>
                             </div>
                             {isSelected && (

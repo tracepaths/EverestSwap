@@ -318,7 +318,7 @@ function Layout() {
                 key={item.path}
                 to={item.path}
                 onClick={() => setSidebarOpen(false)}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 ${
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-base font-medium transition-all duration-200 ${
                   isActive
                     ? 'bg-[var(--app-blue)]/15 text-[var(--app-blue-3)] shadow-sm shadow-[var(--app-shadow)]'
                     : 'text-[var(--app-muted)] hover:text-[var(--app-text)] hover:bg-[var(--app-hover)]'
@@ -336,7 +336,7 @@ function Layout() {
           <Link
             to="/docs"
             onClick={() => setSidebarOpen(false)}
-            className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs text-[var(--app-muted-2)] hover:text-[var(--app-blue-3)] hover:bg-[var(--app-hover)] transition-all duration-200"
+            className="flex items-center gap-2 px-3 py-2 rounded-xl text-base text-[var(--app-muted-2)] hover:text-[var(--app-blue-3)] hover:bg-[var(--app-hover)] transition-all duration-200"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
@@ -374,7 +374,7 @@ function Layout() {
               <div className="relative">
                 <button
                   onClick={() => toggleMenu('network')}
-                  className="flex items-center gap-2 bg-[var(--app-panel)] hover:bg-[var(--app-hover)] border border-[var(--app-border)] rounded-xl px-3 py-2 text-xs font-medium transition-colors"
+                  className="flex items-center gap-2 bg-[var(--app-panel)] hover:bg-[var(--app-hover)] border border-[var(--app-border)] rounded-xl px-3 py-2 text-base font-medium transition-colors"
                 >
                   <span className="text-[var(--app-muted-2)]">Network</span>
                   <span className="text-[var(--app-text)] capitalize">{network}</span>
@@ -388,7 +388,7 @@ function Layout() {
                       <button
                         key={item.value}
                         onClick={() => handleNetworkSelect(item.value as 'devnet' | 'mainnet')}
-                        className={`w-full flex items-center justify-between px-4 py-2.5 text-sm transition-colors ${
+                        className={`w-full flex items-center justify-between px-4 py-2.5 text-base transition-colors ${
                           network === item.value ? 'bg-[var(--app-blue)]/15 text-[var(--app-blue-3)]' : 'text-[var(--app-muted)] hover:bg-[var(--app-hover)] hover:text-[var(--app-text)]'
                         }`}
                       >
@@ -410,7 +410,7 @@ function Layout() {
               <div className="relative">
                 <button
                   onClick={() => toggleMenu('theme')}
-                  className="flex items-center gap-2 bg-[var(--app-panel)] hover:bg-[var(--app-hover)] border border-[var(--app-border)] rounded-xl px-3 py-2 text-xs font-medium transition-colors"
+                  className="flex items-center gap-2 bg-[var(--app-panel)] hover:bg-[var(--app-hover)] border border-[var(--app-border)] rounded-xl px-3 py-2 text-base font-medium transition-colors"
                 >
                   <span className="text-[var(--app-muted-2)]">Theme</span>
                   <span className="text-[var(--app-text)] capitalize">{theme}</span>
@@ -424,7 +424,7 @@ function Layout() {
                       <button
                         key={item.value}
                         onClick={() => { setTheme(item.value as 'dark' | 'light' | 'blue'); setOpenMenu(null); }}
-                        className={`w-full flex items-center justify-between px-4 py-2.5 text-sm transition-colors ${
+                        className={`w-full flex items-center justify-between px-4 py-2.5 text-base transition-colors ${
                           theme === item.value ? 'bg-[var(--app-blue)]/15 text-[var(--app-blue-3)]' : 'text-[var(--app-muted)] hover:bg-[var(--app-hover)] hover:text-[var(--app-text)]'
                         }`}
                       >
@@ -443,7 +443,7 @@ function Layout() {
               <div className="relative">
                 <button
                   onClick={() => toggleMenu('activity')}
-                  className="flex items-center gap-2 bg-[var(--app-panel)] hover:bg-[var(--app-hover)] border border-[var(--app-border)] rounded-xl px-3 py-2 text-xs font-medium transition-colors"
+                  className="flex items-center gap-2 bg-[var(--app-panel)] hover:bg-[var(--app-hover)] border border-[var(--app-border)] rounded-xl px-3 py-2 text-base font-medium transition-colors"
                 >
                   <span className="text-[var(--app-muted-2)]">Activity</span>
                   <span className="text-[var(--app-text)]">{isConnected ? activity.length : 0}</span>
@@ -455,10 +455,10 @@ function Layout() {
                   <div className="absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-2rem)] bg-[var(--app-dropdown-bg)] border border-[var(--app-border)] rounded-xl shadow-xl overflow-hidden z-50">
                     <div className="px-4 py-3 border-b border-[var(--app-border)]">
                       <div className="flex items-center justify-between">
-                        <div className="text-sm font-semibold">Recent Activity</div>
+                        <div className="text-base font-semibold">Recent Activity</div>
                         <div className="text-[10px] text-[var(--app-muted-2)]">Last 10</div>
                       </div>
-                      <div className="text-xs text-[var(--app-muted-2)] mt-1">
+                      <div className="text-base text-[var(--app-muted-2)] mt-1">
                         {isConnected ? 'Latest wallet transactions' : 'Connect wallet to view activity'}
                       </div>
                     </div>
@@ -468,14 +468,14 @@ function Layout() {
                           <div key={i} className="h-14 bg-[var(--app-panel-soft)] rounded-xl animate-pulse" />
                         ))
                       ) : activity.length === 0 ? (
-                        <div className="text-center py-8 text-xs text-[var(--app-muted)]">
+                        <div className="text-center py-8 text-base text-[var(--app-muted)]">
                           {isConnected ? 'No activity found' : 'Connect wallet to view recent activity'}
                         </div>
                       ) : (
                         activity.map(item => (
                           <div key={item.hash} className="rounded-xl border border-[var(--app-border-soft)] bg-[var(--app-panel-soft)] p-3">
                             <div className="flex items-center justify-between gap-3">
-                              <div className="text-xs font-medium truncate">{item.label}</div>
+                              <div className="text-base font-medium truncate">{item.label}</div>
                               <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] capitalize ${statusClass(item.status)}`}>
                                 {item.status}
                               </span>
