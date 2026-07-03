@@ -1,7 +1,8 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
+import { RPC_URL, INDEXER_URL, CONTRACTS, EXPLORER_URL } from '../config';
 
 interface DocSection {
   id: string;
@@ -38,12 +39,26 @@ function parseSections(md: string): { intro: string; sections: DocSection[] } {
   return { intro: intro.join('\n'), sections };
 }
 
+const placeholderValues: Record<string, string> = {
+  '{{EVERESTSWAP_DEVNET_RPC_URL}}': RPC_URL,
+  '{{EVERESTSWAP_DEVNET_INDEXER_URL}}': INDEXER_URL,
+  '{{EVERESTSWAP_DEVNET_FACTORY_ADDRESS}}': CONTRACTS.factory,
+  '{{EVERESTSWAP_DEVNET_POOL_ADDRESS}}': CONTRACTS.pool,
+  '{{EVERESTSWAP_DEVNET_ROUTER_ADDRESS}}': CONTRACTS.router,
+  '{{EVERESTSWAP_DEVNET_OES_ADDRESS}}': CONTRACTS.oes,
+  '{{EVERESTSWAP_DEVNET_WOCT_ADDRESS}}': CONTRACTS.woct,
+  '{{EVERESTSWAP_DEVNET_EXPLORER_URL}}': EXPLORER_URL,
+};
+
 const customComponents: Components = {
-  h2: ({ children, ...props }) => (
-    <h2 className="text-xl font-bold mt-2 mb-4 text-[var(--app-text)] border-b border-[var(--app-border)] pb-2" {...props}>
-      {children}
-    </h2>
-  ),
+  h2: ({ children, ...props }) => {
+    const text = Array.isArray(children) ? children.join('') : String(children ?? '');
+    return (
+      <h2 id={slugify(text)} className="text-xl font-bold mt-2 mb-4 text-[var(--app-text)] border-b border-[var(--app-border)] pb-2" {...props}>
+        {children}
+      </h2>
+    );
+  },
   h3: ({ children, ...props }) => {
     const text = Array.isArray(children) ? children.join('') : String(children ?? '');
     return (
@@ -156,27 +171,55 @@ function EmptySection({ title, icon }: { title: string; icon: string }) {
   );
 }
 
+type DocsTab = 'guide' | 'whitepaper';
+
+const TAB_LABELS: Record<DocsTab, { label: string; icon: string; file: string }> = {
+  guide: { label: 'User Guide', icon: '📖', file: '/docs.md' },
+  whitepaper: { label: 'Whitepaper', icon: '📄', file: '/whitepaper.md' },
+};
+
+const TAB_ERRORS: Record<DocsTab, string> = {
+  guide: '## Error\n\nFailed to load documentation file.',
+  whitepaper: '## Error\n\nFailed to load whitepaper file.',
+};
+
 function DocsPage() {
+  const [tab, setTab] = useState<DocsTab>('guide');
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(true);
   const [activeIdx, setActiveIdx] = useState(0);
   const [tocOpen, setTocOpen] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  const switchTab = useCallback((t: DocsTab) => {
+    setTab(t);
+    setActiveIdx(0);
+    setTocOpen(false);
+    setLoading(true);
+  }, []);
+
+  useEffect(() => {
+    contentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [activeIdx]);
 
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch('/docs.md');
+        const res = await fetch(TAB_LABELS[tab].file);
         // [V7-FIX] Check res.ok before parsing — 404 returns HTML error page as text
         if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-        const text = await res.text();
+        let text = await res.text();
+        for (const [placeholder, value] of Object.entries(placeholderValues)) {
+          text = text.replaceAll(placeholder, value);
+        }
         setContent(text);
       } catch {
-        setContent('## Error\n\nFailed to load documentation file.');
+        setContent(TAB_ERRORS[tab]);
       } finally {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [tab]);
 
   const { intro, sections } = useMemo(() => parseSections(content), [content]);
   const activeSection = sections[activeIdx];
@@ -189,13 +232,29 @@ function DocsPage() {
   return (
     <div className="max-w-5xl mx-auto py-4">
       <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] overflow-hidden">
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-[var(--app-border)]">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[var(--app-blue)] to-[var(--app-blue-2)] flex items-center justify-center font-bold text-sm shadow-lg shadow-[var(--app-shadow)]">
+        <div className="flex items-center gap-3 px-4 lg:px-6 py-3 border-b border-[var(--app-border)]">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[var(--app-blue)] to-[var(--app-blue-2)] flex items-center justify-center font-bold text-sm shadow-lg shadow-[var(--app-shadow)] shrink-0">
             D
           </div>
-          <h1 className="text-lg font-bold text-[var(--app-text)]">
+          <h1 className="text-lg font-bold text-[var(--app-text)] hidden sm:block">
             Documentation
           </h1>
+          <div className="flex items-center bg-[var(--app-panel-soft-2)] rounded-xl p-0.5 ml-1 sm:ml-2">
+            {(Object.entries(TAB_LABELS) as [DocsTab, typeof TAB_LABELS[DocsTab]][]).map(([key, cfg]) => (
+              <button
+                key={key}
+                onClick={() => switchTab(key)}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-[10px] text-xs font-medium transition-all duration-200 ${
+                  tab === key
+                    ? 'bg-[var(--app-panel)] text-[var(--app-blue-3)] shadow-sm'
+                    : 'text-[var(--app-muted)] hover:text-[var(--app-text)]'
+                }`}
+              >
+                <span className="hidden xs:inline">{cfg.icon}</span>
+                {cfg.label}
+              </button>
+            ))}
+          </div>
           <button
             onClick={() => setTocOpen(!tocOpen)}
             className="lg:hidden ml-auto p-1.5 rounded-lg hover:bg-[var(--app-hover)] text-[var(--app-muted)] transition-colors"
@@ -284,7 +343,7 @@ function DocsPage() {
                 </div>
               </div>
             )}
-            <div className="flex-1 min-w-0 p-6 lg:p-8">
+            <div ref={contentRef} className="flex-1 min-w-0 p-6 lg:p-8 transition-opacity duration-200">
               {activeIdx === -1 ? (
                 <>
                   <ReactMarkdown
