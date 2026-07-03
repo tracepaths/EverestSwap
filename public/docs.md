@@ -1,13 +1,14 @@
 # EverestSwap — User Guide
 
-Welcome to **EverestSwap**, a decentralized exchange (DEX) on the Octra Network. This guide covers everything you need to get started.
+Welcome to **EverestSwap**, a decentralized exchange (DEX) deployed on the **Octra Network** — an FHE (Fully Homomorphic Encryption) blockchain with natively encrypted balances and private transactions. This guide covers everything you need to get started.
 
 ---
 
 ## Quick Start
 
-### 1. Install 0xio Wallet
-- Download **0xio Wallet** from [0xio.xyz](https://0xio.xyz/)
+### 1. Install a Wallet
+- Download **0xio Wallet** from [0xio.xyz](https://0xio.xyz/) (an independent, community-built wallet for Octra)
+- Alternatively, use the official browser wallet at [wallet.octra.org](https://wallet.octra.org/)
 - Create a new wallet or import an existing one
 - Make sure you're connected to **Octra Devnet** (or Mainnet for production)
 
@@ -52,7 +53,7 @@ Welcome to **EverestSwap**, a decentralized exchange (DEX) on the Octra Network.
 ### Tips for Swapping
 - Higher price impact (>5%) means you're moving the market significantly — consider splitting your trade
 - Set higher slippage (1%) for volatile tokens
-- Make sure you have enough OCT for gas fees (at least 0.1 OCT)
+- Make sure you have enough OCT for network fees (at least 0.1 OCT)
 
 ---
 
@@ -253,7 +254,7 @@ Any pair that has a liquidity pool. Common pairs include WOCT/OES, and you can c
 ### Transactions
 
 **Why is my transaction stuck?**
-Transactions require OCT for gas. Make sure you have at least 0.1 OCT in your wallet.
+Transactions require OCT for network fees (denominated in **ou** — 1 OCT = 1,000,000 ou). Make sure you have at least 0.1 OCT in your wallet.
 
 **How long does each step take?**
 - Individual transactions: 2-10 seconds
@@ -314,7 +315,7 @@ The indexer is best-effort. If it's unavailable, swap and price information stil
 |---------|----------|
 | Wallet not connecting | Make sure 0xio Wallet is installed and on the correct network |
 | "Insufficient balance" | Get test OCT from the faucet |
-| Transaction keeps failing | Check you have enough OCT for gas, or increase slippage |
+| Transaction keeps failing | Check you have enough OCT for network fees, or increase slippage |
 | "Price impact too high" | Check the price impact box to confirm (required above 5%) |
 | Pool not appearing | Pools load automatically — try refreshing the page |
 | Price chart not showing | The indexer might be down — swaps still work without it |
@@ -336,7 +337,9 @@ The indexer is best-effort. If it's unavailable, swap and price information stil
 | Router | `{{EVERESTSWAP_DEVNET_ROUTER_ADDRESS}}` |
 | WOCT | `{{EVERESTSWAP_DEVNET_WOCT_ADDRESS}}` |
 | OES | `{{EVERESTSWAP_DEVNET_OES_ADDRESS}}` |
-| Wallet | [0xio Wallet](https://0xio.xyz/) |
+| Native Asset | OCT (6 decimals, 1 OCT = 1,000,000 ou) |
+| RPC Protocol | JSON-RPC 2.0, `POST /rpc` |
+| Wallet | [0xio Wallet](https://0xio.xyz/) (independent) / [wallet.octra.org](https://wallet.octra.org/) (official) |
 | Faucet | [Devnet Faucet](https://devnet.octrascan.io/faucet) |
 
 ---
@@ -345,4 +348,6 @@ The indexer is best-effort. If it's unavailable, swap and price information stil
 
 - **Documentation**: This page (always up to date)
 - **Issues**: Report bugs at the project repository
-- **Developer Docs**: See the project's developer documentation for architecture and API details
+- **Octra Docs**: [docs.octra.org](https://docs.octra.org/)
+- **OctraScan Explorer**: [octrascan.io](https://octrascan.io/)
+- **Octra Labs GitHub**: [github.com/octra-labs](https://github.com/octra-labs)
