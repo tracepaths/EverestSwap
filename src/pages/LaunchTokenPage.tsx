@@ -4,7 +4,7 @@ import { useApp } from '../contexts/AppContext';
 import { walletService } from '../services/walletService';
 import { sanitizeNumericInput } from '../services/swapService';
 import type { TokenLaunchConfig } from '../types';
-import { EXPLORER_URL } from '../config';
+import { EXPLORER_URL, CONTRACTS, WOCT_TOKEN } from '../config';
 import { cookieStorage } from '../services/cookieStorage';
 
 type LaunchStep =
@@ -16,12 +16,6 @@ type LaunchStep =
   | { type: 'error'; message: string };
 
 type WizardStep = 1 | 2 | 3 | 4;
-
-// [V8-FACTORY] Allocation entry for batch distribution (max 8 per tx)
-interface AllocEntry {
-  address: string;
-  amount: string;
-}
 
 const INITIAL_CONFIG: TokenLaunchConfig = {
   // Step 1: General
@@ -87,16 +81,23 @@ function LaunchTokenPage() {
   const [config, setConfig] = useState<TokenLaunchConfig>(INITIAL_CONFIG);
   const [wizardStep, setWizardStep] = useState<WizardStep>(1);
   const [step, setStep] = useState<LaunchStep>({ type: 'idle' });
-  // [V8-FACTORY] Distribution state (max 8 recipients per batchTransfer8)
-  const [allocations, setAllocations] = useState<AllocEntry[]>(
-    Array.from({ length: 8 }, () => ({ address: '', amount: '' }))
-  );
-  const [batchStep, setBatchStep] = useState<'idle' | 'sending' | 'done' | 'error'>('idle');
-  const [batchError, setBatchError] = useState('');
-
   const mountedRef = useRef(true);
   const launchingRef = useRef(false);
   const configLoadedRef = useRef(false);
+
+  // Liquidity flow state
+  type LiquidityStep =
+    | { type: 'idle' }
+    | { type: 'deploying_pool' }
+    | { type: 'setting_tokens' }
+    | { type: 'registering' }
+    | { type: 'granting' }
+    | { type: 'adding_liquidity' }
+    | { type: 'done'; poolAddress: string }
+    | { type: 'error'; message: string };
+  const [liquidityStep, setLiquidityStep] = useState<LiquidityStep>({ type: 'idle' });
+  const [liqTokenAmount, setLiqTokenAmount] = useState('');
+  const [liqWoctAmount, setLiqWoctAmount] = useState('');
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
@@ -383,61 +384,134 @@ function LaunchTokenPage() {
     }
   };
 
-  // [V8-FACTORY] Batch distribution handler
-  const handleBatchTransfer = async () => {
+  // Liquidity step labels for progress indicator
+  const liquiditySteps: { key: LiquidityStep['type']; label: string }[] = [
+    { key: 'deploying_pool', label: 'Deploy SwapPool contract' },
+    { key: 'setting_tokens', label: 'Set pool token pair' },
+    { key: 'registering', label: 'Register pool in factory' },
+    { key: 'granting', label: 'Grant token allowance to pool' },
+    { key: 'adding_liquidity', label: 'Add initial liquidity with WOCT' },
+  ];
+  const liquidityStepIndex = liquiditySteps.findIndex(s => s.key === liquidityStep.type);
+
+  const handleAddLiquidity = async () => {
     if (step.type !== 'done') return;
+    if (liquidityStep.type !== 'idle') return;
     const tokenAddress = step.tokenAddress;
-    setBatchStep('sending');
-    setBatchError('');
+
+    const walletSnap = walletService.address;
+    if (!walletSnap) {
+      setLiquidityStep({ type: 'error', message: 'Wallet not connected' });
+      return;
+    }
+
+    const rawToken = (() => {
+      try {
+        const v = BigInt(liqTokenAmount.trim());
+        if (v <= 0n) return null;
+        return (v * BigInt(10) ** BigInt(config.decimals)).toString();
+      } catch { return null; }
+    })();
+    const rawWoct = (() => {
+      try {
+        const v = parseFloat(liqWoctAmount);
+        if (!Number.isFinite(v) || v <= 0) return null;
+        return BigInt(Math.round(v * 1_000_000)).toString();
+      } catch { return null; }
+    })();
+    if (!rawToken || !rawWoct) {
+      setLiquidityStep({ type: 'error', message: 'Enter valid token and WOCT amounts' });
+      return;
+    }
 
     try {
-      const walletSnap = walletService.address;
-      if (!walletSnap) throw new Error('Wallet not connected');
+      const factoryAddr = CONTRACTS.factory;
+      if (!factoryAddr) throw new Error('Factory contract not configured');
+      const woctAddr = WOCT_TOKEN.address;
 
-      // Build params for batchTransfer8: [r1, a1, r2, a2, ..., r8, a8]
-      // Empty address = skip, amount 0 = skip
-      const decimals = config.decimals;
-      const params: string[] = [];
-      for (let i = 0; i < 8; i++) {
-        const alloc = allocations[i];
-        if (alloc.address.trim() && alloc.amount.trim()) {
-          const raw = BigInt(alloc.amount.trim()) * BigInt(10) ** BigInt(decimals);
-          params.push(alloc.address.trim(), raw.toString());
-        } else {
-          params.push('', '0');
-        }
-      }
+      // Step 1: Deploy pool
+      setLiquidityStep({ type: 'deploying_pool' });
+      const poolSourceResp = await fetch('/contracts/SwapPool.aml');
+      if (!poolSourceResp.ok) throw new Error('Failed to load SwapPool.aml');
+      const poolSource = await poolSourceResp.text();
+      const poolCompile = await rpc.compileAml(poolSource);
+      const poolBytecode = poolCompile.bytecode;
 
-      // Verify at least one allocation
-      const hasAny = allocations.some(a => a.address.trim() && a.amount.trim());
-      if (!hasAny) throw new Error('Enter at least one recipient and amount');
+      const bal = await rpc.call<{ balance: string; nonce: number }>('octra_balance', [walletSnap]);
+      if (walletService.address !== walletSnap) throw new Error('Wallet changed — aborting');
+      const poolNonce = bal.nonce + 1;
 
-      const feeOu = await rpc.getRecommendedFee('call').then(r => r.recommended || '100000').catch(() => '100000');
+      const poolAddrResult = await rpc.computeContractAddress(poolBytecode, walletSnap, poolNonce);
+      const poolAddress = poolAddrResult.address;
 
-      const txHash = await walletService.callContract({
-        contract: tokenAddress,
-        method: 'batchTransfer8',
-        params,
-        rpc,
-        ou: feeOu,
+      let poolFeeOu = '100000';
+      try {
+        const feeResp = await rpc.getRecommendedFee('deploy');
+        poolFeeOu = feeResp.recommended || '100000';
+      } catch { /* fallback */ }
+
+      const poolDeployHash = await walletService.signAndSubmitDeployTx(rpc, {
+        bytecode: poolBytecode,
+        poolAddress,
+        nonce: poolNonce,
+        feeOu: poolFeeOu,
       });
+      await rpc.waitForReceipt(poolDeployHash, 60);
 
-      await rpc.waitForReceipt(txHash, 60);
-      setBatchStep('done');
-      rpc.clearCache();
-      refreshBalance().catch(() => {});
+      // Step 2: Set tokens
+      setLiquidityStep({ type: 'setting_tokens' });
+      const setTokensHash = await walletService.callContract({
+        contract: poolAddress,
+        method: 'set_tokens',
+        params: [tokenAddress, woctAddr],
+        rpc,
+      });
+      await rpc.waitForReceipt(setTokensHash, 60);
+
+      // Step 3: Register pool
+      setLiquidityStep({ type: 'registering' });
+      const regHash = await walletService.callContract({
+        contract: factoryAddr,
+        method: 'register_pool',
+        params: [tokenAddress, woctAddr, poolAddress],
+        rpc,
+      });
+      await rpc.waitForReceipt(regHash, 60);
+
+      // Step 4: Grant token allowance to pool
+      setLiquidityStep({ type: 'granting' });
+      const grantHash = await walletService.callContract({
+        contract: tokenAddress,
+        method: 'grant',
+        params: [poolAddress, rawToken],
+        rpc,
+      });
+      await rpc.waitForReceipt(grantHash, 60);
+
+      // Step 5: Add liquidity (with WOCT value)
+      setLiquidityStep({ type: 'adding_liquidity' });
+      const epochInfo = await rpc.call<{ epoch_id: number }>('epoch_current');
+      const deadline = (epochInfo?.epoch_id || 0) + 300;
+
+      const addHash = await walletService.callContract({
+        contract: poolAddress,
+        method: 'add_liquidity',
+        params: [rawToken, rawWoct, '1', String(deadline), '0'],
+        amount: rawWoct,
+        rpc,
+      });
+      await rpc.waitForReceipt(addHash, 60);
+
+      if (mountedRef.current) {
+        setLiquidityStep({ type: 'done', poolAddress });
+        rpc.clearCache();
+        refreshBalance().catch(() => {});
+      }
     } catch (e) {
-      setBatchStep('error');
-      setBatchError(e instanceof Error ? e.message : 'Batch transfer failed');
+      if (mountedRef.current) {
+        setLiquidityStep({ type: 'error', message: e instanceof Error ? e.message : 'Liquidity failed' });
+      }
     }
-  };
-
-  const updateAlloc = (index: number, field: 'address' | 'amount', value: string) => {
-    setAllocations(prev => {
-      const next = [...prev];
-      next[index] = { ...next[index], [field]: value };
-      return next;
-    });
   };
 
   const reset = () => {
@@ -445,9 +519,9 @@ function LaunchTokenPage() {
     setStep({ type: 'idle' });
     setConfig(INITIAL_CONFIG);
     setWizardStep(1);
-    setAllocations(Array.from({ length: 8 }, () => ({ address: '', amount: '' })));
-    setBatchStep('idle');
-    setBatchError('');
+    setLiquidityStep({ type: 'idle' });
+    setLiqTokenAmount('');
+    setLiqWoctAmount('');
   };
 
   const update = <K extends keyof TokenLaunchConfig>(key: K, value: TokenLaunchConfig[K]) => {
@@ -1139,67 +1213,130 @@ function LaunchTokenPage() {
                 </button>
               </div>
 
-              {/* ====== [V8-FACTORY] Batch Distribution ====== */}
-              {batchStep !== 'done' ? (
+              {/* ====== Inline Liquidity ====== */}
+              {liquidityStep.type === 'idle' && (
                 <div className="border-t border-[var(--app-border)] pt-4 mt-4 space-y-3">
-                  <h4 className="text-sm font-semibold">Distribute Tokens</h4>
+                  <h4 className="text-sm font-semibold">Add Initial Liquidity</h4>
                   <p className="text-[10px] text-[var(--app-muted-2)]">
-                    Send tokens to up to 8 recipients in a single transaction (1 sign).
-                    Leave address empty to skip a slot.
+                    Create a WOCT trading pair and seed initial liquidity.
+                    This will deploy a pool, register it, and add your tokens.
                   </p>
 
-                  {allocations.map((alloc, i) => (
-                    <div key={i} className="flex gap-2 items-start">
-                      <span className="text-[10px] text-[var(--app-muted-2)] mt-3 w-4">{i + 1}.</span>
-                      <div className="flex-1 space-y-1">
-                        <input
-                          type="text"
-                          value={alloc.address}
-                          onChange={e => updateAlloc(i, 'address', e.target.value)}
-                          placeholder="oct... (recipient)"
-                          className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-[var(--app-blue)]"
-                        />
-                      </div>
-                      <div className="w-28 space-y-1">
-                        <input
-                          type="text"
-                          value={alloc.amount}
-                          onChange={e => updateAlloc(i, 'amount', e.target.value.replace(/[^0-9]/g, ''))}
-                          placeholder="Amount"
-                          className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-[var(--app-blue)]"
-                        />
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-[var(--app-muted)]">Your Token Amount</label>
+                      <input
+                        type="text"
+                        value={liqTokenAmount}
+                        onChange={e => setLiqTokenAmount(safeNumeric(e.target.value))}
+                        placeholder="1000000"
+                        className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-[var(--app-blue)]"
+                      />
+                      <div className="text-[10px] text-[var(--app-muted-2)]">
+                        {config.symbol.trim().toUpperCase() || 'TOKEN'}
                       </div>
                     </div>
-                  ))}
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-[var(--app-muted)]">WOCT Amount</label>
+                      <input
+                        type="text"
+                        value={liqWoctAmount}
+                        onChange={e => setLiqWoctAmount(safeNumeric(e.target.value))}
+                        placeholder="1.0"
+                        className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-[var(--app-blue)]"
+                      />
+                      <div className="text-[10px] text-[var(--app-muted-2)]">WOCT</div>
+                    </div>
+                  </div>
 
-                  {batchStep === 'error' && (
-                    <div className="text-xs text-[var(--app-danger)] bg-red-400/10 rounded-lg px-3 py-2">
-                      {batchError}
+                  {liqTokenAmount && liqWoctAmount && Number(liqTokenAmount) > 0 && Number(liqWoctAmount) > 0 && (
+                    <div className="bg-[var(--app-panel-soft)] rounded-lg px-3 py-2 text-[10px] text-[var(--app-muted)] space-y-0.5">
+                      <div>Pool Fee: 0.30% (default)</div>
+                      <div>Initial Price: 1 {config.symbol.trim().toUpperCase() || 'TOKEN'} = {(Number(liqWoctAmount) / Number(liqTokenAmount)).toPrecision(6)} WOCT</div>
                     </div>
                   )}
 
                   <button
-                    onClick={handleBatchTransfer}
-                    disabled={batchStep === 'sending'}
+                    onClick={handleAddLiquidity}
+                    disabled={!liqTokenAmount || !liqWoctAmount || Number(liqTokenAmount) <= 0 || Number(liqWoctAmount) <= 0}
                     className="w-full py-3 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:from-[var(--app-muted-2)] disabled:to-[var(--app-muted-2)] rounded-xl font-medium transition-all text-sm"
                   >
-                    {batchStep === 'sending' ? (
-                      <span className="flex items-center justify-center gap-2">
-                        <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                        Sending...
-                      </span>
-                    ) : 'Batch Transfer (1 sign) 🚀'}
+                    Add Liquidity (5 signs)
                   </button>
                 </div>
-              ) : (
+              )}
+
+              {liquidityStep.type === 'error' && (
                 <div className="border-t border-[var(--app-border)] pt-4 mt-4">
+                  <div className="text-xs text-[var(--app-danger)] bg-red-400/10 rounded-lg px-3 py-2">
+                    {liquidityStep.message}
+                  </div>
+                  <button
+                    onClick={() => setLiquidityStep({ type: 'idle' })}
+                    className="mt-2 w-full py-2.5 bg-[var(--app-hover)] rounded-xl text-xs font-medium transition-colors"
+                  >
+                    Try Again
+                  </button>
+                </div>
+              )}
+
+              {liquidityStep.type !== 'idle' && liquidityStep.type !== 'done' && liquidityStep.type !== 'error' && (
+                <div className="border-t border-[var(--app-border)] pt-4 mt-4 space-y-2">
+                  <div className="text-xs font-semibold text-[var(--app-muted)]">Creating Pool...</div>
+                  {liquiditySteps.map((s, i) => {
+                    const isActive = liquidityStep.type === s.key;
+                    const isDone = liquidityStepIndex > i;
+                    return (
+                      <div key={s.key} className="flex items-center gap-2 text-xs">
+                        {isDone ? (
+                          <svg className="w-4 h-4 text-green-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                          </svg>
+                        ) : isActive ? (
+                          <div className="w-4 h-4 border-2 border-[var(--app-blue)] border-t-transparent rounded-full animate-spin shrink-0" />
+                        ) : (
+                          <div className="w-4 h-4 rounded-full border border-[var(--app-border)] shrink-0" />
+                        )}
+                        <span className={isDone ? 'text-green-400' : isActive ? 'text-[var(--app-blue-3)]' : 'text-[var(--app-muted-2)]'}>
+                          {s.label}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {liquidityStep.type === 'done' && (
+                <div className="border-t border-[var(--app-border)] pt-4 mt-4 space-y-3">
                   <div className="flex items-center gap-2 text-green-400 text-sm">
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
-                    Tokens distributed successfully!
+                    Pool created with initial liquidity!
                   </div>
-                  <button onClick={reset} className="mt-3 w-full py-3 bg-[var(--app-hover)] rounded-xl text-sm font-medium transition-colors">
+                  <div className="bg-[var(--app-panel-soft)] rounded-xl p-3 border border-[var(--app-border)] space-y-1">
+                    <div className="text-[10px] text-[var(--app-muted)]">Pool Address</div>
+                    <div className="font-mono text-xs break-all bg-[var(--app-hover)] rounded-lg px-3 py-2 select-all">
+                      {liquidityStep.poolAddress}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <a
+                      href={`${EXPLORER_URL}/address/${liquidityStep.poolAddress}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="py-2.5 bg-[var(--app-panel)] hover:bg-[var(--app-hover)] border border-[var(--app-border)] rounded-xl text-xs font-medium transition-colors text-center"
+                    >
+                      View Pool
+                    </a>
+                    <button
+                      onClick={() => navigate(`/swap`)}
+                      className="py-2.5 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] rounded-xl text-xs font-medium transition-colors"
+                    >
+                      Start Swapping
+                    </button>
+                  </div>
+                  <button onClick={reset} className="w-full py-2.5 bg-[var(--app-hover)] rounded-xl text-xs font-medium transition-colors">
                     Launch Another Token
                   </button>
                 </div>
