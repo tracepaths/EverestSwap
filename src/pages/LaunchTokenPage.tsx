@@ -17,6 +17,12 @@ type LaunchStep =
 
 type WizardStep = 1 | 2 | 3 | 4;
 
+// [V8-FACTORY] Allocation entry for batch distribution (max 8 per tx)
+interface AllocEntry {
+  address: string;
+  amount: string;
+}
+
 const INITIAL_CONFIG: TokenLaunchConfig = {
   // Step 1: General
   name: '',
@@ -81,6 +87,12 @@ function LaunchTokenPage() {
   const [config, setConfig] = useState<TokenLaunchConfig>(INITIAL_CONFIG);
   const [wizardStep, setWizardStep] = useState<WizardStep>(1);
   const [step, setStep] = useState<LaunchStep>({ type: 'idle' });
+  // [V8-FACTORY] Distribution state (max 8 recipients per batchTransfer8)
+  const [allocations, setAllocations] = useState<AllocEntry[]>(
+    Array.from({ length: 8 }, () => ({ address: '', amount: '' }))
+  );
+  const [batchStep, setBatchStep] = useState<'idle' | 'sending' | 'done' | 'error'>('idle');
+  const [batchError, setBatchError] = useState('');
 
   const mountedRef = useRef(true);
   const launchingRef = useRef(false);
@@ -371,11 +383,71 @@ function LaunchTokenPage() {
     }
   };
 
+  // [V8-FACTORY] Batch distribution handler
+  const handleBatchTransfer = async () => {
+    if (step.type !== 'done') return;
+    const tokenAddress = step.tokenAddress;
+    setBatchStep('sending');
+    setBatchError('');
+
+    try {
+      const walletSnap = walletService.address;
+      if (!walletSnap) throw new Error('Wallet not connected');
+
+      // Build params for batchTransfer8: [r1, a1, r2, a2, ..., r8, a8]
+      // Empty address = skip, amount 0 = skip
+      const decimals = config.decimals;
+      const params: string[] = [];
+      for (let i = 0; i < 8; i++) {
+        const alloc = allocations[i];
+        if (alloc.address.trim() && alloc.amount.trim()) {
+          const raw = BigInt(alloc.amount.trim()) * BigInt(10) ** BigInt(decimals);
+          params.push(alloc.address.trim(), raw.toString());
+        } else {
+          params.push('', '0');
+        }
+      }
+
+      // Verify at least one allocation
+      const hasAny = allocations.some(a => a.address.trim() && a.amount.trim());
+      if (!hasAny) throw new Error('Enter at least one recipient and amount');
+
+      const feeOu = await rpc.getRecommendedFee('call').then(r => r.recommended || '100000').catch(() => '100000');
+
+      const txHash = await walletService.callContract({
+        contract: tokenAddress,
+        method: 'batchTransfer8',
+        params,
+        rpc,
+        ou: feeOu,
+      });
+
+      await rpc.waitForReceipt(txHash, 60);
+      setBatchStep('done');
+      rpc.clearCache();
+      refreshBalance().catch(() => {});
+    } catch (e) {
+      setBatchStep('error');
+      setBatchError(e instanceof Error ? e.message : 'Batch transfer failed');
+    }
+  };
+
+  const updateAlloc = (index: number, field: 'address' | 'amount', value: string) => {
+    setAllocations(prev => {
+      const next = [...prev];
+      next[index] = { ...next[index], [field]: value };
+      return next;
+    });
+  };
+
   const reset = () => {
     cookieStorage.clearLaunchConfig();
     setStep({ type: 'idle' });
     setConfig(INITIAL_CONFIG);
     setWizardStep(1);
+    setAllocations(Array.from({ length: 8 }, () => ({ address: '', amount: '' })));
+    setBatchStep('idle');
+    setBatchError('');
   };
 
   const update = <K extends keyof TokenLaunchConfig>(key: K, value: TokenLaunchConfig[K]) => {
@@ -1066,6 +1138,72 @@ function LaunchTokenPage() {
                   Launch Another
                 </button>
               </div>
+
+              {/* ====== [V8-FACTORY] Batch Distribution ====== */}
+              {batchStep !== 'done' ? (
+                <div className="border-t border-[var(--app-border)] pt-4 mt-4 space-y-3">
+                  <h4 className="text-sm font-semibold">Distribute Tokens</h4>
+                  <p className="text-[10px] text-[var(--app-muted-2)]">
+                    Send tokens to up to 8 recipients in a single transaction (1 sign).
+                    Leave address empty to skip a slot.
+                  </p>
+
+                  {allocations.map((alloc, i) => (
+                    <div key={i} className="flex gap-2 items-start">
+                      <span className="text-[10px] text-[var(--app-muted-2)] mt-3 w-4">{i + 1}.</span>
+                      <div className="flex-1 space-y-1">
+                        <input
+                          type="text"
+                          value={alloc.address}
+                          onChange={e => updateAlloc(i, 'address', e.target.value)}
+                          placeholder="oct... (recipient)"
+                          className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-[var(--app-blue)]"
+                        />
+                      </div>
+                      <div className="w-28 space-y-1">
+                        <input
+                          type="text"
+                          value={alloc.amount}
+                          onChange={e => updateAlloc(i, 'amount', e.target.value.replace(/[^0-9]/g, ''))}
+                          placeholder="Amount"
+                          className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-[var(--app-blue)]"
+                        />
+                      </div>
+                    </div>
+                  ))}
+
+                  {batchStep === 'error' && (
+                    <div className="text-xs text-[var(--app-danger)] bg-red-400/10 rounded-lg px-3 py-2">
+                      {batchError}
+                    </div>
+                  )}
+
+                  <button
+                    onClick={handleBatchTransfer}
+                    disabled={batchStep === 'sending'}
+                    className="w-full py-3 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:from-[var(--app-muted-2)] disabled:to-[var(--app-muted-2)] rounded-xl font-medium transition-all text-sm"
+                  >
+                    {batchStep === 'sending' ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Sending...
+                      </span>
+                    ) : 'Batch Transfer (1 sign) 🚀'}
+                  </button>
+                </div>
+              ) : (
+                <div className="border-t border-[var(--app-border)] pt-4 mt-4">
+                  <div className="flex items-center gap-2 text-green-400 text-sm">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                    Tokens distributed successfully!
+                  </div>
+                  <button onClick={reset} className="mt-3 w-full py-3 bg-[var(--app-hover)] rounded-xl text-sm font-medium transition-colors">
+                    Launch Another Token
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <div className="flex items-center gap-3">

@@ -57,6 +57,12 @@ export interface TokenLaunchConfig {
   customTaxRecipient: string;
 }
 
+// [V8-FACTORY] Allocation entry for batch distribution
+export interface Allocation {
+  address: string;
+  amount: string; // raw token units
+}
+
 export {
   RPC_URL,
   INDEXER_URL,
