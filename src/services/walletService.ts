@@ -1,4 +1,4 @@
-import { ZeroXIOWallet, type TransactionHistory, type ContractParams } from '@0xio/sdk';
+import { ZeroXIOWallet, OctraProviderAdapter, type TransactionHistory, type ContractParams } from '@0xio/sdk';
 import { OctraRpc } from './octraRpc';
 
 // [V7-FIX] Fee cache: avoid repeated RPC calls for the same op_type
@@ -30,7 +30,11 @@ export class WalletService {
   private _inFlightSubmit: { address: string; nonce: number } | null = null;
 
   constructor() {
-    this.sdk = new ZeroXIOWallet({ appName: 'EverestSwap' });
+    this.sdk = new ZeroXIOWallet({
+      appName: 'EverestSwap',
+      adapter: OctraProviderAdapter,
+      requiredPermissions: ['read_balance', 'send_transactions', 'read_public_key'],
+    });
     this.setupAccountChangeListener();
   }
 

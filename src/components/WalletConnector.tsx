@@ -5,7 +5,7 @@ import { truncateAddress } from '../services/swapService';
 import { formatOctBalance } from '../utils/format';
 
 function WalletConnector() {
-  const { isConnected, walletAddress, walletBalance, isWalletInstalled, connect, disconnect, refreshBalance } = useApp();
+  const { isConnected, walletAddress, walletBalance, isWalletInstalled, connect, disconnect, refreshBalance, addToast } = useApp();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -91,8 +91,8 @@ function WalletConnector() {
         setConnecting(true);
         try {
           await connect();
-        } catch {
-          // silently fail
+        } catch (err) {
+          addToast('error', err instanceof Error ? err.message : 'Failed to connect wallet');
         } finally {
           setConnecting(false);
         }
