@@ -194,7 +194,6 @@ function sanitizeLabel(s: string): string {
 function Layout() {
   const { network, setNetwork, theme, setTheme, isConnected } = useApp();
   const location = useLocation();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [openMenu, setOpenMenu] = useState<HeaderMenu>(null);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [activityLoading, setActivityLoading] = useState(false);
@@ -273,184 +272,44 @@ function Layout() {
   }
 
   return (
-    <div className="h-screen flex text-[var(--app-text)] relative" style={{ zIndex: 1 }}>
+    <div className="h-screen flex text-[var(--app-text)] relative app-shell" style={{ zIndex: 1 }}>
       <SnowEffect />
-      <aside
-        className={`fixed inset-y-0 left-0 z-40 w-64 bg-[var(--app-panel)] backdrop-blur-2xl border-r border-[var(--app-border)] transform transition-transform duration-200 ease-in-out lg:translate-x-0 lg:static lg:inset-auto flex flex-col ${
-          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}
-      >
-        <div className="flex items-center gap-3 px-6 py-5 border-b border-[var(--app-border)]">
-          <div className="w-8 h-8 flex items-center justify-center relative">
-            <svg className="w-8 h-8" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <linearGradient id="logo-everest" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="#60A5FA" />
-                  <stop offset="100%" stopColor="#3B82F6" />
-                </linearGradient>
-                <linearGradient id="logo-lhotse" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="#93C5FD" />
-                  <stop offset="100%" stopColor="#1D4ED8" />
-                </linearGradient>
-              </defs>
-              {/* Back mountain peak */}
-              <path d="M22 10 L14 26 H30 Z" fill="url(#logo-lhotse)" opacity="0.6" />
-              {/* Main Everest peak */}
-              <path d="M12 4 L2 26 H22 Z" fill="url(#logo-everest)" />
-              {/* Snow cap on Everest */}
-              <path d="M12 4 L8.5 11.5 L12 10 L14.5 11.5 Z" fill="#FFFFFF" opacity="0.9" />
-              {/* Swap curved arrows at bottom */}
-              <path d="M6 22 C 10 20, 20 20, 24 22" stroke="#FFFFFF" strokeWidth="1.5" strokeLinecap="round" />
-              <path d="M24 22 L21 19.5 M24 22 L21 24.5" stroke="#FFFFFF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M20 25 C 16 27, 8 27, 4 25" stroke="#93C5FD" strokeWidth="1.5" strokeLinecap="round" />
-              <path d="M4 25 L7 27.5 M4 25 L7 22.5" stroke="#93C5FD" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </div>
-          <span className="text-lg font-bold tracking-tight bg-gradient-to-r from-[var(--app-blue-2)] to-[var(--app-text)] bg-clip-text text-transparent">
-            EverestSwap
-          </span>
-        </div>
-        <nav className="mt-4 px-3 space-y-1 flex-1">
-          {navItems.map((item) => {
-            const isActive = location.pathname === item.path;
-            return (
-              <Link
-                key={item.path}
-                to={item.path}
-                onClick={() => setSidebarOpen(false)}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-base font-medium transition-all duration-200 ${
-                  isActive
-                    ? 'bg-[var(--app-blue)]/15 text-[var(--app-blue-3)] shadow-sm shadow-[var(--app-shadow)]'
-                    : 'text-[var(--app-muted)] hover:text-[var(--app-text)] hover:bg-[var(--app-hover)]'
-                }`}
-              >
-                <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
-                </svg>
-                {item.label}
-              </Link>
-            );
-          })}
-        </nav>
-        <div className="px-4 py-4 border-t border-[var(--app-border)] space-y-2">
-          <Link
-            to="/docs"
-            onClick={() => setSidebarOpen(false)}
-            className="flex items-center gap-2 px-3 py-2 rounded-xl text-base text-[var(--app-muted-2)] hover:text-[var(--app-blue-3)] hover:bg-[var(--app-hover)] transition-all duration-200"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-            </svg>
-            Documentation
-          </Link>
-          <div className="text-[10px] text-[var(--app-muted-2)] px-3">EverestSwap v1.0.0</div>
-        </div>
-      </aside>
-
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 bg-black/70 backdrop-blur-xl z-30 lg:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-
       <div className="flex-1 flex flex-col h-screen min-w-0">
-        <header className="sticky top-0 z-20 bg-[var(--app-panel)]/40 backdrop-blur-2xl border-b border-[var(--app-border)]">
-          <div className="flex items-center justify-between px-4 lg:px-6 py-3">
-            <button
-              onClick={() => setSidebarOpen(prev => !prev)}
-              className="lg:hidden p-2 -ml-2 rounded-xl hover:bg-[var(--app-hover)] text-[var(--app-muted)] transition-colors"
-            >
-              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                {sidebarOpen ? (
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                ) : (
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-                )}
-              </svg>
-            </button>
+        <header className="sticky top-0 z-20 app-topbar backdrop-blur-2xl border-b border-[var(--app-border)]">
+          <div className="flex items-center gap-5 px-4 lg:px-8 py-3">
+            <Link to="/" className="flex items-center gap-3 shrink-0" aria-label="EverestSwap home">
+              <div className="token-orb w-9 h-9 rounded-xl bg-gradient-to-br from-[var(--app-blue-2)] to-[var(--app-blue)] flex items-center justify-center text-[#07131d] font-extrabold">E</div>
+              <div className="hidden sm:block">
+                <div className="text-base font-extrabold tracking-tight">Everest<span className="text-[var(--app-blue-2)]">Swap</span></div>
+                <div className="eyebrow text-[8px] text-[var(--app-muted-2)]">Octra liquidity layer</div>
+              </div>
+            </Link>
+
+            <nav className="hidden md:flex items-center gap-1 overflow-x-auto" aria-label="Primary navigation">
+              {navItems.map(item => <Link key={item.path} to={item.path} className={`px-3 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors ${location.pathname === item.path ? 'bg-[var(--app-blue)]/15 text-[var(--app-blue-3)]' : 'text-[var(--app-muted)] hover:bg-[var(--app-hover)] hover:text-[var(--app-text)]'}`}>{item.label}</Link>)}
+            </nav>
 
             <div ref={controlsRef} className="flex flex-wrap items-center justify-end gap-2 lg:gap-3 ml-auto">
               <div className="relative">
-                <button
-                  onClick={() => toggleMenu('network')}
-                  className="flex items-center gap-2 bg-[var(--app-panel)] hover:bg-[var(--app-hover)] border border-[var(--app-border)] rounded-xl px-3 py-2 text-base font-medium transition-colors"
-                >
-                  <span className="text-[var(--app-muted-2)]">Network</span>
+                <button onClick={() => toggleMenu('network')} className="hidden sm:flex items-center gap-2 bg-[var(--app-panel-soft-2)] hover:bg-[var(--app-hover)] border border-[var(--app-border)] rounded-xl px-3 py-2 text-xs font-semibold transition-colors">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--app-success)] shadow-[0_0_8px_var(--app-success)]" />
                   <span className="text-[var(--app-text)] capitalize">{network}</span>
-                  <svg className="w-3.5 h-3.5 text-[var(--app-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                  </svg>
+                  <svg className="w-3.5 h-3.5 text-[var(--app-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
                 </button>
                 {openMenu === 'network' && (
                   <div className="absolute right-0 top-full mt-2 w-40 bg-[var(--app-dropdown-bg)] border border-[var(--app-border)] rounded-xl shadow-xl overflow-hidden z-50">
-                    {networks.map(item => (
-                      <button
-                        key={item.value}
-                        onClick={() => handleNetworkSelect(item.value as 'devnet' | 'mainnet')}
-                        className={`w-full flex items-center justify-between px-4 py-2.5 text-base transition-colors ${
-                          network === item.value ? 'bg-[var(--app-blue)]/15 text-[var(--app-blue-3)]' : 'text-[var(--app-muted)] hover:bg-[var(--app-hover)] hover:text-[var(--app-text)]'
-                        }`}
-                      >
-                        {item.label}
-                        {!MAINNET_CONFIGURED && item.value === 'mainnet' && (
-                          <span className="text-[10px] text-[var(--app-warning)]">not configured</span>
-                        )}
-                        {network === item.value && (
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                          </svg>
-                        )}
-                      </button>
-                    ))}
+                    {networks.map(item => <button key={item.value} onClick={() => handleNetworkSelect(item.value as 'devnet' | 'mainnet')} className={`w-full flex items-center justify-between px-4 py-2.5 text-sm transition-colors ${network === item.value ? 'bg-[var(--app-blue)]/15 text-[var(--app-blue-3)]' : 'text-[var(--app-muted)] hover:bg-[var(--app-hover)] hover:text-[var(--app-text)]'}`}>{item.label}{!MAINNET_CONFIGURED && item.value === 'mainnet' && <span className="text-[10px] text-[var(--app-warning)]">not configured</span>}</button>)}
                   </div>
                 )}
               </div>
 
-              <div className="relative">
-                <button
-                  onClick={() => toggleMenu('theme')}
-                  className="flex items-center gap-2 bg-[var(--app-panel)] hover:bg-[var(--app-hover)] border border-[var(--app-border)] rounded-xl px-3 py-2 text-base font-medium transition-colors"
-                >
-                  <span className="text-[var(--app-muted-2)]">Theme</span>
-                  <span className="text-[var(--app-text)] capitalize">{theme}</span>
-                  <svg className="w-3.5 h-3.5 text-[var(--app-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-                {openMenu === 'theme' && (
-                  <div className="absolute right-0 top-full mt-2 w-40 bg-[var(--app-dropdown-bg)] border border-[var(--app-border)] rounded-xl shadow-xl overflow-hidden z-50">
-                    {themes.map(item => (
-                      <button
-                        key={item.value}
-                        onClick={() => { setTheme(item.value as 'dark' | 'light' | 'blue'); setOpenMenu(null); }}
-                        className={`w-full flex items-center justify-between px-4 py-2.5 text-base transition-colors ${
-                          theme === item.value ? 'bg-[var(--app-blue)]/15 text-[var(--app-blue-3)]' : 'text-[var(--app-muted)] hover:bg-[var(--app-hover)] hover:text-[var(--app-text)]'
-                        }`}
-                      >
-                        {item.label}
-                        {theme === item.value && (
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                          </svg>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                )}
+              <div className="relative hidden lg:block">
+                <button onClick={() => toggleMenu('theme')} className="flex items-center gap-2 bg-[var(--app-panel-soft-2)] hover:bg-[var(--app-hover)] border border-[var(--app-border)] rounded-xl px-3 py-2 text-xs font-semibold transition-colors"><span className="text-[var(--app-muted-2)]">Theme</span><span className="text-[var(--app-text)] capitalize">{theme}</span><svg className="w-3.5 h-3.5 text-[var(--app-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg></button>
+                {openMenu === 'theme' && <div className="absolute right-0 top-full mt-2 w-36 bg-[var(--app-dropdown-bg)] border border-[var(--app-border)] rounded-xl shadow-xl overflow-hidden z-50">{themes.map(item => <button key={item.value} onClick={() => { setTheme(item.value as 'dark' | 'light' | 'blue'); setOpenMenu(null); }} className={`w-full flex items-center justify-between px-4 py-2.5 text-sm ${theme === item.value ? 'bg-[var(--app-blue)]/15 text-[var(--app-blue-3)]' : 'text-[var(--app-muted)] hover:bg-[var(--app-hover)]'}`}>{item.label}</button>)}</div>}
               </div>
 
-              <div className="relative">
-                <button
-                  onClick={() => toggleMenu('activity')}
-                  className="flex items-center gap-2 bg-[var(--app-panel)] hover:bg-[var(--app-hover)] border border-[var(--app-border)] rounded-xl px-3 py-2 text-base font-medium transition-colors"
-                >
-                  <span className="text-[var(--app-muted-2)]">Activity</span>
-                  <span className="text-[var(--app-text)]">{isConnected ? activity.length : 0}</span>
-                  <svg className="w-3.5 h-3.5 text-[var(--app-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
+              <div className="relative hidden sm:block">
+                <button onClick={() => toggleMenu('activity')} className="flex items-center gap-2 bg-[var(--app-panel-soft-2)] hover:bg-[var(--app-hover)] border border-[var(--app-border)] rounded-xl px-3 py-2 text-xs font-semibold transition-colors"><span className="text-[var(--app-muted-2)]">Activity</span><span className="text-[var(--app-text)]">{isConnected ? activity.length : 0}</span><svg className="w-3.5 h-3.5 text-[var(--app-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg></button>
                 {openMenu === 'activity' && (
                   <div className="absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-2rem)] bg-[var(--app-dropdown-bg)] border border-[var(--app-border)] rounded-xl shadow-xl overflow-hidden z-50">
                     <div className="px-4 py-3 border-b border-[var(--app-border)]">
@@ -507,10 +366,14 @@ function Layout() {
               <WalletConnector />
             </div>
           </div>
+
+          <nav className="md:hidden flex items-center gap-1 overflow-x-auto px-4 pb-3" aria-label="Mobile navigation">
+            {navItems.map(item => <Link key={item.path} to={item.path} className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap ${location.pathname === item.path ? 'bg-[var(--app-blue)]/15 text-[var(--app-blue-3)]' : 'text-[var(--app-muted)]'}`}>{item.label}</Link>)}
+          </nav>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-4 lg:p-6 relative">
-          <div className="mx-auto" style={{ maxWidth: '1280px' }}>
+        <main className="flex-1 overflow-y-auto p-4 lg:p-8 relative">
+          <div className="max-w-[1440px] mx-auto w-full">
             <Outlet />
           </div>
         </main>
