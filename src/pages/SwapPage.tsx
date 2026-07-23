@@ -1067,32 +1067,32 @@ function SwapPage() {
   const isAmountValid = /^\d+(\.\d+)?$/.test(fromAmount.trim()) && Number(fromAmount) > 0;
 
   return (
-    <div className="swap-page-shell max-w-6xl mx-auto pt-2 lg:pt-6">
-      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-6 lg:gap-8 items-start">
+    <div className="swap-page-shell w-full max-w-6xl mx-auto pt-1 sm:pt-2 lg:pt-6">
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-4 sm:gap-6 lg:gap-8 items-start">
         <section>
-          <div className="mb-7 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+          <div className="mb-5 sm:mb-7 flex flex-col sm:flex-row sm:items-end justify-between gap-3 sm:gap-4">
             <div>
               <div className="eyebrow text-[10px] text-[var(--app-blue-2)] mb-3">Octra trading terminal</div>
-              <h1 className="text-3xl sm:text-4xl font-extrabold tracking-[-0.04em] text-[var(--app-text-strong)]">Swap with clarity.</h1>
-              <p className="text-sm text-[var(--app-muted)] mt-2 max-w-lg">A calm, non-custodial swap experience for the next generation of Octra assets.</p>
+              <h1 className="text-2xl sm:text-4xl font-extrabold tracking-[-0.04em] text-[var(--app-text-strong)]">Swap with clarity.</h1>
+              <p className="text-xs sm:text-sm text-[var(--app-muted)] mt-2 max-w-lg">A calm, non-custodial swap experience for the next generation of Octra assets.</p>
             </div>
-            <div className="flex items-center gap-2 text-xs text-[var(--app-muted-2)] rounded-full border border-[var(--app-border)] bg-[var(--app-panel-soft-2)] px-3 py-2">
+            <div className="self-start sm:self-auto flex items-center gap-2 text-[11px] sm:text-xs text-[var(--app-muted-2)] rounded-full border border-[var(--app-border)] bg-[var(--app-panel-soft-2)] px-3 py-2">
               <span className="w-2 h-2 rounded-full bg-[var(--app-success)] shadow-[0_0_10px_var(--app-success)]" /> Routing live
             </div>
           </div>
 
           <div className="swap-card bg-[var(--app-panel)] backdrop-blur-xl rounded-[28px] border border-[var(--app-border)] overflow-hidden">
-            <div className="px-5 sm:px-7 py-5 border-b border-[var(--app-border)] flex items-center justify-between">
+            <div className="px-4 sm:px-7 py-4 sm:py-5 border-b border-[var(--app-border)] flex items-center justify-between">
               <div><div className="eyebrow text-[9px] text-[var(--app-muted-2)] mb-1">Trade terminal</div><h2 className="text-lg font-bold tracking-tight">Swap tokens</h2></div>
               <div className="flex items-center gap-2 text-xs text-[var(--app-muted-2)]"><span className="w-1.5 h-1.5 rounded-full bg-[var(--app-success)]" /> No custody</div>
             </div>
 
-            <div className="p-4 sm:p-7 space-y-3">
-              <div className="swap-input-panel bg-[var(--app-input)] rounded-2xl p-4 sm:p-5 border border-[var(--app-border)]">
+            <div className="p-3 sm:p-7 space-y-3">
+              <div className="swap-input-panel bg-[var(--app-input)] rounded-2xl p-3.5 sm:p-5 border border-[var(--app-border)]">
                 <div className="flex justify-between items-center mb-3"><span className="text-xs font-semibold text-[var(--app-muted)]">You pay</span><span className="text-xs text-[var(--app-muted-2)]">Balance: {fromBalance === null ? '...' : formatUnits(fromBalance, fromToken.decimals)}</span></div>
                 <div className="flex items-center gap-3">
-                  <input type="text" inputMode="decimal" value={fromAmount} onChange={e => setFromAmount(sanitizeNumericInput(e.target.value))} placeholder="0.0" className="flex-1 min-w-0 bg-transparent text-3xl sm:text-4xl font-mono tracking-[-0.06em] outline-none placeholder-[var(--app-muted-2)]" />
-                  <button onClick={() => setShowFromModal(true)} className="shrink-0 flex items-center gap-2 bg-[var(--app-hover)] border border-[var(--app-border)] rounded-xl px-3 py-2.5 hover:bg-[var(--app-hover)] transition-colors"><span className="token-orb w-7 h-7 rounded-full bg-gradient-to-br from-[var(--app-blue-2)] to-[var(--app-blue)] flex items-center justify-center text-[10px] font-extrabold text-[#07131d]">{fromToken.symbol.slice(0, 1)}</span><span className="font-bold">{fromToken.symbol}</span><svg className="w-4 h-4 text-[var(--app-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg></button>
+                  <input type="text" inputMode="decimal" value={fromAmount} onChange={e => setFromAmount(sanitizeNumericInput(e.target.value))} placeholder="0.0" className="flex-1 min-w-0 w-0 bg-transparent text-2xl sm:text-4xl font-mono tracking-[-0.06em] outline-none placeholder-[var(--app-muted-2)]" />
+                  <button onClick={() => setShowFromModal(true)} className="shrink-0 flex items-center gap-1.5 sm:gap-2 bg-[var(--app-hover)] border border-[var(--app-border)] rounded-xl px-2.5 sm:px-3 py-2.5 hover:bg-[var(--app-hover)] transition-colors"><span className="token-orb w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-gradient-to-br from-[var(--app-blue-2)] to-[var(--app-blue)] flex items-center justify-center text-[10px] font-extrabold text-[#07131d]">{fromToken.symbol.slice(0, 1)}</span><span className="font-bold text-sm sm:text-base">{fromToken.symbol}</span><svg className="w-4 h-4 text-[var(--app-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg></button>
                 </div>
                 {fromUsdValue && <div className="text-xs text-[var(--app-muted-2)] mt-2">{fromUsdValue}</div>}
                 <div className="flex gap-1.5 mt-4">{[10, 25, 50, 100].map(pct => { const bal = fromBalance ?? '0'; const isNative = fromToken.address === ''; const isMultiStep = isNative && mode === 'swap'; const isWrap = isNative && mode === 'wrap'; let effectivePct = pct; if (isNative && pct === 100) effectivePct = isMultiStep ? 98 : isWrap ? 95 : 99; const rawPct = BigInt(bal) * BigInt(effectivePct) / 100n; return <button key={pct} onClick={() => setFromAmount(formatUnits(rawPct.toString(), fromToken.decimals))} className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-[var(--app-hover)] hover:bg-[var(--app-blue)]/20 text-[var(--app-muted)] hover:text-[var(--app-text)] transition-colors">{pct === 100 ? 'MAX' : `${pct}%`}</button>; })}</div>
@@ -1104,13 +1104,13 @@ function SwapPage() {
 
               <div className="flex justify-center -my-1 relative z-10"><button onClick={switchTokens} aria-label="Switch tokens" className="token-orb bg-[var(--app-bg-3)] border-[6px] border-[var(--app-bg-2)] rounded-2xl p-2 hover:bg-[var(--app-hover)] text-[var(--app-blue-2)] hover:text-white transition-all duration-300 hover:rotate-180"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" /></svg></button></div>
 
-              <div className="swap-input-panel bg-[var(--app-input)] rounded-2xl p-4 sm:p-5 border border-[var(--app-border)]">
+              <div className="swap-input-panel bg-[var(--app-input)] rounded-2xl p-3.5 sm:p-5 border border-[var(--app-border)]">
                 <div className="flex justify-between items-center mb-3"><span className="text-xs font-semibold text-[var(--app-muted)]">You receive</span><span className="text-xs text-[var(--app-muted-2)]">Balance: {toBalance === null ? '...' : formatUnits(toBalance, toToken.decimals)}</span></div>
-                <div className="flex items-center gap-3"><input type="text" value={toAmount} readOnly placeholder="0.0" className="flex-1 min-w-0 bg-transparent text-3xl sm:text-4xl font-mono tracking-[-0.06em] outline-none placeholder-[var(--app-muted-2)]" /><button onClick={() => setShowToModal(true)} className="shrink-0 flex items-center gap-2 bg-[var(--app-hover)] border border-[var(--app-border)] rounded-xl px-3 py-2.5 hover:bg-[var(--app-hover)] transition-colors"><span className="token-orb w-7 h-7 rounded-full bg-gradient-to-br from-[var(--app-blue)] to-[var(--app-blue-2)] flex items-center justify-center text-[10px] font-extrabold text-[#07131d]">{toToken.symbol.slice(0, 1)}</span><span className="font-bold">{toToken.symbol}</span><svg className="w-4 h-4 text-[var(--app-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg></button></div>
+                <div className="flex items-center gap-3"><input type="text" value={toAmount} readOnly placeholder="0.0" className="flex-1 min-w-0 w-0 bg-transparent text-2xl sm:text-4xl font-mono tracking-[-0.06em] outline-none placeholder-[var(--app-muted-2)]" /><button onClick={() => setShowToModal(true)} className="shrink-0 flex items-center gap-1.5 sm:gap-2 bg-[var(--app-hover)] border border-[var(--app-border)] rounded-xl px-2.5 sm:px-3 py-2.5 hover:bg-[var(--app-hover)] transition-colors"><span className="token-orb w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-gradient-to-br from-[var(--app-blue)] to-[var(--app-blue-2)] flex items-center justify-center text-[10px] font-extrabold text-[#07131d]">{toToken.symbol.slice(0, 1)}</span><span className="font-bold text-sm sm:text-base">{toToken.symbol}</span><svg className="w-4 h-4 text-[var(--app-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg></button></div>
                 {toUsdValue && <div className="text-xs text-[var(--app-muted-2)] mt-2">{toUsdValue}</div>}
               </div>
 
-              <div className="bg-[var(--app-panel-soft-2)] rounded-2xl px-4 py-3.5 space-y-2 text-xs border border-[var(--app-border-soft)]">
+              <div className="bg-[var(--app-panel-soft-2)] rounded-2xl px-3.5 sm:px-4 py-3.5 space-y-2 text-xs border border-[var(--app-border-soft)]">
                 <div className="flex justify-between text-[var(--app-muted)]">
                   <span>Rate</span>
                   <span>1 {fromToken.symbol} = {Number(price).toFixed(6)} {toToken.symbol}</span>
@@ -1185,28 +1185,28 @@ function SwapPage() {
                 )}
               </div>
 
-              <button onClick={() => { if (!isConnected) { connect(); return; } setShowConfirm(true); }} disabled={!isConnected ? false : (!isAmountValid || (mode === 'swap' && !canSubmitPair))} className="w-full py-4 bg-gradient-to-r from-[var(--app-blue-2)] to-[var(--app-blue)] hover:brightness-110 disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-2xl font-extrabold transition-all shadow-lg shadow-[var(--app-shadow)]">{!isConnected ? 'Connect wallet to continue' : mode === 'swap' && !canSubmitPair ? pairError || 'Enter amount' : !isAmountValid ? 'Enter amount' : actionLabel}</button>
+              <button onClick={() => { if (!isConnected) { connect(); return; } setShowConfirm(true); }} disabled={!isConnected ? false : (!isAmountValid || (mode === 'swap' && !canSubmitPair))} className="w-full py-3.5 sm:py-4 bg-gradient-to-r from-[var(--app-blue-2)] to-[var(--app-blue)] hover:brightness-110 disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-2xl font-extrabold transition-all shadow-lg shadow-[var(--app-shadow)]">{!isConnected ? 'Connect wallet to continue' : mode === 'swap' && !canSubmitPair ? pairError || 'Enter amount' : !isAmountValid ? 'Enter amount' : actionLabel}</button>
               <div className="flex items-center justify-center gap-2 text-[10px] text-[var(--app-muted-2)]"><svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 11c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zm6 0a6 6 0 11-12 0c0 3.314 6 8 6 8s6-4.686 6-8z" /></svg> You always keep control of your assets</div>
             </div>
           </div>
         </section>
 
         <aside className="space-y-4 xl:pt-[102px]">
-          <div className="rounded-[26px] border border-[var(--app-border)] bg-[var(--app-panel)] backdrop-blur-xl p-5 shadow-xl shadow-black/10">
+          <div className="rounded-[22px] sm:rounded-[26px] border border-[var(--app-border)] bg-[var(--app-panel)] backdrop-blur-xl p-4 sm:p-5 shadow-xl shadow-black/10">
             <div className="eyebrow text-[9px] text-[var(--app-muted-2)] mb-4">Market snapshot</div>
             <div className="flex items-end justify-between gap-3"><div><div className="text-2xl font-extrabold tracking-tight">{octPrice > 0 ? `$${octPrice.toFixed(4)}` : '—'}</div><div className="text-xs text-[var(--app-muted)] mt-1">OCT reference price</div></div><span className="text-[10px] text-[var(--app-success)] rounded-full bg-[var(--app-success)]/10 border border-[var(--app-success)]/20 px-2 py-1">Live feed</span></div>
             <div className="h-px bg-[var(--app-border)] my-5" />
             <div className="grid grid-cols-2 gap-3"><div className="rounded-xl bg-[var(--app-panel-soft-2)] border border-[var(--app-border-soft)] p-3"><div className="text-[10px] text-[var(--app-muted-2)]">Pair</div><div className="text-sm font-bold mt-1">{fromToken.symbol}/{toToken.symbol}</div></div><div className="rounded-xl bg-[var(--app-panel-soft-2)] border border-[var(--app-border-soft)] p-3"><div className="text-[10px] text-[var(--app-muted-2)]">Route</div><div className="text-sm font-bold mt-1">{route.length >= 2 ? 'Multi-hop' : 'Direct'}</div></div></div>
           </div>
-          <div className="rounded-[26px] border border-[var(--app-border)] bg-[var(--app-panel)] backdrop-blur-xl p-5"><div className="flex items-center justify-between mb-4"><div><div className="eyebrow text-[9px] text-[var(--app-muted-2)]">Liquidity</div><h3 className="font-bold mt-1">Pool reserves</h3></div><span className="w-2 h-2 rounded-full bg-[var(--app-success)] shadow-[0_0_10px_var(--app-success)]" /></div><div className="space-y-2.5 text-sm font-mono"><div className="flex justify-between py-2 border-b border-[var(--app-border-soft)]"><span className="text-[var(--app-muted)]">{getTokenLabel(poolTokenA)}</span><span>{formatUnits(reserveA, getTokenDecimals(poolTokenA))}</span></div><div className="flex justify-between py-2"><span className="text-[var(--app-muted)]">{getTokenLabel(poolTokenB)}</span><span>{formatUnits(reserveB, getTokenDecimals(poolTokenB))}</span></div></div></div>
-          {indexerAvailable && <div className="rounded-[26px] border border-[var(--app-border)] bg-[var(--app-panel)] backdrop-blur-xl p-5"><div className="flex items-center justify-between mb-4"><div><div className="eyebrow text-[9px] text-[var(--app-muted-2)]">Price history</div><h3 className="font-bold mt-1">OES / WOCT</h3></div><span className="text-[10px] text-[var(--app-success)]">Live</span></div>{indexerLoading ? <div className="h-[200px] bg-[var(--app-panel-soft)] rounded-xl animate-pulse" /> : <PoolChart data={chartData} height={200} />}</div>}
+          <div className="rounded-[22px] sm:rounded-[26px] border border-[var(--app-border)] bg-[var(--app-panel)] backdrop-blur-xl p-4 sm:p-5"><div className="flex items-center justify-between mb-4"><div><div className="eyebrow text-[9px] text-[var(--app-muted-2)]">Liquidity</div><h3 className="font-bold mt-1">Pool reserves</h3></div><span className="w-2 h-2 rounded-full bg-[var(--app-success)] shadow-[0_0_10px_var(--app-success)]" /></div><div className="space-y-2.5 text-sm font-mono"><div className="flex justify-between py-2 border-b border-[var(--app-border-soft)]"><span className="text-[var(--app-muted)]">{getTokenLabel(poolTokenA)}</span><span>{formatUnits(reserveA, getTokenDecimals(poolTokenA))}</span></div><div className="flex justify-between py-2"><span className="text-[var(--app-muted)]">{getTokenLabel(poolTokenB)}</span><span>{formatUnits(reserveB, getTokenDecimals(poolTokenB))}</span></div></div></div>
+          {indexerAvailable && <div className="rounded-[22px] sm:rounded-[26px] border border-[var(--app-border)] bg-[var(--app-panel)] backdrop-blur-xl p-4 sm:p-5"><div className="flex items-center justify-between mb-4"><div><div className="eyebrow text-[9px] text-[var(--app-muted-2)]">Price history</div><h3 className="font-bold mt-1">OES / WOCT</h3></div><span className="text-[10px] text-[var(--app-success)]">Live</span></div>{indexerLoading ? <div className="h-[200px] bg-[var(--app-panel-soft)] rounded-xl animate-pulse" /> : <PoolChart data={chartData} height={200} />}</div>}
         </aside>
       </div>
 
       {showConfirm && (
         // [SECURITY] F-12: aria-modal + role dialog
         <div className="fixed inset-0 bg-black/75 backdrop-blur-xl z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="confirm-swap-title">
-          <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] max-w-[52%] w-full flex flex-col max-h-[65%] p-6 space-y-4 overflow-y-auto">
+          <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] w-full max-w-[min(92vw,560px)] max-h-[88vh] p-4 sm:p-6 space-y-4 overflow-y-auto">
             <h3 id="confirm-swap-title" className="text-lg font-semibold">Confirm {actionLabel}</h3>
             {mode === 'swap' && pairError && (
               <div className="text-xs text-[var(--app-danger)] bg-red-400/10 rounded-lg px-3 py-2">

@@ -137,3 +137,19 @@ input[type="number"] { -moz-appearance: textfield; }
 @keyframes page-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
 button[class*="bg-gradient-to-"] { color: #06131b !important; font-weight: 800; }
+
+.scrollbar-none { scrollbar-width: none; -ms-overflow-style: none; }
+.scrollbar-none::-webkit-scrollbar { display: none; }
+
+@media (max-width: 767px) {
+  .app-topbar { padding-top: env(safe-area-inset-top); }
+  .app-topbar > div:first-child { min-height: 3.75rem; }
+  .swap-page-shell { padding-bottom: max(1.25rem, env(safe-area-inset-bottom)); }
+  .swap-card { border-radius: 22px; }
+}
+
+@media (max-width: 380px) {
+  .app-topbar .token-orb { width: 2rem; height: 2rem; }
+  .app-topbar > div:first-child { gap: .5rem; padding-left: .75rem; padding-right: .75rem; }
+  .app-topbar .bg-gradient-to-r { padding-left: .6rem; padding-right: .6rem; }
+}

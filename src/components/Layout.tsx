@@ -10,12 +10,10 @@ import { truncateAddress } from '../services/swapService';
 import { CONTRACTS, MAINNET_CONFIGURED, buildExplorerTxUrl } from '../config';
 
 const navItems = [
-  { path: '/dashboard', label: 'Portfolio', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6' },
   { path: '/', label: 'Swap', icon: 'M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4' },
   { path: '/liquidity', label: 'Liquidity', icon: 'M13 10V3L4 14h7v7l9-11h-7z' },
   { path: '/pool', label: 'Pool', icon: 'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10' },
-  { path: '/launch', label: 'Launch', icon: 'M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.631 8.41m5.96 5.96a14.926 14.926 0 01-5.841 2.58m-.119-8.54a6 6 0 00-7.381 5.84h4.8m2.581-5.84a14.927 14.927 0 00-2.58 5.84m2.699 2.7c-.103.021-.207.041-.311.06a15.09 15.09 0 01-2.448-2.448 14.9 14.9 0 01.06-.312m-2.24 2.39a4.493 4.493 0 00-1.757 4.306 4.493 4.493 0 004.306-1.758M16.5 9a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z' },
-];
+  { path: '/launch', label: 'Launch', icon: 'M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.631 8.41m5.96 5.96a14.926 14.926 0 01-5.841 2.58m-.119-8.54a6 6 0 00-7.381 5.84h4.8m2.581-5.84a14.927 14.927 0 00-2.58 5.84m2.699 2.7c-.103.021-.207.041-.311.06a15.09 15.09 0 01-2.448-2.448 14.9 14.9 0 01.06-.312m-2.24 2.39a4.493 4.493 0 00-1.757 4.306 4.493 4.493 0 004.306-1.758M16.5 9a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z' },];
 
 const networks = [
   { value: 'devnet', label: 'Devnet' },
@@ -276,20 +274,20 @@ function Layout() {
       <SnowEffect />
       <div className="flex-1 flex flex-col h-screen min-w-0">
         <header className="sticky top-0 z-20 app-topbar backdrop-blur-2xl border-b border-[var(--app-border)]">
-          <div className="flex items-center gap-5 px-4 lg:px-8 py-3">
-            <Link to="/" className="flex items-center gap-3 shrink-0" aria-label="EverestSwap home">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 lg:gap-5 px-3 sm:px-4 lg:px-8 py-2.5 sm:py-3">
+            <Link to="/" className="flex items-center gap-2 sm:gap-3 shrink-0 min-w-0" aria-label="EverestSwap home">
               <div className="token-orb w-9 h-9 rounded-xl bg-gradient-to-br from-[var(--app-blue-2)] to-[var(--app-blue)] flex items-center justify-center text-[#07131d] font-extrabold">E</div>
               <div className="hidden sm:block">
-                <div className="text-base font-extrabold tracking-tight">Everest<span className="text-[var(--app-blue-2)]">Swap</span></div>
-                <div className="eyebrow text-[8px] text-[var(--app-muted-2)]">Octra liquidity layer</div>
+                <div className="text-sm sm:text-base font-extrabold tracking-tight">Everest<span className="text-[var(--app-blue-2)]">Swap</span></div>
+                <div className="eyebrow text-[8px] text-[var(--app-muted-2)]">Octra exchange</div>
               </div>
             </Link>
 
-            <nav className="hidden md:flex items-center gap-1 overflow-x-auto" aria-label="Primary navigation">
-              {navItems.map(item => <Link key={item.path} to={item.path} className={`px-3 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors ${location.pathname === item.path ? 'bg-[var(--app-blue)]/15 text-[var(--app-blue-3)]' : 'text-[var(--app-muted)] hover:bg-[var(--app-hover)] hover:text-[var(--app-text)]'}`}>{item.label}</Link>)}
+            <nav className="hidden md:flex items-center gap-1 min-w-0 overflow-x-auto" aria-label="Primary navigation">
+              {navItems.map(item => <Link key={item.path} to={item.path} className={`px-2.5 lg:px-3 py-2 rounded-xl text-xs font-semibold whitespace-nowrap shrink-0 transition-colors ${location.pathname === item.path ? 'bg-[var(--app-blue)]/15 text-[var(--app-blue-3)]' : 'text-[var(--app-muted)] hover:bg-[var(--app-hover)] hover:text-[var(--app-text)]'}`}>{item.label}</Link>)}
             </nav>
 
-            <div ref={controlsRef} className="flex flex-wrap items-center justify-end gap-2 lg:gap-3 ml-auto">
+            <div ref={controlsRef} className="flex items-center justify-end gap-1.5 sm:gap-2 lg:gap-3 ml-auto shrink-0">
               <div className="relative">
                 <button onClick={() => toggleMenu('network')} className="hidden sm:flex items-center gap-2 bg-[var(--app-panel-soft-2)] hover:bg-[var(--app-hover)] border border-[var(--app-border)] rounded-xl px-3 py-2 text-xs font-semibold transition-colors">
                   <span className="w-1.5 h-1.5 rounded-full bg-[var(--app-success)] shadow-[0_0_8px_var(--app-success)]" />
@@ -314,10 +312,10 @@ function Layout() {
                   <div className="absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-2rem)] bg-[var(--app-dropdown-bg)] border border-[var(--app-border)] rounded-xl shadow-xl overflow-hidden z-50">
                     <div className="px-4 py-3 border-b border-[var(--app-border)]">
                       <div className="flex items-center justify-between">
-                        <div className="text-base font-semibold">Recent Activity</div>
+                        <div className="text-sm font-semibold">Recent Activity</div>
                         <div className="text-[10px] text-[var(--app-muted-2)]">Last 10</div>
                       </div>
-                      <div className="text-base text-[var(--app-muted-2)] mt-1">
+                      <div className="text-xs text-[var(--app-muted-2)] mt-1">
                         {isConnected ? 'Latest wallet transactions' : 'Connect wallet to view activity'}
                       </div>
                     </div>
@@ -327,14 +325,14 @@ function Layout() {
                           <div key={i} className="h-14 bg-[var(--app-panel-soft)] rounded-xl animate-pulse" />
                         ))
                       ) : activity.length === 0 ? (
-                        <div className="text-center py-8 text-base text-[var(--app-muted)]">
+                        <div className="text-center py-8 text-xs text-[var(--app-muted)]">
                           {isConnected ? 'No activity found' : 'Connect wallet to view recent activity'}
                         </div>
                       ) : (
                         activity.map(item => (
                           <div key={item.hash} className="rounded-xl border border-[var(--app-border-soft)] bg-[var(--app-panel-soft)] p-3">
                             <div className="flex items-center justify-between gap-3">
-                              <div className="text-base font-medium truncate">{item.label}</div>
+                              <div className="text-xs font-medium truncate">{item.label}</div>
                               <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] capitalize ${statusClass(item.status)}`}>
                                 {item.status}
                               </span>
@@ -367,12 +365,12 @@ function Layout() {
             </div>
           </div>
 
-          <nav className="md:hidden flex items-center gap-1 overflow-x-auto px-4 pb-3" aria-label="Mobile navigation">
-            {navItems.map(item => <Link key={item.path} to={item.path} className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap ${location.pathname === item.path ? 'bg-[var(--app-blue)]/15 text-[var(--app-blue-3)]' : 'text-[var(--app-muted)]'}`}>{item.label}</Link>)}
+          <nav className="md:hidden flex items-center gap-1 overflow-x-auto px-4 pb-3 scrollbar-none" aria-label="Mobile navigation">
+            {navItems.map(item => <Link key={item.path} to={item.path} className={`px-3 py-2 rounded-xl text-xs font-semibold whitespace-nowrap shrink-0 ${location.pathname === item.path ? 'bg-[var(--app-blue)]/15 text-[var(--app-blue-3)]' : 'text-[var(--app-muted)]'}`}>{item.label}</Link>)}
           </nav>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-4 lg:p-8 relative">
+        <main className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 lg:p-8 relative">
           <div className="max-w-[1440px] mx-auto w-full">
             <Outlet />
           </div>
