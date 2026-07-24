@@ -1067,14 +1067,28 @@ function SwapPage() {
   const isAmountValid = /^\d+(\.\d+)?$/.test(fromAmount.trim()) && Number(fromAmount) > 0;
 
   return (
-    <div className="mx-auto w-full max-w-xl px-0 pt-1 sm:pt-3">
-      <div className="overflow-hidden rounded-[1.35rem] border border-[var(--app-border)] bg-[var(--app-panel)] shadow-2xl shadow-black/10 backdrop-blur-xl">
-        <div className="flex items-center justify-between border-b border-[var(--app-border)] px-4 py-4 sm:px-6">
-          <h2 className="text-lg font-semibold">Swap</h2>
+    <div className="swap-workspace mx-auto w-full max-w-5xl px-0 pb-8 pt-1 sm:pt-4">
+      <div className="swap-intro mb-4 px-1 sm:mb-6 sm:px-2">
+        <div>
+          <p className="swap-kicker">OCTRA SWAP TERMINAL</p>
+          <h1 className="swap-title">Move assets with clarity.</h1>
+          <p className="swap-subtitle">Simple routing, transparent execution, and no unnecessary noise.</p>
         </div>
+        <div className="swap-live-pill"><span className="status-dot" /> Live routing</div>
+      </div>
 
-        <div className="space-y-3 p-3 sm:p-5 md:p-6">
-          <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)]">
+      <div className="swap-layout-grid">
+        <section className="swap-card overflow-hidden rounded-[1.35rem] border border-[var(--app-border)] bg-[var(--app-panel)] shadow-2xl shadow-black/10 backdrop-blur-xl">
+          <div className="swap-card-header flex items-center justify-between border-b border-[var(--app-border)] px-4 py-4 sm:px-6">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--app-muted-2)]">Trade</p>
+              <h2 className="mt-1 text-lg font-semibold">Swap tokens</h2>
+            </div>
+            <div className="swap-mode-badge"><span className="status-dot" /> {actionLabel}</div>
+          </div>
+
+          <div className="space-y-3 p-3 sm:p-5 md:p-6">
+          <div className="swap-token-card bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)]">
             <div className="flex justify-between items-center mb-2">
               <span className="text-xs text-[var(--app-muted)]">You pay</span>
               <span className="text-xs text-[var(--app-muted)]">
@@ -1207,7 +1221,7 @@ function SwapPage() {
             )}
           </div>
 
-          <div className="bg-[var(--app-panel-soft)] rounded-xl p-3 space-y-1.5 text-xs">
+          <div className="swap-details bg-[var(--app-panel-soft)] p-3 space-y-1.5 text-xs">
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[var(--app-muted)]">
               <span>Rate</span>
               <span>1 {fromToken.symbol} = {Number(price).toFixed(6)} {toToken.symbol}</span>
@@ -1290,11 +1304,29 @@ function SwapPage() {
               setShowConfirm(true);
             }}
             disabled={!isConnected ? false : (!isAmountValid || (mode === 'swap' && !canSubmitPair))}
-            className="w-full py-3 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-xl font-medium transition-colors"
+            className="swap-primary-button w-full py-3 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-xl font-medium transition-colors"
           >
             {!isConnected ? 'Connect Wallet' : mode === 'swap' && !canSubmitPair ? pairError || 'Enter Amount' : !isAmountValid ? 'Enter Amount' : actionLabel}
           </button>
         </div>
+        </section>
+
+        <aside className="swap-side-panel">
+          <div className="swap-side-card">
+            <div className="flex items-center justify-between"><p className="swap-kicker">POOL STATUS</p><span className="status-dot" /></div>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <div><p className="swap-stat-label">Reserve A</p><p className="swap-stat-value">{formatUnits(reserveA, getTokenDecimals(poolTokenA))}</p></div>
+              <div><p className="swap-stat-label">Reserve B</p><p className="swap-stat-value">{formatUnits(reserveB, getTokenDecimals(poolTokenB))}</p></div>
+            </div>
+            <div className="swap-side-divider" />
+            <div className="flex items-center justify-between gap-3 text-xs"><span className="text-[var(--app-muted)]">Current route</span><span className="max-w-[58%] truncate font-mono text-[var(--app-text)]">{route.length ? route.join(' → ') : 'Finding route…'}</span></div>
+          </div>
+          <div className="swap-side-card swap-note-card">
+            <p className="swap-kicker">EXECUTION NOTES</p>
+            <p className="mt-3 text-sm leading-6 text-[var(--app-muted)]">Review the rate, impact, slippage, and network fee before confirming.</p>
+            <div className="mt-4 flex flex-wrap gap-2"><span className="swap-chip">Non-custodial</span><span className="swap-chip">On-chain</span><span className="swap-chip">Route-aware</span></div>
+          </div>
+        </aside>
       </div>
 
       {showConfirm && (
