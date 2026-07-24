@@ -303,3 +303,11 @@ button[class*="bg-gradient-to-"] {
   .swap-grid .swap-form { grid-column: 1; }
   .swap-grid .swap-chart-panel { grid-column: 1; grid-row: 2; display: none; }
 }
+
+.swap-grid > .swap-form,
+.swap-page > .mt-6 {
+  width: 100%;
+  max-width: 760px;
+  margin-left: auto;
+  margin-right: auto;
+}
