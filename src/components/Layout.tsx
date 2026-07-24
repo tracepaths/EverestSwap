@@ -195,6 +195,7 @@ function Layout() {
   const { network, setNetwork, theme, setTheme, isConnected } = useApp();
   const location = useLocation();
   const [openMenu, setOpenMenu] = useState<HeaderMenu>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [activityLoading, setActivityLoading] = useState(false);
   const controlsRef = useRef<HTMLDivElement>(null);
@@ -208,6 +209,10 @@ function Layout() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [location.pathname]);
 
   useEffect(() => {
     if (!isConnected) {
@@ -276,7 +281,7 @@ function Layout() {
       <SnowEffect />
       <header className="sticky top-0 z-30 border-b border-[var(--app-border)] bg-[var(--app-bg)]/75 backdrop-blur-2xl shadow-lg shadow-black/10">
         <div className="mx-auto w-full max-w-[1440px] px-3 sm:px-5 lg:px-8">
-          <div className="flex min-h-[68px] items-center gap-3 py-2 sm:gap-5">
+          <div className="flex min-h-[68px] flex-wrap items-center gap-3 py-2 sm:gap-5">
             <Link to="/" className="group flex shrink-0 items-center gap-2.5" aria-label="EverestSwap home">
               <span className="flex h-10 w-10 items-center justify-center rounded-2xl border border-[var(--app-blue-2)]/30 bg-[var(--app-blue)]/15 shadow-lg shadow-[var(--app-shadow)] transition-transform group-hover:-translate-y-0.5">
                 <svg className="h-7 w-7" viewBox="0 0 32 32" fill="none" aria-hidden="true">
@@ -290,7 +295,7 @@ function Layout() {
               <span className="hidden sm:block text-[15px] font-extrabold tracking-tight text-[var(--app-text)]">Everest<span className="text-[var(--app-blue-2)]">Swap</span></span>
             </Link>
 
-            <nav className="order-3 min-w-0 flex-1 overflow-x-auto pb-0.5 [scrollbar-width:none] sm:order-none" aria-label="Main navigation">
+            <nav className="hidden min-w-0 flex-1 overflow-x-auto pb-0.5 [scrollbar-width:none] lg:flex" aria-label="Main navigation">
               <div className="flex min-w-max items-center gap-1 rounded-2xl border border-[var(--app-border-soft)] bg-[var(--app-panel-soft-2)] p-1">
                 {navItems.map(item => {
                   const isActive = location.pathname === item.path;
@@ -300,7 +305,7 @@ function Layout() {
                   </Link>;
                 })}
                 <Link to="/docs" className={`flex min-h-10 items-center gap-2 whitespace-nowrap rounded-xl px-3 text-xs font-bold transition-all sm:px-3.5 sm:text-sm ${location.pathname === '/docs' ? 'bg-[var(--app-blue)] text-white shadow-md shadow-[var(--app-shadow)]' : 'text-[var(--app-muted)] hover:bg-[var(--app-hover)] hover:text-[var(--app-text)]'}`}>
-                  <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
+                  <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18 5.754 18 7.5 18s3.332 0 4.5 1.253m0-13C13.168 5 14.754 5 16.5 5c1.747 0 3.332 0 4.5 1.253v13C19.832 18 18.247 18 16.5 18c-1.746 0-3.332 1.253-4.5 1.253" /></svg>
                   Docs
                 </Link>
               </div>
@@ -320,8 +325,39 @@ function Layout() {
                 {openMenu === 'activity' && <div className="header-menu w-80 max-w-[calc(100vw-1.5rem)]"><div className="border-b border-[var(--app-border)] px-4 py-3"><div className="flex items-center justify-between text-sm font-bold"><span>Recent Activity</span><span className="text-[10px] text-[var(--app-muted-2)]">Last 10</span></div><div className="mt-1 text-xs text-[var(--app-muted-2)]">{isConnected ? 'Latest wallet transactions' : 'Connect wallet to view activity'}</div></div><div className="max-h-96 space-y-1 overflow-y-auto p-2">{activityLoading ? [1, 2, 3].map(i => <div key={i} className="h-14 animate-pulse rounded-xl bg-[var(--app-panel-soft)]" />) : activity.length === 0 ? <div className="py-8 text-center text-xs text-[var(--app-muted)]">{isConnected ? 'No activity found' : 'Connect wallet to view recent activity'}</div> : activity.map(item => <div key={item.hash} className="rounded-xl border border-[var(--app-border-soft)] bg-[var(--app-panel-soft)] p-3"><div className="flex items-center justify-between gap-3"><div className="truncate text-xs font-semibold">{item.label}</div><span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] capitalize ${statusClass(item.status)}`}>{item.status}</span></div><div className="mt-2 flex items-center justify-between gap-3 text-[10px] text-[var(--app-muted-2)]"><span className="truncate font-mono">{truncateAddress(item.hash, 8, 6)}</span><div className="flex shrink-0 items-center gap-2"><span>{item.time}</span><a href={getExplorerTxUrl(item.hash)} target="_blank" rel="noopener noreferrer" className="text-[var(--app-blue-3)] hover:underline">View TX →</a></div></div></div>)}</div></div>}
               </div>
               <WalletConnector />
+              <button
+                type="button"
+                onClick={() => setMobileMenuOpen(value => !value)}
+                className="mobile-menu-button lg:hidden"
+                aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
+                aria-expanded={mobileMenuOpen}
+              >
+                {mobileMenuOpen ? (
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M18 6L6 18" /></svg>
+                ) : (
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 7h16M4 12h16M4 17h16" /></svg>
+                )}
+              </button>
             </div>
           </div>
+          {mobileMenuOpen && (
+            <div className="mobile-menu-panel lg:hidden">
+              <div className="mobile-menu-heading">Navigate</div>
+              <div className="grid grid-cols-2 gap-2">
+                {navItems.map(item => {
+                  const isActive = location.pathname === item.path;
+                  return <Link key={item.path} to={item.path} onClick={() => setMobileMenuOpen(false)} className={`mobile-menu-link ${isActive ? 'mobile-menu-link-active' : ''}`}>
+                    <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d={item.icon} /></svg>
+                    {item.label}
+                  </Link>;
+                })}
+                <Link to="/docs" onClick={() => setMobileMenuOpen(false)} className={`mobile-menu-link ${location.pathname === '/docs' ? 'mobile-menu-link-active' : ''}`}>
+                  <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18 5.754 18 7.5 18s3.332 0 4.5 1.253m0-13C13.168 5 14.754 5 16.5 5c1.747 0 3.332 0 4.5 1.253v13C19.832 18 18.247 18 16.5 18c-1.746 0 3.332 0 4.5 1.253" /></svg>
+                  Docs
+                </Link>
+              </div>
+            </div>
+          )}
         </div>
       </header>
       <main className="relative min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-5 sm:py-6 lg:px-8 lg:py-8 safe-bottom">
