@@ -230,16 +230,16 @@ function DocsPage() {
   }, []);
 
   return (
-    <div className="max-w-5xl mx-auto py-4">
-      <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] overflow-hidden">
-        <div className="flex items-center gap-3 px-4 lg:px-6 py-3 border-b border-[var(--app-border)]">
+    <div className="page-surface mx-auto w-full max-w-6xl py-1 sm:py-3">
+      <div className="page-panel overflow-hidden">
+        <div className="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-6 border-b border-[var(--app-border)]">
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[var(--app-blue)] to-[var(--app-blue-2)] flex items-center justify-center font-bold text-sm shadow-lg shadow-[var(--app-shadow)] shrink-0">
             D
           </div>
           <h1 className="text-lg font-bold text-[var(--app-text)] hidden sm:block">
             Documentation
           </h1>
-          <div className="flex items-center bg-[var(--app-panel-soft-2)] rounded-xl p-0.5 ml-1 sm:ml-2">
+          <div className="flex max-w-full items-center overflow-x-auto bg-[var(--app-panel-soft-2)] rounded-xl p-0.5 ml-1 sm:ml-2">
             {(Object.entries(TAB_LABELS) as [DocsTab, typeof TAB_LABELS[DocsTab]][]).map(([key, cfg]) => (
               <button
                 key={key}

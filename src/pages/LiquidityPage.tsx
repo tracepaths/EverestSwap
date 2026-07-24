@@ -535,8 +535,12 @@ function LiquidityPage() {
   }
 
   return (
-    <><div className="max-w-lg mx-auto pt-4 space-y-4">
-      <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] overflow-hidden">
+    <><div className="page-surface mx-auto w-full max-w-2xl pt-1 sm:pt-3 space-y-5">
+      <div className="page-heading">
+        <div><div className="page-kicker">Liquidity management</div><h1 className="page-title">Liquidity</h1><p className="page-subtitle">Add capital to a pool or manage existing LP positions.</p></div>
+        <div className="swap-live-pill"><span className="status-dot" />{pool?.label || 'Select pool'}</div>
+      </div>
+      <div className="page-panel overflow-hidden">
         <div className="flex border-b border-[var(--app-border)]">
           <button
             onClick={() => setTab('add')}
@@ -552,7 +556,7 @@ function LiquidityPage() {
           </button>
         </div>
 
-        <div className="px-6 pt-4">
+        <div className="px-4 pt-4 sm:px-6">
           <div className="relative">
             <button
               onClick={() => setShowPoolSelect(!showPoolSelect)}
@@ -650,7 +654,7 @@ function LiquidityPage() {
         </div>
 
         {tab === 'add' ? (
-          <div className="p-6 space-y-3">
+          <div className="p-4 sm:p-6 space-y-3">
             {/* [V9] Surface pool-level misconfig BEFORE user signs anything. */}
             {poolSupport && poolSupport.ok === false && (
               <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 text-xs text-red-300 space-y-1">

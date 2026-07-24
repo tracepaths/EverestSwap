@@ -919,15 +919,10 @@ function PoolPage() {
   }, 0n);
 
   return (
-    <div className="max-w-3xl mx-auto pt-4 space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Pools</h2>
-        <button
-          onClick={() => setShowCreate(!showCreate)}
-          className="px-4 py-2 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] rounded-xl text-sm font-medium hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] transition-colors"
-        >
-          Create Pool
-        </button>
+    <div className="page-surface mx-auto w-full max-w-5xl pt-1 sm:pt-3 space-y-5">
+      <div className="page-heading">
+        <div><div className="page-kicker">EverestSwap markets</div><h1 className="page-title">Pools</h1><p className="page-subtitle">Explore available liquidity and route your next trade.</p></div>
+        <button onClick={() => setShowCreate(!showCreate)} className="page-action">{showCreate ? 'Close builder' : 'Create pool'}</button>
       </div>
 
       {showCreate && (
@@ -940,11 +935,9 @@ function PoolPage() {
         />
       )}
 
-      <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] overflow-hidden">
-        <div className="px-6 py-4 border-b border-[var(--app-border)]">
-          <h3 className="text-sm font-semibold">Active Pools</h3>
-        </div>
-        <div className="p-6">
+      <div className="page-panel overflow-hidden">
+        <div className="page-panel-header"><div><h2 className="page-panel-title">Active pools</h2><p className="page-panel-copy">Live reserves, fee tiers, and locked liquidity.</p></div><span className="swap-live-label"><span className="status-dot" />{pools.length} tracked</span></div>
+        <div className="p-4 sm:p-6">
           {loading ? (
             <div className="space-y-3">
               {[1, 2, 3].map(i => (
@@ -980,7 +973,7 @@ function PoolPage() {
                       )}
                     </div>
                   </div>
-                  <div className="grid grid-cols-4 gap-4 mt-4 text-sm">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mt-4 text-sm">
                     <div>
                       <div className="text-xs text-[var(--app-muted)]">{p.symbolA} Reserve</div>
                       <div className="font-mono mt-0.5">{formatUnits(p.reserveA, p.decimalsA)}</div>
@@ -1021,7 +1014,7 @@ function PoolPage() {
         </div>
       </div>
 
-      <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] p-5">
+      <div className="page-panel p-4 sm:p-5">
       <h3 className="text-sm font-semibold mb-3">Pool Analytics</h3>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
         <div>

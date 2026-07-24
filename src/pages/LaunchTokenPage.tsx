@@ -593,19 +593,14 @@ function LaunchTokenPage() {
 
   // ========== RENDER ==========
   return (
-      <div className="max-w-3xl mx-auto pt-4 space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h2 className="text-2xl font-bold">Launch Token</h2>
-          <p className="text-sm text-[var(--app-muted)] mt-1">
-            Deploy a feature-rich token on EverestSwap
-          </p>
-        </div>
+      <div className="page-surface mx-auto w-full max-w-4xl pt-1 sm:pt-3 space-y-5">
+      <div className="page-heading">
+        <div><div className="page-kicker">Token studio</div><h1 className="page-title">Launch Token</h1><p className="page-subtitle">Configure, review, and deploy a token on EverestSwap.</p></div>
         {(step.type === 'idle' || step.type === 'error') && (
           <button
             type="button"
             onClick={fillRandom}
-            className="text-base px-3 py-1.5 rounded-lg bg-[var(--app-panel-soft)] hover:bg-[var(--app-hover)] text-[var(--app-muted)] hover:text-[var(--app-text)] transition-colors border border-[var(--app-border)] whitespace-nowrap"
+            className="page-action whitespace-nowrap"
           >
             🎲 Random Fill
           </button>
@@ -615,7 +610,7 @@ function LaunchTokenPage() {
       {/* ====== Step tabs ====== */}
       {step.type === 'idle' || step.type === 'error' ? (
         <>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 overflow-x-auto pb-1">
             {([1, 2, 3, 4] as WizardStep[]).map(s => {
               const labels = ['General', 'Optional', 'Taxes', 'Summary'];
               const isActive = wizardStep === s;
@@ -645,7 +640,7 @@ function LaunchTokenPage() {
 
           {/* ====== Step 1: General ====== */}
           {wizardStep === 1 && (
-            <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] p-6 space-y-5">
+            <div className="page-panel p-4 sm:p-6 space-y-5">
               <h3 className="text-sm font-semibold">1. General</h3>
 
               <div className="grid grid-cols-2 gap-4">

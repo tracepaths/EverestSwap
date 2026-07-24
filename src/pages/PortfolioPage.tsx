@@ -286,11 +286,9 @@ export default function PortfolioPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Portfolio</h1>
-          <p className="text-sm text-[var(--app-muted)]">
+    <div className="page-surface space-y-6">
+      <div className="page-heading">
+        <div><div className="page-kicker">Wallet overview</div><h1 className="page-title">Portfolio</h1><p className="page-subtitle">
             {truncateAddress(walletAddress)} · {MAINNET_CONFIGURED ? 'mainnet ready' : 'devnet'}
             {lastUpdated ? ` · updated ${new Date(lastUpdated).toLocaleTimeString()}` : ''}
           </p>
@@ -298,7 +296,7 @@ export default function PortfolioPage() {
         <button
           type="button"
           onClick={() => void loadPortfolio()}
-          className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-[var(--app-blue)] text-white font-medium hover:opacity-90 transition-opacity"
+          className="page-action"
         >
           <span className={loading ? 'animate-spin' : ''}>↻</span>
           Refresh
@@ -313,7 +311,7 @@ export default function PortfolioPage() {
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.25fr_0.85fr]">
-        <section className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] p-6 space-y-4">
+        <section className="page-panel p-4 sm:p-6 space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-lg font-semibold">Assets</h2>
