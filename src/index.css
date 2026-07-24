@@ -296,3 +296,10 @@ button[class*="bg-gradient-to-"] {
 .page-panel-title { color: var(--app-text); font-size: .9rem; font-weight: 800; }
 .page-panel-copy { margin-top: .25rem; color: var(--app-muted-2); font-size: .7rem; }
 @media (max-width: 640px) { .page-heading { align-items: flex-start; flex-direction: column; gap: .75rem; } .page-action { width: 100%; } .page-panel-header { align-items: flex-start; flex-direction: column; } .page-title { font-size: 1.75rem; } }
+
+@media (min-width: 901px) {
+  .swap-page { max-width: 1080px; }
+  .swap-grid { grid-template-columns: minmax(0, 760px); justify-content: center; }
+  .swap-grid .swap-form { grid-column: 1; }
+  .swap-grid .swap-chart-panel { grid-column: 1; grid-row: 2; display: none; }
+}
