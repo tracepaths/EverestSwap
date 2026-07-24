@@ -1067,35 +1067,41 @@ function SwapPage() {
   const isAmountValid = /^\d+(\.\d+)?$/.test(fromAmount.trim()) && Number(fromAmount) > 0;
 
   return (
-    <div className="swap-workspace mx-auto w-full max-w-5xl px-0 pb-8 pt-1 sm:pt-4">
-      <div className="swap-intro mb-4 px-1 sm:mb-6 sm:px-2">
-        <div>
-          <p className="swap-kicker">OCTRA SWAP TERMINAL</p>
-          <h1 className="swap-title">Move assets with clarity.</h1>
-          <p className="swap-subtitle">Simple routing, transparent execution, and no unnecessary noise.</p>
-        </div>
-        <div className="swap-live-pill"><span className="status-dot" /> Live routing</div>
-      </div>
-
-      <div className="swap-layout-grid">
-        <section className="swap-card overflow-hidden rounded-[1.35rem] border border-[var(--app-border)] bg-[var(--app-panel)] shadow-2xl shadow-black/10 backdrop-blur-xl">
-          <div className="swap-card-header flex items-center justify-between border-b border-[var(--app-border)] px-4 py-4 sm:px-6">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--app-muted-2)]">Trade</p>
-              <h2 className="mt-1 text-lg font-semibold">Swap tokens</h2>
+    <div className="swap-page mx-auto w-full max-w-6xl pb-8 pt-1 sm:pt-4">
+      <div className="swap-grid">
+        {indexerAvailable && (
+          <aside className="swap-chart-panel">
+            <div className="swap-chart-card bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] p-4 sm:p-5">
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <div className="swap-chart-kicker">MARKET DATA</div>
+                  <h3 className="mt-1 text-sm font-bold">OES / WOCT</h3>
+                </div>
+                <span className="swap-live-label"><span className="status-dot" /> Live</span>
+              </div>
+              {indexerLoading ? (
+                <div className="h-[220px] animate-pulse rounded-xl bg-[var(--app-panel-soft)]" />
+              ) : (
+                <PoolChart data={chartData} height={220} />
+              )}
             </div>
-            <div className="swap-mode-badge"><span className="status-dot" /> {actionLabel}</div>
-          </div>
+          </aside>
+        )}
 
-          <div className="space-y-3 p-3 sm:p-5 md:p-6">
-          <div className="swap-token-card bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)]">
+        <div className="swap-form bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] overflow-hidden">
+        <div className="px-6 py-4 border-b border-[var(--app-border)]">
+          <h2 className="text-lg font-semibold">Swap</h2>
+        </div>
+
+        <div className="p-6 space-y-3">
+          <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)]">
             <div className="flex justify-between items-center mb-2">
               <span className="text-xs text-[var(--app-muted)]">You pay</span>
               <span className="text-xs text-[var(--app-muted)]">
                 Balance: {fromBalance === null ? '...' : formatUnits(fromBalance, fromToken.decimals)}
               </span>
             </div>
-            <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+            <div className="flex items-center gap-3">
               <input
                 type="text"
                 inputMode="decimal"
@@ -1103,7 +1109,7 @@ function SwapPage() {
                 // [SECURITY] F-1: Sanitize input to digits + single dot only
                 onChange={e => setFromAmount(sanitizeNumericInput(e.target.value))}
                 placeholder="0.0"
-                className="min-w-0 flex-1 bg-transparent text-2xl font-mono outline-none placeholder-[var(--app-muted-2)] sm:text-3xl"
+                className="flex-1 bg-transparent text-2xl font-mono outline-none placeholder-[var(--app-muted-2)]"
               />
               <div className="relative">
                 <button
@@ -1121,7 +1127,7 @@ function SwapPage() {
             {fromUsdValue && (
               <div className="text-xs text-[var(--app-muted)] mt-1">{fromUsdValue}</div>
             )}
-            <div className="mt-2 flex flex-wrap gap-1">
+            <div className="flex gap-1 mt-2">
               {[10, 25, 50, 100].map(pct => {
                 const bal = fromBalance ?? '0';
                 // [V7-FIX] For native OCT, reserve headroom for gas.
@@ -1195,13 +1201,13 @@ function SwapPage() {
                 Balance: {toBalance === null ? '...' : formatUnits(toBalance, toToken.decimals)}
               </span>
             </div>
-            <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+            <div className="flex items-center gap-3">
               <input
                 type="text"
                 value={toAmount}
                 readOnly
                 placeholder="0.0"
-                className="min-w-0 flex-1 bg-transparent text-2xl font-mono outline-none placeholder-[var(--app-muted-2)] sm:text-3xl"
+                className="flex-1 bg-transparent text-2xl font-mono outline-none placeholder-[var(--app-muted-2)]"
               />
               <div className="relative">
                 <button
@@ -1221,20 +1227,20 @@ function SwapPage() {
             )}
           </div>
 
-          <div className="swap-details bg-[var(--app-panel-soft)] p-3 space-y-1.5 text-xs">
-            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[var(--app-muted)]">
+          <div className="bg-[var(--app-panel-soft)] rounded-xl p-3 space-y-1.5 text-xs">
+            <div className="flex justify-between text-[var(--app-muted)]">
               <span>Rate</span>
               <span>1 {fromToken.symbol} = {Number(price).toFixed(6)} {toToken.symbol}</span>
             </div>
             {octPrice > 0 && (
-              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[var(--app-muted)]">
+              <div className="flex justify-between text-[var(--app-muted)]">
                 <span>OCT Price</span>
                 <span>${octPrice.toFixed(4)}</span>
               </div>
             )}
             {mode === 'swap' && (
               <>
-                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[var(--app-muted)]">
+                <div className="flex justify-between text-[var(--app-muted)]">
                   <span>Price Impact</span>
                   <span className={priceImpact > 5 ? 'text-[var(--app-danger)]' : priceImpact > 2 ? 'text-[var(--app-warning)]' : ''}>
                     {priceImpact.toFixed(2)}%
@@ -1242,7 +1248,7 @@ function SwapPage() {
                 </div>
                 {/* [V7-PASS9] C-9: show output token tax/auto-burn fees */}
                 {(outputTaxBps > 0 || outputAutoBurnBps > 0) && (
-                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[var(--app-muted)]">
+                  <div className="flex justify-between text-[var(--app-muted)]">
                     <span>Token Fee</span>
                     <span className={`${(outputTaxBps + outputAutoBurnBps) >= 10000 ? 'text-[var(--app-danger)]' : 'text-[var(--app-warning)]'}`}>
                       {((outputTaxBps + outputAutoBurnBps) / 100).toFixed(2)}%
@@ -1252,9 +1258,9 @@ function SwapPage() {
                     </span>
                   </div>
                 )}
-                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[var(--app-muted)]">
+                <div className="flex justify-between text-[var(--app-muted)]">
                   <span>Slippage</span>
-                  <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+                  <div className="flex items-center gap-2">
                     {[0.1, 0.5, 1.0].map(v => (
                       <button
                         key={v}
@@ -1276,20 +1282,20 @@ function SwapPage() {
                     />
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[var(--app-muted)]">
+                <div className="flex justify-between text-[var(--app-muted)]">
                   <span>Fee ({((poolFee.num / poolFee.denom) * 100).toFixed(poolFee.denom === 1000 ? 1 : 2)}%)</span>
                   <span>{fromAmount ? (Number(fromAmount) * poolFee.num / poolFee.denom).toFixed(6) : '0'} {fromToken.symbol}</span>
                 </div>
               </>
             )}
             {mode !== 'swap' && (
-              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[var(--app-muted)]">
+              <div className="flex justify-between text-[var(--app-muted)]">
                 <span>Network Fee</span>
                 <span>~0.1 OCT</span>
               </div>
             )}
             {route.length >= 2 && (
-              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[var(--app-muted)]">
+              <div className="flex justify-between text-[var(--app-muted)]">
                 <span>Route</span>
                 <span className="font-mono">{route.join(' → ')}</span>
               </div>
@@ -1304,29 +1310,12 @@ function SwapPage() {
               setShowConfirm(true);
             }}
             disabled={!isConnected ? false : (!isAmountValid || (mode === 'swap' && !canSubmitPair))}
-            className="swap-primary-button w-full py-3 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-xl font-medium transition-colors"
+            className="w-full py-3 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-xl font-medium transition-colors"
           >
             {!isConnected ? 'Connect Wallet' : mode === 'swap' && !canSubmitPair ? pairError || 'Enter Amount' : !isAmountValid ? 'Enter Amount' : actionLabel}
           </button>
         </div>
-        </section>
-
-        <aside className="swap-side-panel">
-          <div className="swap-side-card">
-            <div className="flex items-center justify-between"><p className="swap-kicker">POOL STATUS</p><span className="status-dot" /></div>
-            <div className="mt-3 grid grid-cols-2 gap-3">
-              <div><p className="swap-stat-label">Reserve A</p><p className="swap-stat-value">{formatUnits(reserveA, getTokenDecimals(poolTokenA))}</p></div>
-              <div><p className="swap-stat-label">Reserve B</p><p className="swap-stat-value">{formatUnits(reserveB, getTokenDecimals(poolTokenB))}</p></div>
-            </div>
-            <div className="swap-side-divider" />
-            <div className="flex items-center justify-between gap-3 text-xs"><span className="text-[var(--app-muted)]">Current route</span><span className="max-w-[58%] truncate font-mono text-[var(--app-text)]">{route.length ? route.join(' → ') : 'Finding route…'}</span></div>
-          </div>
-          <div className="swap-side-card swap-note-card">
-            <p className="swap-kicker">EXECUTION NOTES</p>
-            <p className="mt-3 text-sm leading-6 text-[var(--app-muted)]">Review the rate, impact, slippage, and network fee before confirming.</p>
-            <div className="mt-4 flex flex-wrap gap-2"><span className="swap-chip">Non-custodial</span><span className="swap-chip">On-chain</span><span className="swap-chip">Route-aware</span></div>
-          </div>
-        </aside>
+        </div>
       </div>
 
       {showConfirm && (
@@ -1361,7 +1350,7 @@ function SwapPage() {
                     </span>
                   </div>
                   <div className="border-t border-[var(--app-border)] my-2" />
-                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[var(--app-muted)]">
+                  <div className="flex justify-between text-[var(--app-muted)]">
                     <span>Fee ({((poolFee.num / poolFee.denom) * 100).toFixed(poolFee.denom === 1000 ? 1 : 2)}%)</span>
                     <span>{(Number(fromAmount) * poolFee.num / poolFee.denom).toFixed(6)} {fromToken.symbol}</span>
                   </div>
@@ -1377,7 +1366,7 @@ function SwapPage() {
                     <span className="font-medium">{toAmount} {toToken.symbol}</span>
                   </div>
                   <div className="border-t border-[var(--app-border)] my-2" />
-                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[var(--app-muted)]">
+                  <div className="flex justify-between text-[var(--app-muted)]">
                     <span>Network Fee</span>
                     <span>~0.1 OCT</span>
                   </div>
@@ -1434,25 +1423,11 @@ function SwapPage() {
         </div>
       )}
 
-      {indexerAvailable && (
-        <div className="mt-6 bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl p-5 border border-[var(--app-border)]">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-semibold">OES / WOCT Price</h3>
-            <span className="text-xs text-[var(--app-muted-2)]">Live</span>
-          </div>
-          {indexerLoading ? (
-            <div className="h-[200px] bg-[var(--app-panel-soft)] rounded animate-pulse" />
-          ) : (
-            <PoolChart data={chartData} height={200} />
-          )}
-        </div>
-      )}
-
       <div className="mt-6 bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] overflow-hidden">
-        <div className="flex items-center justify-between border-b border-[var(--app-border)] px-4 py-4 sm:px-6">
+        <div className="px-6 py-4 border-b border-[var(--app-border)]">
           <h3 className="text-sm font-semibold">Pool Reserves</h3>
         </div>
-        <div className="space-y-1 p-3 text-xs text-[var(--app-muted)] font-mono sm:p-4 sm:text-sm">
+        <div className="p-4 text-sm text-[var(--app-muted)] font-mono">
           <div className="flex justify-between py-1">
             {/* [V7-FIX] Use actual pool token labels and decimals (was hardcoded "WOCT"/"OES" and fromToken.decimals) */}
             <span>{getTokenLabel(poolTokenA)} Reserve:</span>

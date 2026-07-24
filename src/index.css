@@ -244,3 +244,24 @@ button[class*="bg-gradient-to-"] {
 .swap-chip { border: 1px solid var(--app-border); border-radius: 999px; color: var(--app-muted); font-size: 0.68rem; padding: 0.35rem 0.55rem; }
 @media (max-width: 900px) { .swap-layout-grid { grid-template-columns: minmax(0, 1fr); } .swap-side-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 560px) { .swap-intro { align-items: flex-start; flex-direction: column; gap: 0.75rem; } .swap-layout-grid { gap: 0.75rem; } .swap-side-panel { grid-template-columns: minmax(0, 1fr); } .swap-title { font-size: 1.75rem; } .swap-subtitle { font-size: 0.76rem; line-height: 1.45; } .swap-live-pill { padding: 0.45rem 0.65rem; } .swap-token-card { padding: 0.85rem; } }
+
+.swap-page { min-width: 0; }
+.swap-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 0.78fr); gap: 1rem; align-items: start; }
+.swap-form { min-width: 0; }
+.swap-chart-panel { display: grid; gap: 1rem; min-width: 0; }
+.swap-chart-card { box-shadow: 0 18px 45px rgba(0,0,0,.12); }
+.swap-chart-kicker { color: var(--app-muted-2); font-family: 'DM Mono', monospace; font-size: .64rem; font-weight: 800; letter-spacing: .14em; }
+.swap-live-label { display: inline-flex; align-items: center; gap: .4rem; color: var(--app-success); font-size: .68rem; font-weight: 800; }
+.swap-chart-label { color: var(--app-muted-2); font-size: .68rem; }
+.swap-chart-value { margin-top: .3rem; overflow: hidden; color: var(--app-text); font-family: 'DM Mono', monospace; font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
+.swap-chart-summary { min-height: 116px; }
+@media (max-width: 900px) { .swap-grid { grid-template-columns: minmax(0, 1fr); } .swap-chart-panel { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+@media (max-width: 560px) { .swap-grid { gap: .75rem; } .swap-chart-panel { grid-template-columns: minmax(0, 1fr); } }
+@media (min-width: 901px) {
+  .swap-grid .swap-form { grid-column: 2; }
+  .swap-grid .swap-chart-panel { grid-column: 1; grid-row: 1; }
+}
+@media (max-width: 900px) {
+  .swap-grid .swap-form { order: 1; }
+  .swap-grid .swap-chart-panel { order: 2; }
+}
