@@ -27,7 +27,7 @@ export default function LoadingModal({
   const progressPct = done ? 100 : currentIdx >= 0 ? ((currentIdx + 1) / steps.length) * 100 : 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/50 backdrop-blur-sm" role="dialog" aria-modal="true">
       <div className="bg-[var(--app-panel)] rounded-2xl border border-[var(--app-border)] max-w-md w-full mx-4 shadow-2xl overflow-hidden">
         {/* Header */}
         <div className="px-6 pt-6 pb-2">
