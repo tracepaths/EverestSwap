@@ -721,40 +721,98 @@ export default function AdminPage() {
                     <th className="p-3">Pool Address</th>
                     <th className="p-3">Token Pair</th>
                     <th className="p-3">Reserves</th>
-                    <th className="p-3">Fee Rate</th>
+                    <th className="p-3">Fee</th>
+                    <th className="p-3">Owner</th>
                     <th className="p-3">Status</th>
-                    <th className="p-3 text-right">Action</th>
+                    <th className="p-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--app-border-soft)]">
                   {poolsList.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="p-6 text-center text-[var(--app-muted)]">
+                      <td colSpan={7} className="p-6 text-center text-[var(--app-muted)]">
                         No liquidity pools found
                       </td>
                     </tr>
                   ) : (
-                    poolsList.map((p) => (
-                      <tr key={p.address} className="hover:bg-[var(--app-hover)]">
-                        <td className="p-3 font-bold text-[var(--app-blue-3)]">{p.address.slice(0, 10)}...</td>
-                        <td className="p-3">{p.tokenA.slice(0, 6)}... / {p.tokenB.slice(0, 6)}...</td>
-                        <td className="p-3">{p.reserveA} / {p.reserveB}</td>
-                        <td className="p-3">{((p.feeNum / p.feeDenom) * 100).toFixed(2)}%</td>
-                        <td className="p-3">
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${p.active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
-                            {p.active ? 'Active' : 'Paused'}
-                          </span>
-                        </td>
-                        <td className="p-3 text-right">
-                          <button
-                            onClick={() => setSelectedPoolAddr(p.address)}
-                            className="px-2.5 py-1 bg-[var(--app-blue)] text-white rounded hover:opacity-80 transition-opacity"
-                          >
-                            Manage
-                          </button>
-                        </td>
-                      </tr>
-                    ))
+                    poolsList.map((p) => {
+                      const isPoolOwner = isConnected && walletAddress && p.owner &&
+                        walletAddress.toLowerCase() === p.owner.toLowerCase();
+                      const isEmptyPool = (Number(p.reserveA) === 0 || p.reserveA === '0') &&
+                        (Number(p.reserveB) === 0 || p.reserveB === '0');
+                      const canRemove = isPoolOwner || isSetter;
+                      return (
+                        <tr key={p.address} className="hover:bg-[var(--app-hover)]">
+                          <td className="p-3 font-bold text-[var(--app-blue-3)]" title={p.address}>{p.address.slice(0, 10)}...</td>
+                          <td className="p-3" title={`${p.tokenA} / ${p.tokenB}`}>{p.tokenA.slice(0, 6)}... / {p.tokenB.slice(0, 6)}...</td>
+                          <td className="p-3">
+                            <span className={isEmptyPool ? 'text-[var(--app-muted)]' : 'text-[var(--app-text)]'}>
+                              {p.reserveA} / {p.reserveB}
+                            </span>
+                          </td>
+                          <td className="p-3">{((p.feeNum / p.feeDenom) * 100).toFixed(2)}%</td>
+                          <td className="p-3" title={p.owner}>
+                            {p.owner ? (
+                              <span className={`${
+                                isPoolOwner ? 'text-[var(--app-blue-3)] font-bold' : 'text-[var(--app-muted)]'
+                              }`}>
+                                {p.owner.slice(0, 8)}...
+                                {isPoolOwner && <span className="ml-1 text-[9px] bg-blue-500/20 text-blue-400 px-1 rounded">YOU</span>}
+                              </span>
+                            ) : '—'}
+                          </td>
+                          <td className="p-3">
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${p.active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                              {p.active ? 'Active' : 'Paused'}
+                            </span>
+                          </td>
+                          <td className="p-3 text-right">
+                            <div className="flex justify-end gap-2">
+                              <button
+                                onClick={() => setSelectedPoolAddr(p.address)}
+                                className="px-2.5 py-1 bg-[var(--app-blue)] text-white rounded hover:opacity-80 transition-opacity text-[11px]"
+                              >
+                                Manage
+                              </button>
+                              {canRemove && (
+                                <button
+                                  disabled={!isEmptyPool}
+                                  title={!isEmptyPool ? 'Pool must be fully drained (zero reserves) before removal' : 'Deregister this pool from the factory'}
+                                  onClick={() =>
+                                    promptConfirm(
+                                      '🗑️ Remove Pool',
+                                      `Deregister pool ${p.address.slice(0,10)}... from the factory?\n\n` +
+                                      `Token Pair: ${p.tokenA.slice(0,10)}... / ${p.tokenB.slice(0,10)}...\n` +
+                                      `Reserves: ${p.reserveA} / ${p.reserveB}\n\n` +
+                                      `⚠️ This is irreversible. The pool contract will remain on-chain but will no longer be routable. ` +
+                                      `Only proceed after all liquidity has been removed.`,
+                                      async () => {
+                                        const hash = await walletService.callContract({
+                                          contract: CONTRACTS.factory,
+                                          method: 'remove_pool',
+                                          params: [p.address],
+                                          rpc,
+                                        });
+                                        await rpc.waitForReceipt(hash);
+                                        await loadPools();
+                                      },
+                                      'Remove Pool'
+                                    )
+                                  }
+                                  className={`px-2.5 py-1 rounded text-[11px] font-semibold transition-all ${
+                                    isEmptyPool
+                                      ? 'bg-red-500/80 text-white hover:bg-red-600 cursor-pointer'
+                                      : 'bg-[var(--app-panel-soft)] text-[var(--app-muted)] cursor-not-allowed opacity-50'
+                                  }`}
+                                >
+                                  Remove
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -850,6 +908,88 @@ export default function AdminPage() {
                   </div>
                 </div>
               </div>
+
+              {/* ── Remove Pool Panel ── */}
+              {(() => {
+                const selectedPool = poolsList.find(p => p.address === selectedPoolAddr);
+                const isPoolCreator = selectedPool && isConnected && walletAddress &&
+                  walletAddress.toLowerCase() === selectedPool.owner.toLowerCase();
+                const isAdminRemover = isSetter;
+                const canRemove = isPoolCreator || isAdminRemover;
+                const emptyPool = selectedPool &&
+                  (Number(selectedPool.reserveA) === 0 || selectedPool.reserveA === '0') &&
+                  (Number(selectedPool.reserveB) === 0 || selectedPool.reserveB === '0');
+                if (!canRemove) return null;
+                return (
+                  <div className="mt-6 pt-5 border-t border-[var(--app-border)]">   
+                    <div className="flex items-start gap-3 bg-red-950/30 border border-red-900/50 rounded-xl p-4">
+                      <div className="shrink-0 w-8 h-8 rounded-full bg-red-500/20 flex items-center justify-center text-red-400 font-bold text-lg">!</div>
+                      <div className="flex-1 space-y-3">
+                        <div>
+                          <h5 className="text-sm font-bold text-red-300">Danger Zone — Remove Pool from Factory</h5>
+                          <p className="text-xs text-[var(--app-muted)] mt-1">
+                            {isPoolCreator ? 'You are the creator (owner) of this pool.' : 'Admin override — factory fee_to_setter.'}
+                            {' '}Removing deregisters the pool from routing permanently. The pool contract stays on-chain but
+                            cannot be used for swaps or routing. Ensure all LPs have withdrawn before proceeding.
+                          </p>
+                        </div>
+                        {selectedPool && (
+                          <div className="grid grid-cols-3 gap-3 text-xs">
+                            <div className="bg-[var(--app-panel-soft)] rounded-lg p-2">
+                              <div className="text-[var(--app-muted)] mb-1">Reserve A</div>
+                              <div className={`font-mono font-bold ${
+                                (Number(selectedPool.reserveA) === 0) ? 'text-green-400' : 'text-red-400'
+                              }`}>{selectedPool.reserveA || '0'}</div>
+                            </div>
+                            <div className="bg-[var(--app-panel-soft)] rounded-lg p-2">
+                              <div className="text-[var(--app-muted)] mb-1">Reserve B</div>
+                              <div className={`font-mono font-bold ${
+                                (Number(selectedPool.reserveB) === 0) ? 'text-green-400' : 'text-red-400'
+                              }`}>{selectedPool.reserveB || '0'}</div>
+                            </div>
+                            <div className="bg-[var(--app-panel-soft)] rounded-lg p-2">
+                              <div className="text-[var(--app-muted)] mb-1">Pool Status</div>
+                              <div className={`font-bold ${
+                                emptyPool ? 'text-green-400' : 'text-yellow-400'
+                              }`}>{emptyPool ? '✓ Safe to Remove' : '⚠ Has Reserves'}</div>
+                            </div>
+                          </div>
+                        )}
+                        {!emptyPool && (
+                          <p className="text-xs text-yellow-400/80">
+                            ⚠️ Pool still has reserves. All liquidity must be removed before you can deregister this pool.
+                          </p>
+                        )}
+                        <Button
+                          label={`🗑️ Remove Pool from Factory`}
+                          variant="danger"
+                          disabled={!emptyPool}
+                          onClick={() =>
+                            promptConfirm(
+                              '🗑️ Confirm Pool Removal',
+                              `Permanently deregister pool ${selectedPoolAddr.slice(0,10)}... from SwapFactory?\n\n` +
+                              `This action cannot be undone. The pool becomes unroutable but remains on-chain.\n\n` +
+                              `${isPoolCreator ? '✓ Authorized: You are the pool creator.' : '✓ Authorized: Factory admin override.'}`,
+                              async () => {
+                                const hash = await walletService.callContract({
+                                  contract: CONTRACTS.factory,
+                                  method: 'remove_pool',
+                                  params: [selectedPoolAddr],
+                                  rpc,
+                                });
+                                await rpc.waitForReceipt(hash);
+                                setSelectedPoolAddr('');
+                                await loadPools();
+                              },
+                              'Remove Pool'
+                            )
+                          }
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
             </Section>
           )}
         </div>

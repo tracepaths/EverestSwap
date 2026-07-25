@@ -8,6 +8,7 @@ import PoolPage from './pages/PoolPage'
 import LaunchTokenPage from './pages/LaunchTokenPage'
 import DocsPage from './pages/DocsPage'
 import AdminPage from './pages/AdminPage'
+import MyPoolsPage from './pages/MyPoolsPage'
 
 function App() {
   return (
@@ -18,6 +19,7 @@ function App() {
           <Route path="/liquidity" element={<LiquidityPage />} />
           <Route path="/dashboard" element={<PortfolioPage />} />
           <Route path="/pool" element={<PoolPage />} />
+          <Route path="/my-pools" element={<MyPoolsPage />} />
           <Route path="/launch" element={<LaunchTokenPage />} />
           <Route path="/docs" element={<DocsPage />} />
           <Route path="/admin" element={<AdminPage />} />
@@ -28,3 +30,4 @@ function App() {
 }
 
 export default App
+
