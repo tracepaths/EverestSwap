@@ -1,3 +1,5 @@
+import { createPortal } from 'react-dom';
+
 interface LoadingModalProps {
   isOpen: boolean;
   title: string;

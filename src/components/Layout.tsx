@@ -277,7 +277,7 @@ function Layout() {
   }
 
   return (
-    <div className="min-h-screen h-screen flex flex-col text-[var(--app-text)] relative app-shell" style={{ zIndex: 1 }}>
+    <div className="min-h-screen flex flex-col text-[var(--app-text)] relative app-shell" style={{ zIndex: 1 }}>
       <SnowEffect />
       <header className="sticky top-0 z-30 border-b border-[var(--app-border)] bg-[var(--app-bg)]/75 backdrop-blur-2xl shadow-lg shadow-black/10">
         <div className="mx-auto w-full max-w-[1440px] px-3 sm:px-5 lg:px-8">
@@ -360,7 +360,7 @@ function Layout() {
           )}
         </div>
       </header>
-      <main className="relative min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-5 sm:py-6 lg:px-8 lg:py-8 safe-bottom">
+      <main className="relative min-h-0 flex-1 px-3 py-4 sm:px-5 sm:py-6 lg:px-8 lg:py-8 safe-bottom">
         <div className="mx-auto w-full max-w-[1440px]"><Outlet /></div>
       </main>
       <ToastContainer />

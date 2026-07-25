@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import { useState, useEffect, useRef, useMemo } from 'react';
 import type { OctraRpc } from '../services/octraRpc';
 import { isValidOctraAddress } from '../services/octraRpc';
@@ -348,10 +349,10 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
 
   if (!isOpen) return null;
 
-  return (
-    // [SECURITY] F-11/F-12: Escape key handler + aria-modal accessibility
-    <div
-      className="fixed inset-0 bg-black/75 backdrop-blur-xl z-[9999] flex items-center justify-center p-4"
+  return createPortal(
+    <>
+      <div
+      className="fixed inset-0 bg-black/75 backdrop-blur-xl z-[99999] flex items-center justify-center p-4"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
@@ -361,8 +362,8 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
     >
        <div
          ref={dialogRef}
-         className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] max-w-[90vw] w-full max-w-lg flex flex-col max-h-[70vh] shadow-2xl"
-        onClick={e => e.stopPropagation()}
+         className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] w-full max-w-lg flex flex-col max-h-[calc(100dvh-3rem)] shadow-2xl overflow-hidden"
+         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--app-border)]">
           <h3 id="token-select-title" className="text-base font-semibold">Select a token</h3>
@@ -518,5 +519,6 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
         </div>
       </div>
     </div>
-  );
+    </>
+  , document.body);
 }
