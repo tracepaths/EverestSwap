@@ -5,8 +5,8 @@ import type { OctraRpc } from '../services/octraRpc';
 import { CONTRACTS, WOCT_TOKEN } from '../types';
 import { formatUnits, parseUnits, sanitizeNumericInput, parseRawBalance } from '../services/swapService';
 import { walletService } from '../services/walletService';
-import TokenTrustBadge from '../components/TokenTrustBadge';
 import TokenSelectModal from '../components/TokenSelectModal';
+import LoadingModal from '../components/LoadingModal';
 import { usePriceService } from '../hooks/usePriceService';
 
 interface PoolDisplay {
@@ -64,8 +64,6 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
   const [tokenB, setTokenB] = useState('');
   const [metaA, setMetaA] = useState<TokenMeta | null>(null);
   const [metaB, setMetaB] = useState<TokenMeta | null>(null);
-  const [trustedA, setTrustedA] = useState(false);
-  const [trustedB, setTrustedB] = useState(false);
   const [balanceA, setBalanceA] = useState<string | null>(null);
   const [balanceB, setBalanceB] = useState<string | null>(null);
   const [showTokenASelect, setShowTokenASelect] = useState(false);
@@ -143,7 +141,6 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
     setTokenA(address);
     setMetaA(meta);
     setInitAmountA('');
-    rpc.isTrustedToken(CONTRACTS.factory, address).then(t => { if (mountedRef.current) setTrustedA(t); });
     // Fetch balance
     if (walletAddress) {
       if (address === '') {
@@ -159,7 +156,6 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
     setTokenB(address);
     setMetaB(meta);
     setInitAmountB('');
-    rpc.isTrustedToken(CONTRACTS.factory, address).then(t => { if (mountedRef.current) setTrustedB(t); });
     // Fetch balance
     if (walletAddress) {
       if (address === '') {
@@ -179,15 +175,6 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
       rpc.getTokenBalance(address, walletAddress).then(bal => { if (mountedRef.current) setRewardBalance(bal); }).catch(() => { if (mountedRef.current) setRewardBalance(null); });
     }
   };
-
-  // [V9] Duration presets
-  const DURATION_PRESETS = [
-    { label: '1d', value: 14400 },
-    { label: '7d', value: 100800 },
-    { label: '30d', value: 432000 },
-    { label: '90d', value: 1296000 },
-    { label: '365d', value: 5256000 },
-  ];
 
   const getFeeParams = (): { num: number; denom: number } => {
     if (feeTier === '0.01') return { num: 1, denom: 10000 };
@@ -523,12 +510,11 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
 
   const reset = () => {
     setStep({ type: 'idle' });
+    setWizardStep(1);
     setTokenA('');
     setTokenB('');
     setMetaA(null);
     setMetaB(null);
-    setTrustedA(false);
-    setTrustedB(false);
     setFeeTier('0.30');
     setInitAmountA('');
     setInitAmountB('');
@@ -542,6 +528,27 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
     setShowRewardSelect(false);
     setRewardBalance(null);
   };
+
+  const isValidA = tokenA !== '' && metaA !== null;
+  const isValidB = metaB !== null;
+
+  const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
+
+  const feeTiers = [
+    { label: '0.01%', value: '0.01' as const },
+    { label: '0.05%', value: '0.05' as const },
+    { label: '0.30%', value: '0.30' as const },
+    { label: '1.00%', value: '1.00' as const },
+    { label: 'Custom', value: 'custom' as const },
+  ];
+
+  const DURATION_PRESETS = [
+    { label: '1d', value: 14400 },
+    { label: '7d', value: 100800 },
+    { label: '30d', value: 432000 },
+    { label: '90d', value: 1296000 },
+    { label: '365d', value: 5256000 },
+  ];
 
   const allStepDefs: { key: CreateStep['type']; label: string }[] = [
     { key: 'compiling', label: 'Compile contract' },
@@ -560,8 +567,6 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
   const hasInitLiquidity = !!(initAmountA && metaA && initAmountB && metaB
     && Number(initAmountA) > 0 && Number(initAmountB) > 0);
 
-  // [SIM] Pool price simulation — computed live from initial liquidity inputs.
-  // Uses BigInt for LP/K precision (matches contract sqrt geometric-mean math).
   function bigintSqrt(n: bigint): bigint {
     if (n < 2n) return n;
     let x = n, y = (x + 1n) / 2n;
@@ -580,466 +585,444 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
       const lpNet = lpGross > MIN_LIQ ? lpGross - MIN_LIQ : 0n;
       const priceAinB = Number(initAmountB) / Number(initAmountA);
       const priceBinA = Number(initAmountA) / Number(initAmountB);
-      const sharePct = 100; // first LP owns 100% after burn
+      const sharePct = 100;
       return { rawA, rawB, k, lpGross, lpNet, priceAinB, priceBinA, sharePct };
     } catch { return null; }
   })();
   const stepDefs = hasInitLiquidity ? allStepDefs : allStepDefs.slice(0, 6);
-  const totalSteps = stepDefs.length;
-
-  const getStepIndex = (stepType: CreateStep['type']): number => {
-    return stepDefs.findIndex(s => s.key === stepType);
-  };
 
   const stepType = step.type;
   const stepSnapshot = step;
 
-  const feeTiers = [
-    { label: '0.01%', value: '0.01' as const },
-    { label: '0.05%', value: '0.05' as const },
-    { label: '0.30%', value: '0.30' as const },
-    { label: '1.00%', value: '1.00' as const },
-    { label: 'Custom', value: 'custom' as const },
-  ];
-
-  const isValidA = tokenA !== '' && metaA !== null;
-  const isValidB = metaB !== null;
+  const step1Valid = isValidA && isValidB && hasValidPair;
+  const step2Valid = poolType === 'standard' || (rewardToken && rewardAmount && Number(rewardAmount) > 0);
 
   return (
-    <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] p-6 space-y-4">
-      <h3 className="text-sm font-semibold">Create New Pool</h3>
+    <>
+    <LoadingModal
+      isOpen={step.type !== 'idle' && step.type !== 'error' && step.type !== 'done'}
+      title="Creating Pool"
+      steps={stepDefs}
+      currentStep={step.type}
+      error={step.type === 'error' ? step.message : undefined}
+      onCancel={reset}
+    />
+    <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] p-6 space-y-5">
+      {/* Step indicator */}
+      <div className="flex items-center gap-2">
+        {([1, 2, 3] as const).map((s, idx) => (
+          <div key={s} className="flex items-center gap-2 flex-1">
+            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 transition-colors ${
+              wizardStep === s ? 'bg-[var(--app-blue)] text-white' :
+              wizardStep > s ? 'bg-[var(--app-success)] text-white' :
+              'bg-[var(--app-panel-soft)] text-[var(--app-muted)] border border-[var(--app-border)]'
+            }`}>
+              {wizardStep > s ? (
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              ) : s}
+            </div>
+            <span className={`text-xs font-medium hidden sm:block ${
+              wizardStep === s ? 'text-[var(--app-text)]' : 'text-[var(--app-muted)]'
+            }`}>
+              {s === 1 ? 'Tokens' : s === 2 ? 'Configure' : 'Liquidity'}
+            </span>
+            {idx < 2 && <div className={`flex-1 h-px mx-1 ${wizardStep > s ? 'bg-[var(--app-success)]' : 'bg-[var(--app-border)]'}`} />}
+          </div>
+        ))}
+      </div>
 
       {step.type === 'idle' || step.type === 'error' ? (
         <>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)] space-y-2">
-              <label className="text-xs text-[var(--app-muted)]">Token A</label>
-              <button
-                onClick={() => setShowTokenASelect(true)}
-                className={`w-full flex items-center justify-between bg-[var(--app-panel-soft)] text-base font-medium outline-none rounded-lg px-3 py-2 border border-[var(--app-border)] hover:border-[#3B82F6] transition-colors ${tokenA ? '' : 'text-[var(--app-muted-2)]'}`}
-              >
-                <span>{tokenA && metaA ? metaA.symbol : 'Select token'}</span>
-                <svg className="w-4 h-4 text-[var(--app-muted)] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-              {isValidA && metaA && (
-                <div className="text-xs space-y-0.5 mt-2">
-                  <div className="font-medium text-[var(--app-blue-3)]">{metaA.symbol}</div>
-                  <div className="text-[var(--app-muted)] truncate">{metaA.name}</div>
-                  <div className="text-[var(--app-muted)]">Decimals: {metaA.decimals}</div>
-                  <TokenTrustBadge rating={trustedA ? 5 : 1} />
-                  {walletAddress && (
-                    <div className="text-[10px] text-[var(--app-muted)]">
-                      Balance: {balanceA === null ? '...' : formatUnits(balanceA, metaA.decimals)}
-                    </div>
-                  )}
-                </div>
-              )}
-              <TokenSelectModal
-                isOpen={showTokenASelect}
-                onClose={() => setShowTokenASelect(false)}
-                onSelect={handleSelectTokenA}
-                rpc={rpc}
-                excludeAddress={tokenB || undefined}
-              />
-            </div>
-            <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)] space-y-2">
-              <label className="text-xs text-[var(--app-muted)]">Token B</label>
-              <button
-                onClick={() => setShowTokenBSelect(true)}
-                className={`w-full flex items-center justify-between bg-[var(--app-panel-soft)] text-base font-medium outline-none rounded-lg px-3 py-2 border border-[var(--app-border)] hover:border-[#3B82F6] transition-colors ${tokenB ? '' : 'text-[var(--app-muted-2)]'}`}
-              >
-                <span>{tokenB && metaB ? metaB.symbol : 'Select token'}</span>
-                <svg className="w-4 h-4 text-[var(--app-muted)] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-              {isValidB && metaB && (
-                <div className="text-xs space-y-0.5 mt-2">
-                  <div className="font-medium text-[var(--app-blue-3)]">{metaB.symbol}</div>
-                  <div className="text-[var(--app-muted)] truncate">{metaB.name}</div>
-                  <div className="text-[var(--app-muted)]">Decimals: {metaB.decimals}</div>
-                  <TokenTrustBadge rating={trustedB ? 5 : 1} />
-                  {walletAddress && (
-                    <div className="text-[10px] text-[var(--app-muted)]">
-                      Balance: {balanceB === null ? '...' : formatUnits(balanceB, metaB.decimals)}
-                    </div>
-                  )}
-                </div>
-              )}
-              <TokenSelectModal
-                isOpen={showTokenBSelect}
-                onClose={() => setShowTokenBSelect(false)}
-                onSelect={handleSelectTokenB}
-                rpc={rpc}
-                excludeAddress={tokenA || undefined}
-              />
-            </div>
-          </div>
-
-          <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)]">
-            <div className="text-xs text-[var(--app-muted)] mb-2">Fee Tier</div>
-            <div className="flex gap-2">
-              {feeTiers.map(f => (
+          {/* ===== STEP 1: Select Tokens ===== */}
+          {wizardStep === 1 && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                {/* Token A */}
                 <button
-                  key={f.value}
-                  onClick={() => setFeeTier(f.value)}
-                  className={`flex-1 py-2 rounded-lg text-base font-medium transition-colors ${
-                    feeTier === f.value
-                      ? 'bg-[var(--app-blue)] text-[var(--app-text)]'
-                      : 'bg-[var(--app-hover)] hover:bg-[var(--app-hover)]'
+                  onClick={() => setShowTokenASelect(true)}
+                  className={`bg-[var(--app-panel-soft)] rounded-xl p-4 border transition-colors text-left ${
+                    isValidA ? 'border-[var(--app-blue)]/30' : 'border-[var(--app-border)] hover:border-[var(--app-blue)]/50'
                   }`}
                 >
-                  {f.label}
+                  <div className="text-[10px] text-[var(--app-muted)] mb-2">Token A</div>
+                  {metaA ? (
+                    <>
+                      <div className="text-lg font-bold">{metaA.symbol}</div>
+                      <div className="text-[11px] text-[var(--app-muted)] truncate">{metaA.name}</div>
+                      {walletAddress && (
+                        <div className="text-[11px] text-[var(--app-muted-2)] mt-2 font-mono">
+                          {balanceA === null ? '...' : formatUnits(balanceA, metaA.decimals)}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="text-lg text-[var(--app-muted-2)]">Select</div>
+                  )}
                 </button>
-              ))}
-            </div>
-            {feeTier === 'custom' && (
-              <div className="flex gap-2 mt-3">
-                <div className="flex-1">
-                  <label className="text-[10px] text-[var(--app-muted-2)]">Numerator</label>
-                  <input
-                    type="number"
-                    value={customNum}
-                    onChange={e => setCustomNum(e.target.value)}
-                    className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-1.5 text-base font-mono outline-none mt-1"
-                    min="1"
-                  />
-                </div>
-                <div className="flex-1">
-                  <label className="text-[10px] text-[var(--app-muted-2)]">Denominator</label>
-                  <input
-                    type="number"
-                    value={customDenom}
-                    onChange={e => setCustomDenom(e.target.value)}
-                    className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-1.5 text-base font-mono outline-none mt-1"
-                    min="1"
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* [V9] Pool Type Toggle */}
-          <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)]">
-            <div className="text-xs text-[var(--app-muted)] mb-2">Pool Type</div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setPoolType('standard')}
-                className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  poolType === 'standard'
-                    ? 'bg-[var(--app-blue)] text-[var(--app-text)]'
-                    : 'bg-[var(--app-hover)] hover:bg-[var(--app-hover)]'
-                }`}
-              >
-                Standard AMM
-              </button>
-              <button
-                onClick={() => setPoolType('reward')}
-                className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  poolType === 'reward'
-                    ? 'bg-[var(--app-blue)] text-[var(--app-text)]'
-                    : 'bg-[var(--app-hover)] hover:bg-[var(--app-hover)]'
-                }`}
-              >
-                Reward Pool
-              </button>
-            </div>
-          </div>
-
-          {/* [V9] Reward Configuration — only when reward pool selected */}
-          {poolType === 'reward' && (
-            <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-green-500/20 space-y-3">
-              <div className="text-xs text-green-400 font-medium">Reward Configuration</div>
-
-              {/* Reward Token Selector */}
-              <div>
-                <label className="text-[10px] text-[var(--app-muted-2)]">Reward Token (OCS01 compatible)</label>
-                <button
-                  onClick={() => setShowRewardSelect(true)}
-                  className={`w-full flex items-center justify-between bg-[var(--app-panel-soft)] text-sm font-medium outline-none rounded-lg px-3 py-2 border border-[var(--app-border)] hover:border-green-500/50 transition-colors mt-1 ${rewardToken ? '' : 'text-[var(--app-muted-2)]'}`}
-                >
-                  <span>{rewardMeta ? rewardMeta.symbol : 'Select reward token'}</span>
-                  <svg className="w-4 h-4 text-[var(--app-muted)] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-                {rewardMeta && (
-                  <div className="text-[10px] text-[var(--app-muted)] mt-1">
-                    Balance: {rewardBalance === null ? '...' : formatUnits(rewardBalance, rewardMeta.decimals)} {rewardMeta.symbol}
-                  </div>
-                )}
                 <TokenSelectModal
-                  isOpen={showRewardSelect}
-                  onClose={() => setShowRewardSelect(false)}
-                  onSelect={handleSelectRewardToken}
+                  isOpen={showTokenASelect}
+                  onClose={() => setShowTokenASelect(false)}
+                  onSelect={handleSelectTokenA}
+                  rpc={rpc}
+                  excludeAddress={tokenB || undefined}
+                />
+
+                {/* Token B */}
+                <button
+                  onClick={() => setShowTokenBSelect(true)}
+                  className={`bg-[var(--app-panel-soft)] rounded-xl p-4 border transition-colors text-left ${
+                    isValidB ? 'border-[var(--app-blue)]/30' : 'border-[var(--app-border)] hover:border-[var(--app-blue)]/50'
+                  }`}
+                >
+                  <div className="text-[10px] text-[var(--app-muted)] mb-2">Token B</div>
+                  {metaB ? (
+                    <>
+                      <div className="text-lg font-bold">{metaB.symbol}</div>
+                      <div className="text-[11px] text-[var(--app-muted)] truncate">{metaB.name}</div>
+                      {walletAddress && (
+                        <div className="text-[11px] text-[var(--app-muted-2)] mt-2 font-mono">
+                          {balanceB === null ? '...' : formatUnits(balanceB, metaB.decimals)}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="text-lg text-[var(--app-muted-2)]">Select</div>
+                  )}
+                </button>
+                <TokenSelectModal
+                  isOpen={showTokenBSelect}
+                  onClose={() => setShowTokenBSelect(false)}
+                  onSelect={handleSelectTokenB}
                   rpc={rpc}
                   excludeAddress={tokenA || undefined}
                 />
               </div>
 
-              {/* Reward Amount */}
-              <div>
-                <label className="text-[10px] text-[var(--app-muted-2)]">Reward Amount</label>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={rewardAmount}
-                  onChange={e => setRewardAmount(sanitizeNumericInput(e.target.value))}
-                  placeholder="0.0"
-                  className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-1.5 text-sm font-mono outline-none mt-1"
-                />
-                {rewardAmount && rewardMeta && (
-                  <div className="text-[10px] text-[var(--app-muted)] mt-1">
-                    {formatUnits(parseUnits(rewardAmount, rewardMeta.decimals), rewardMeta.decimals)} {rewardMeta.symbol}
+              {step.type === 'error' && (
+                <div className="text-xs text-[var(--app-danger)] bg-red-400/10 rounded-lg px-3 py-2">
+                  {step.message}
+                </div>
+              )}
+
+              {isValidA && isValidB && !hasValidPair && (
+                <div className="text-xs text-[var(--app-danger)] bg-red-400/10 rounded-lg px-3 py-2">
+                  At least one token must already have a pair with WOCT
+                </div>
+              )}
+
+              {pairAlreadyExists && (
+                <div className="text-xs text-[var(--app-danger)] bg-red-400/10 rounded-lg px-3 py-2">
+                  This pair already has a pool — create would fail
+                </div>
+              )}
+
+              <button
+                onClick={() => {
+                  if (!isConnected) { connect(); return; }
+                  setWizardStep(2);
+                }}
+                disabled={!step1Valid}
+                className="w-full py-3 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-xl font-medium transition-colors"
+              >
+                {!isConnected ? 'Connect Wallet' : 'Continue'}
+              </button>
+            </div>
+          )}
+
+          {/* ===== STEP 2: Configure Pool ===== */}
+          {wizardStep === 2 && (
+            <div className="space-y-4">
+              {/* Fee Tier */}
+              <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)]">
+                <div className="text-xs text-[var(--app-muted)] mb-2">Fee Tier</div>
+                <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                  {feeTiers.map(f => (
+                    <button
+                      key={f.value}
+                      onClick={() => setFeeTier(f.value)}
+                      className={`py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                        feeTier === f.value
+                          ? 'bg-[var(--app-blue)] text-white'
+                          : 'bg-[var(--app-hover)] hover:bg-[var(--app-hover)] text-[var(--app-muted)]'
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+                {feeTier === 'custom' && (
+                  <div className="flex gap-2 mt-3">
+                    <div className="flex-1">
+                      <label className="text-[10px] text-[var(--app-muted-2)]">Numerator</label>
+                      <input
+                        type="number"
+                        value={customNum}
+                        onChange={e => setCustomNum(e.target.value)}
+                        className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-2 text-sm font-mono outline-none mt-1"
+                        min="1"
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-[10px] text-[var(--app-muted-2)]">Denominator</label>
+                      <input
+                        type="number"
+                        value={customDenom}
+                        onChange={e => setCustomDenom(e.target.value)}
+                        className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-2 text-sm font-mono outline-none mt-1"
+                        min="1"
+                      />
+                    </div>
                   </div>
                 )}
               </div>
 
-              {/* Duration Presets */}
-              <div>
-                <label className="text-[10px] text-[var(--app-muted-2)]">Distribution Duration</label>
-                <div className="flex gap-1.5 mt-1">
-                  {DURATION_PRESETS.map(d => (
+              {/* Pool Type */}
+              <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)]">
+                <div className="text-xs text-[var(--app-muted)] mb-2">Pool Type</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => setPoolType('standard')}
+                    className={`py-3 rounded-xl text-sm font-medium transition-colors border-2 ${
+                      poolType === 'standard'
+                        ? 'border-[var(--app-blue)] bg-[var(--app-blue)]/10 text-[var(--app-blue)]'
+                        : 'border-transparent bg-[var(--app-hover)] text-[var(--app-muted)]'
+                    }`}
+                  >
+                    Standard AMM
+                  </button>
+                  <button
+                    onClick={() => setPoolType('reward')}
+                    className={`py-3 rounded-xl text-sm font-medium transition-colors border-2 ${
+                      poolType === 'reward'
+                        ? 'border-green-500 bg-green-500/10 text-green-400'
+                        : 'border-transparent bg-[var(--app-hover)] text-[var(--app-muted)]'
+                    }`}
+                  >
+                    Reward Pool
+                  </button>
+                </div>
+              </div>
+
+              {/* Reward Config */}
+              {poolType === 'reward' && (
+                <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-green-500/20 space-y-3">
+                  <div className="text-xs text-green-400 font-medium">Reward Configuration</div>
+
+                  <div>
+                    <label className="text-[10px] text-[var(--app-muted-2)]">Reward Token (OCS01)</label>
                     <button
-                      key={d.value}
-                      onClick={() => setRewardDuration(d.value)}
-                      className={`flex-1 py-1.5 rounded-lg text-[11px] font-medium transition-colors ${
-                        rewardDuration === d.value
-                          ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-                          : 'bg-[var(--app-hover)] hover:bg-[var(--app-hover)]'
-                      }`}
+                      onClick={() => setShowRewardSelect(true)}
+                      className={`w-full flex items-center justify-between bg-[var(--app-panel-soft)] text-sm font-medium outline-none rounded-lg px-3 py-2 border border-[var(--app-border)] hover:border-green-500/50 transition-colors mt-1 ${rewardToken ? '' : 'text-[var(--app-muted-2)]'}`}
                     >
-                      {d.label}
+                      <span>{rewardMeta ? rewardMeta.symbol : 'Select token'}</span>
+                      <svg className="w-4 h-4 text-[var(--app-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                      </svg>
                     </button>
-                  ))}
-                </div>
-                <div className="text-[10px] text-[var(--app-muted)] mt-1">
-                  {rewardDuration} epochs (~{Math.round(rewardDuration / 14400)} days)
-                </div>
-              </div>
-
-              {/* Creator Lock */}
-              <div>
-                <label className="text-[10px] text-[var(--app-muted-2)]">Creator Lock Period (Anti-Rugpull)</label>
-                <div className="flex items-center gap-2 mt-1">
-                  <input
-                    type="number"
-                    value={creatorLockDays}
-                    onChange={e => setCreatorLockDays(Math.max(7, parseInt(e.target.value) || 7))}
-                    className="w-20 bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-1.5 text-sm font-mono outline-none"
-                    min="7"
-                  />
-                  <span className="text-xs text-[var(--app-muted)]">days (min 7)</span>
-                </div>
-              </div>
-
-              {/* Preview */}
-              {rewardAmount && rewardMeta && (
-                <div className="bg-[var(--app-panel)] rounded-lg p-3 space-y-1.5">
-                  <div className="text-[10px] font-medium text-green-400">Distribution Preview</div>
-                  <div className="text-[10px] text-[var(--app-muted)]">
-                    Rate: {formatUnits(String(Math.floor(Number(rewardAmount) * (rewardMeta.decimals > 0 ? Math.pow(10, rewardMeta.decimals) : 1) / (rewardDuration / 14400))), rewardMeta.decimals)} {rewardMeta.symbol}/day
+                    {rewardMeta && rewardBalance && (
+                      <div className="text-[10px] text-[var(--app-muted)] mt-1">
+                        Balance: {formatUnits(rewardBalance, rewardMeta.decimals)} {rewardMeta.symbol}
+                      </div>
+                    )}
+                    <TokenSelectModal
+                      isOpen={showRewardSelect}
+                      onClose={() => setShowRewardSelect(false)}
+                      onSelect={handleSelectRewardToken}
+                      rpc={rpc}
+                      excludeAddress={tokenA || undefined}
+                    />
                   </div>
-                  <div className="text-[10px] text-green-400/80 pt-1 border-t border-[var(--app-border)]">
-                    Creator LP locked {creatorLockDays} days | Reward immutable | Linear distribution
+
+                  <div>
+                    <label className="text-[10px] text-[var(--app-muted-2)]">Reward Amount</label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={rewardAmount}
+                      onChange={e => setRewardAmount(sanitizeNumericInput(e.target.value))}
+                      placeholder="0.0"
+                      className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-2 text-sm font-mono outline-none mt-1"
+                    />
                   </div>
+
+                  <div>
+                    <label className="text-[10px] text-[var(--app-muted-2)]">Duration</label>
+                    <div className="grid grid-cols-5 gap-1.5 mt-1">
+                      {DURATION_PRESETS.map(d => (
+                        <button
+                          key={d.value}
+                          onClick={() => setRewardDuration(d.value)}
+                          className={`py-1.5 rounded-lg text-[11px] font-medium transition-colors ${
+                            rewardDuration === d.value
+                              ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                              : 'bg-[var(--app-hover)] text-[var(--app-muted)]'
+                          }`}
+                        >
+                          {d.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="text-[10px] text-[var(--app-muted)] mt-1">
+                      ~{Math.round(rewardDuration / 14400)} days
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] text-[var(--app-muted-2)]">Creator Lock (anti-rugpull)</label>
+                    <div className="flex items-center gap-2 mt-1">
+                      <input
+                        type="number"
+                        value={creatorLockDays}
+                        onChange={e => setCreatorLockDays(Math.max(7, parseInt(e.target.value) || 7))}
+                        className="w-20 bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-1.5 text-sm font-mono outline-none"
+                        min="7"
+                      />
+                      <span className="text-xs text-[var(--app-muted)]">days min</span>
+                    </div>
+                  </div>
+
+                  {rewardAmount && rewardMeta && (
+                    <div className="bg-[var(--app-panel)] rounded-lg p-3 text-[10px] text-green-400/80 space-y-0.5">
+                      <div>Distribution: linear over ~{Math.round(rewardDuration / 14400)} days</div>
+                      <div>Creator LP locked {creatorLockDays}d | Reward immutable</div>
+                    </div>
+                  )}
                 </div>
               )}
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setWizardStep(1)}
+                  className="flex-1 py-3 bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-xl font-medium text-sm hover:bg-[var(--app-hover)] transition-colors"
+                >
+                  Back
+                </button>
+                <button
+                  onClick={() => setWizardStep(3)}
+                  disabled={!step2Valid}
+                  className="flex-[2] py-3 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-xl font-medium transition-colors"
+                >
+                  Continue
+                </button>
+              </div>
             </div>
           )}
 
-          <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-            <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)] space-y-3">
-              <div className="text-xs text-[var(--app-muted)] font-medium">Initial Liquidity (optional)</div>
-              <div>
-                <label className="text-[10px] text-[var(--app-muted-2)]">{metaA?.symbol ?? 'Token A'} Amount</label>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={initAmountA}
-                  // [SECURITY] F-1: Sanitize input
-                  onChange={e => setInitAmountA(sanitizeNumericInput(e.target.value))}
-                  placeholder="0.0"
-                  className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-1.5 text-sm font-mono outline-none mt-1"
-                />
+          {/* ===== STEP 3: Initial Liquidity ===== */}
+          {wizardStep === 3 && (
+            <div className="space-y-4">
+              <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)] space-y-3">
+                <div className="text-xs text-[var(--app-muted)] font-medium">Initial Liquidity (optional)</div>
+                <div>
+                  <label className="text-[10px] text-[var(--app-muted-2)]">{metaA?.symbol ?? 'Token A'}</label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={initAmountA}
+                    onChange={e => setInitAmountA(sanitizeNumericInput(e.target.value))}
+                    placeholder="0.0"
+                    className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-2 text-sm font-mono outline-none mt-1"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-[var(--app-muted-2)]">{metaB?.symbol ?? 'Token B'}</label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={initAmountB}
+                    onChange={e => setInitAmountB(sanitizeNumericInput(e.target.value))}
+                    placeholder="0.0"
+                    className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-2 text-sm font-mono outline-none mt-1"
+                  />
+                </div>
               </div>
-              <div>
-                <label className="text-[10px] text-[var(--app-muted-2)]">{metaB?.symbol ?? 'Token B'} Amount</label>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={initAmountB}
-                  // [SECURITY] F-1: Sanitize input
-                  onChange={e => setInitAmountB(sanitizeNumericInput(e.target.value))}
-                  placeholder="0.0"
-                  className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-1.5 text-sm font-mono outline-none mt-1"
-                />
-              </div>
-            </div>
 
-            <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)] space-y-3">
-              <div className="text-xs text-[var(--app-muted)] font-medium">Price Simulation</div>
-              {sim ? (
-                <div className="space-y-2 text-sm">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-[var(--app-muted-2)]">Price 1 {metaA?.symbol}</span>
-                    <span className="font-mono">{sim.priceAinB.toLocaleString(undefined, { maximumFractionDigits: 12 })} {metaB?.symbol}</span>
+              {/* Price simulation */}
+              {sim && (
+                <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)] space-y-2 text-xs">
+                  <div className="text-[10px] text-[var(--app-muted)] font-medium">Pool Preview</div>
+                  <div className="flex justify-between">
+                    <span className="text-[var(--app-muted)]">Price</span>
+                    <span className="font-mono">1 {metaA?.symbol} = {sim.priceAinB.toLocaleString(undefined, { maximumFractionDigits: 6 })} {metaB?.symbol}</span>
                   </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-[var(--app-muted-2)]">Price 1 {metaB?.symbol}</span>
-                    <span className="font-mono">{sim.priceBinA.toLocaleString(undefined, { maximumFractionDigits: 12 })} {metaA?.symbol}</span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-[var(--app-muted-2)]">LP minted</span>
+                  <div className="flex justify-between">
+                    <span className="text-[var(--app-muted)]">LP minted</span>
                     <span className="font-mono">{formatUnits(sim.lpNet.toString(), 6)}</span>
                   </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-[var(--app-muted-2)]">K invariant</span>
-                    <span className="font-mono truncate text-right">{sim.k.toString()}</span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-[var(--app-muted-2)]">Pool share</span>
+                  <div className="flex justify-between">
+                    <span className="text-[var(--app-muted)]">Your share</span>
                     <span className="font-mono">{sim.sharePct.toFixed(0)}%</span>
                   </div>
-                  <div className="text-[11px] text-[var(--app-muted)] pt-1 border-t border-[var(--app-border)]">
-                    Harga awal dihitung dari rasio Token A dan Token B. Saat salah satu nilai berubah, simulasi ini ikut berubah.
-                  </div>
-                </div>
-              ) : (
-                <div className="text-xs text-[var(--app-muted)] leading-relaxed">
-                  Masukkan jumlah Token A dan Token B untuk melihat harga awal, LP minted, dan invariant pool secara langsung.
                 </div>
               )}
-            </div>
-          </div>
 
-          {step.type === 'error' && (
-            <div className="text-xs text-[var(--app-danger)] bg-red-400/10 rounded-lg px-3 py-2">
-              {step.message}
-            </div>
-          )}
+              {!initAmountA && !initAmountB && (
+                <div className="text-xs text-[var(--app-muted)] bg-[var(--app-panel-soft)] rounded-lg px-3 py-2 text-center">
+                  Skip liquidity to create an empty pool
+                </div>
+              )}
 
-          {isValidA && isValidB && !hasValidPair && (
-            <div className="text-xs text-[var(--app-danger)] bg-red-400/10 rounded-lg px-3 py-2">
-              At least one token must already have a pair with WOCT
-            </div>
-          )}
-
-          <button
-            onClick={() => {
-              // [V7-FIX] If not connected, actually call connect() instead of
-              // silently triggering handleCreatePool (which would fail)
-              if (!isConnected) { connect(); return; }
-              handleCreatePool();
-            }}
-            // [V7-FIX] Disable when pair already exists — would revert at register_pool
-            disabled={!isConnected ? false : (!isValidA || !isValidB || !hasValidPair || creating || pairAlreadyExists)}
-            className="w-full py-3 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-xl font-medium transition-colors"
-            title={pairAlreadyExists ? 'This pair already has a pool — create would fail' : undefined}
-          >
-            {!isConnected ? 'Connect Wallet' : isValidA && isValidB && hasValidPair && initAmountA && initAmountB ? 'Create Pool + Add Liquidity' : 'Create Pool'}
-          </button>
-        </>
-      ) : ((stepType === 'idle' || stepType === 'error') ? null : (
-        <div className="bg-[var(--app-panel-soft)] rounded-xl p-6 border border-[var(--app-border)] space-y-4">
-          {/* Header with step counter */}
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-semibold text-[var(--app-text)]">
-              {stepType === 'done' ? 'Pool Created' : 'Creating Pool'}
-            </span>
-            {stepType !== 'done' && (
-              <span className="text-xs font-mono text-[var(--app-muted)]">
-                Step {getStepIndex(stepType) + 1}/{totalSteps}
-              </span>
-            )}
-          </div>
-
-          {/* Progress bar */}
-          {stepType !== 'done' && (
-            <div className="h-1.5 bg-[var(--app-panel)] rounded-full overflow-hidden border border-[var(--app-border)]">
-              <div
-                className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)]"
-                style={{ width: `${((getStepIndex(stepType) + 1) / totalSteps) * 100}%` }}
-              />
-            </div>
-          )}
-
-          {/* Step checklist */}
-          <div className="space-y-1.5">
-            {stepDefs.map((def, idx) => {
-              const currentIdx = stepType === 'done' ? totalSteps : getStepIndex(stepType);
-              const isDone = idx < currentIdx;
-              const isCurrent = stepType !== 'done' && idx === currentIdx;
-
-              return (
-                <div
-                  key={def.key}
-                  className={`flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-xs transition-colors ${
-                    isCurrent ? 'bg-[var(--app-blue)]/10 text-[var(--app-blue-3)]' :
-                    isDone ? 'text-[var(--app-success)]' :
-                    'text-[var(--app-muted)]'
-                  }`}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setWizardStep(2)}
+                  className="flex-1 py-3 bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-xl font-medium text-sm hover:bg-[var(--app-hover)] transition-colors"
                 >
-                  {isDone ? (
-                    <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                    </svg>
-                  ) : isCurrent ? (
-                    <div className="w-4 h-4 flex-shrink-0 border-2 border-[var(--app-blue)] border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <div className="w-4 h-4 flex-shrink-0 rounded-full border border-[var(--app-border)]" />
-                  )}
-                  <span className="font-medium">
-                    {idx + 1}. {def.label}
-                  </span>
-                  {isCurrent && (
-                    <span className="ml-auto text-[10px] text-[var(--app-muted)]">sign...</span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Done state */}
-          {stepType === 'done' && (
-            <div className="space-y-3">
-              <div className="text-xs text-[var(--app-muted)] break-all font-mono bg-[var(--app-panel-soft)] rounded-lg px-3 py-2">
-                Pool: {'poolAddress' in stepSnapshot ? stepSnapshot.poolAddress : ''}
+                  Back
+                </button>
+                <button
+                  onClick={handleCreatePool}
+                  disabled={creating}
+                  className="flex-[2] py-3 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-xl font-medium transition-colors"
+                >
+                  {creating ? 'Creating...' : initAmountA && initAmountB ? 'Create Pool + Add Liquidity' : 'Create Pool'}
+                </button>
               </div>
-              {/* [V9] Show reward info for reward pools */}
-              {'rewardInfo' in stepSnapshot && stepSnapshot.rewardInfo && (
-                <div className="text-xs bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2 space-y-1">
-                  <div className="text-green-400 font-medium">Reward Pool Created</div>
-                  <div className="text-[var(--app-muted)]">
-                    Reward: {stepSnapshot.rewardInfo.rewardAmount} {stepSnapshot.rewardInfo.rewardToken}
-                  </div>
-                  <div className="text-[var(--app-muted)]">
-                    Duration: {stepSnapshot.rewardInfo.duration} epochs (~{Math.round(stepSnapshot.rewardInfo.duration / 14400)} days)
-                  </div>
-                  <div className="text-green-400/80 text-[10px]">
-                    LP tokens locked 7 days | Reward immutable | Linear distribution
-                  </div>
-                </div>
-              )}
-              <button
-                onClick={() => navigate(`/liquidity?pool=${'poolAddress' in stepSnapshot ? stepSnapshot.poolAddress : ''}`)}
-                className="w-full py-2 bg-green-600 hover:bg-green-700 rounded-xl text-sm font-medium transition-colors"
-              >
-                Add / Manage Liquidity
-              </button>
-              <button
-                onClick={reset}
-                className="w-full py-2 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] rounded-xl text-sm font-medium hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] transition-colors"
-              >
-                Create Another Pool
-              </button>
             </div>
           )}
+        </>
+      ) : stepType === 'done' ? (
+        <div className="bg-[var(--app-panel-soft)] rounded-xl p-6 border border-[var(--app-border)] space-y-4">
+          <div className="flex items-center gap-2 text-[var(--app-success)]">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+            <span className="text-sm font-semibold">Pool Created</span>
+          </div>
+          <div className="text-xs text-[var(--app-muted)] break-all font-mono bg-[var(--app-panel)] rounded-lg px-3 py-2">
+            Pool: {'poolAddress' in stepSnapshot ? stepSnapshot.poolAddress : ''}
+          </div>
+          {'rewardInfo' in stepSnapshot && stepSnapshot.rewardInfo && (
+            <div className="text-xs bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2 space-y-1">
+              <div className="text-green-400 font-medium">Reward Pool Created</div>
+              <div className="text-[var(--app-muted)]">
+                Reward: {stepSnapshot.rewardInfo.rewardAmount} {stepSnapshot.rewardInfo.rewardToken}
+              </div>
+              <div className="text-[var(--app-muted)]">
+                Duration: {stepSnapshot.rewardInfo.duration} epochs (~{Math.round(stepSnapshot.rewardInfo.duration / 14400)} days)
+              </div>
+              <div className="text-green-400/80 text-[10px]">
+                LP tokens locked 7 days | Reward immutable | Linear distribution
+              </div>
+            </div>
+          )}
+          <button
+            onClick={() => navigate(`/liquidity?pool=${'poolAddress' in stepSnapshot ? stepSnapshot.poolAddress : ''}`)}
+            className="w-full py-2 bg-green-600 hover:bg-green-700 rounded-xl text-sm font-medium transition-colors"
+          >
+            Add / Manage Liquidity
+          </button>
+          <button
+            onClick={reset}
+            className="w-full py-2 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] rounded-xl text-sm font-medium hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] transition-colors"
+          >
+            Create Another Pool
+          </button>
         </div>
-      ))}
+      ) : null}
     </div>
+    </>
   );
 }
 

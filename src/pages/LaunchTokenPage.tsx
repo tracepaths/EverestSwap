@@ -6,6 +6,7 @@ import { sanitizeNumericInput } from '../services/swapService';
 import type { TokenLaunchConfig } from '../types';
 import { EXPLORER_URL, CONTRACTS, WOCT_TOKEN } from '../config';
 import { cookieStorage } from '../services/cookieStorage';
+import LoadingModal from '../components/LoadingModal';
 
 type LaunchStep =
   | { type: 'idle' }
@@ -392,7 +393,6 @@ function LaunchTokenPage() {
     { key: 'granting', label: 'Grant token allowance to pool' },
     { key: 'adding_liquidity', label: 'Add initial liquidity with WOCT' },
   ];
-  const liquidityStepIndex = liquiditySteps.findIndex(s => s.key === liquidityStep.type);
 
   const handleAddLiquidity = async () => {
     if (step.type !== 'done') return;
@@ -593,6 +593,18 @@ function LaunchTokenPage() {
 
   // ========== RENDER ==========
   return (
+    <>
+    <LoadingModal
+      isOpen={step.type !== 'idle' && step.type !== 'done' && step.type !== 'error'}
+      title="Launching Token"
+      steps={[
+        { key: 'compiling', label: 'Compiling Token contract' },
+        { key: 'computing_address', label: 'Computing token address' },
+        { key: 'deploying', label: 'Deploying Token' },
+      ]}
+      currentStep={step.type}
+      error={step.type === 'error' ? step.message : undefined}
+    />
       <div className="page-surface mx-auto w-full max-w-4xl pt-1 sm:pt-3 space-y-5">
       <div className="page-heading">
         <div><div className="page-kicker">Token studio</div><h1 className="page-title">Launch Token</h1><p className="page-subtitle">Configure, review, and deploy a token on EverestSwap.</p></div>
@@ -1275,31 +1287,13 @@ function LaunchTokenPage() {
                 </div>
               )}
 
-              {liquidityStep.type !== 'idle' && liquidityStep.type !== 'done' && liquidityStep.type !== 'error' && (
-                <div className="border-t border-[var(--app-border)] pt-4 mt-4 space-y-2">
-                  <div className="text-xs font-semibold text-[var(--app-muted)]">Creating Pool...</div>
-                  {liquiditySteps.map((s, i) => {
-                    const isActive = liquidityStep.type === s.key;
-                    const isDone = liquidityStepIndex > i;
-                    return (
-                      <div key={s.key} className="flex items-center gap-2 text-xs">
-                        {isDone ? (
-                          <svg className="w-4 h-4 text-green-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                          </svg>
-                        ) : isActive ? (
-                          <div className="w-4 h-4 border-2 border-[var(--app-blue)] border-t-transparent rounded-full animate-spin shrink-0" />
-                        ) : (
-                          <div className="w-4 h-4 rounded-full border border-[var(--app-border)] shrink-0" />
-                        )}
-                        <span className={isDone ? 'text-green-400' : isActive ? 'text-[var(--app-blue-3)]' : 'text-[var(--app-muted-2)]'}>
-                          {s.label}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              <LoadingModal
+                isOpen={liquidityStep.type !== 'idle' && liquidityStep.type !== 'done' && liquidityStep.type !== 'error'}
+                title="Creating Pool"
+                steps={liquiditySteps}
+                currentStep={liquidityStep.type}
+                onCancel={() => setLiquidityStep({ type: 'idle' })}
+              />
 
               {liquidityStep.type === 'done' && (
                 <div className="border-t border-[var(--app-border)] pt-4 mt-4 space-y-3">
@@ -1337,15 +1331,11 @@ function LaunchTokenPage() {
                 </div>
               )}
             </div>
-          ) : (
-            <div className="flex items-center gap-3">
-              <div className="w-5 h-5 border-2 border-[var(--app-blue)] border-t-transparent rounded-full animate-spin" />
-              <span className="text-sm text-[var(--app-blue-3)]">{stepLabel()}</span>
-            </div>
-          )}
+          ) : null}
         </div>
       )}
     </div>
+    </>
   );
 }
 

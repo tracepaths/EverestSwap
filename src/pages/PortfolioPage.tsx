@@ -304,10 +304,24 @@ export default function PortfolioPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
-        <StatCard label="Portfolio Value" value={totalValueUsd > 0 ? `$${totalValueUsd.toFixed(2)}` : priceLoading ? '...' : '--'} helper="Total USD value" />
-        <StatCard label="Assets tracked" value={String(totalTokens)} helper="Trusted + saved tokens" />
-        <StatCard label="LP positions" value={String(totalPositions)} helper="All active pools" />
-        <StatCard label="Native balance" value={walletBalance || '0'} helper={`OCT in wallet${octPrice > 0 ? ` (~$${(parseFloat(walletBalance || '0') * octPrice).toFixed(2)})` : ''}`} />
+        {loading && !lastUpdated ? (
+          <>
+            {[1,2,3,4].map(i => (
+              <div key={i} className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] p-5 space-y-3">
+                <div className="h-3 w-20 bg-[var(--app-panel-soft)] rounded animate-pulse" />
+                <div className="h-7 w-24 bg-[var(--app-panel-soft)] rounded animate-pulse" />
+                <div className="h-3 w-28 bg-[var(--app-panel-soft)] rounded animate-pulse" />
+              </div>
+            ))}
+          </>
+        ) : (
+          <>
+            <StatCard label="Portfolio Value" value={totalValueUsd > 0 ? `$${totalValueUsd.toFixed(2)}` : priceLoading ? '...' : '--'} helper="Total USD value" />
+            <StatCard label="Assets tracked" value={String(totalTokens)} helper="Trusted + saved tokens" />
+            <StatCard label="LP positions" value={String(totalPositions)} helper="All active pools" />
+            <StatCard label="Native balance" value={walletBalance || '0'} helper={`OCT in wallet${octPrice > 0 ? ` (~$${(parseFloat(walletBalance || '0') * octPrice).toFixed(2)})` : ''}`} />
+          </>
+        )}
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.25fr_0.85fr]">
@@ -320,7 +334,23 @@ export default function PortfolioPage() {
           </div>
 
           <div className="space-y-3 max-h-[420px] overflow-auto pr-1">
-            {assets.slice(0, assetsLimit).length === 0 ? (
+            {loading && !lastUpdated ? (
+              <>
+                {[1,2,3].map(i => (
+                  <div key={i} className="bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-xl p-4 flex items-center justify-between gap-4">
+                    <div className="space-y-2">
+                      <div className="h-4 w-16 bg-[var(--app-panel)] rounded animate-pulse" />
+                      <div className="h-3 w-24 bg-[var(--app-panel)] rounded animate-pulse" />
+                      <div className="h-2 w-32 bg-[var(--app-panel)] rounded animate-pulse" />
+                    </div>
+                    <div className="space-y-2 text-right">
+                      <div className="h-4 w-20 bg-[var(--app-panel)] rounded animate-pulse ml-auto" />
+                      <div className="h-3 w-12 bg-[var(--app-panel)] rounded animate-pulse ml-auto" />
+                    </div>
+                  </div>
+                ))}
+              </>
+            ) : assets.slice(0, assetsLimit).length === 0 ? (
               <EmptyState title="No assets tracked" body="Import or trust a token to see it here." />
             ) : (
               assets.slice(0, assetsLimit).map(asset => (
@@ -369,7 +399,26 @@ export default function PortfolioPage() {
               <p className="text-sm text-[var(--app-muted)]">Liquidity positions owned by this wallet.</p>
             </div>
             <div className="space-y-3 max-h-[360px] overflow-auto pr-1">
-              {lpPositions.length === 0 ? (
+              {loading && !lastUpdated ? (
+                <>
+                  {[1,2].map(i => (
+                    <div key={i} className="bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-xl p-4 flex items-center gap-3">
+                      <div className="flex -space-x-2">
+                        <div className="w-9 h-9 rounded-full bg-[var(--app-panel)] animate-pulse" />
+                        <div className="w-9 h-9 rounded-full bg-[var(--app-panel)] animate-pulse" />
+                      </div>
+                      <div className="flex-1 space-y-2">
+                        <div className="h-4 w-20 bg-[var(--app-panel)] rounded animate-pulse" />
+                        <div className="h-3 w-32 bg-[var(--app-panel)] rounded animate-pulse" />
+                      </div>
+                      <div className="space-y-2">
+                        <div className="h-4 w-16 bg-[var(--app-panel)] rounded animate-pulse" />
+                        <div className="h-3 w-12 bg-[var(--app-panel)] rounded animate-pulse" />
+                      </div>
+                    </div>
+                  ))}
+                </>
+              ) : lpPositions.length === 0 ? (
                 <EmptyState title="No LP positions" body="Create or add liquidity to see positions here." />
               ) : lpPositions.slice(0, lpLimit).map((pos, idx) => {
                 const symA = pos.tokenA || '?';
@@ -424,7 +473,20 @@ export default function PortfolioPage() {
               <p className="text-sm text-[var(--app-muted)]">Local history of swaps and liquidity actions.</p>
             </div>
             <div className="space-y-3 max-h-[360px] overflow-auto pr-1">
-              {txs.length === 0 ? (
+              {loading && !lastUpdated ? (
+                <>
+                  {[1,2,3].map(i => (
+                    <div key={i} className="bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-xl p-4 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="h-4 w-24 bg-[var(--app-panel)] rounded animate-pulse" />
+                        <div className="h-5 w-16 bg-[var(--app-panel)] rounded animate-pulse" />
+                      </div>
+                      <div className="h-3 w-40 bg-[var(--app-panel)] rounded animate-pulse" />
+                      <div className="h-2 w-48 bg-[var(--app-panel)] rounded animate-pulse" />
+                    </div>
+                  ))}
+                </>
+              ) : txs.length === 0 ? (
                 <EmptyState title="No recent activity" body="Your swaps and liquidity actions will appear here." />
               ) : txs.slice(0, txsLimit).map(tx => {
                 return (

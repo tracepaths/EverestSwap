@@ -71,7 +71,7 @@ function getHumanReadableLabel(tx: { message?: string; encrypted_data?: string; 
   const toRaw = (tx.to_ || tx.to || '').toString().slice(0, 64);
   const to = toRaw.toLowerCase();
 
-  // Coba parse message sebagai JSON array untuk mendapatkan parameter panggilan kontrak
+  // Try to parse message as JSON array to get contract call parameters
   let args: unknown[] = [];
   let isJsonArray = false;
   if (msg.startsWith('[') && msg.endsWith(']')) {
@@ -102,7 +102,7 @@ function getHumanReadableLabel(tx: { message?: string; encrypted_data?: string; 
 
   const amtStr = formatAmount(amount);
 
-  // Jika nama method kosong, tebak dari tipe parameter dan alamat kontrak tujuan
+  // If method name is empty, guess from parameter type and destination contract address
   let inferredMethod = method;
   if (!inferredMethod && isJsonArray) {
     // [SECURITY] FM-3: Validate args are strings (not objects/arrays) before inferring
@@ -168,12 +168,12 @@ function getHumanReadableLabel(tx: { message?: string; encrypted_data?: string; 
     return sanitizeLabel(inferredMethod.charAt(0).toUpperCase() + inferredMethod.slice(1).replace(/_/g, ' ')).slice(0, 80);
   }
 
-  // Fallback tambahan jika terdeteksi array berisi 2 angka tetapi metode tidak diketahui
+  // Additional fallback if array containing 2 numbers is detected but method is unknown
   if (isJsonArray && args.length === 2 && !isNaN(Number(args[0])) && !isNaN(Number(args[1]))) {
     return `Swap ${formatAmount(String(args[0]))} tokens`;
   }
 
-  // Jika format pesan berupa teks biasa (bukan JSON), kembalikan langsung
+  // If message format is plain text (not JSON), return directly
   if (msg && !msg.startsWith('[') && !msg.startsWith('{')) {
     return sanitizeLabel(msg).slice(0, 80);
   }

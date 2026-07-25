@@ -6,6 +6,7 @@ import { CONTRACTS } from '../types';
 import { formatUnits, parseUnits, sanitizeNumericInput } from '../services/swapService';
 import type { LpPosition } from '../services/octraRpc';
 import { recordTx } from '../services/txHistory';
+import LoadingModal from '../components/LoadingModal';
 
 interface DynamicPool {
   address: string;
@@ -746,56 +747,33 @@ function LiquidityPage() {
                 </div>
               </div>
             )}
-            {addStep.type !== 'idle' && (
+            <LoadingModal
+              isOpen={addStep.type !== 'idle' && addStep.type !== 'done' && addStep.type !== 'error'}
+              title="Adding Liquidity"
+              steps={ADD_STEPS}
+              currentStep={addStep.type}
+              onCancel={resetAddStep}
+            />
+            {addStep.type === 'error' && (
               <div className="bg-[var(--app-panel)] rounded-xl p-4 border border-[var(--app-border)] space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-semibold text-[var(--app-text)]">
-                    {addStep.type === 'done' ? 'Liquidity Added' : addStep.type === 'error' ? 'Add Liquidity Failed' : 'Adding Liquidity'}
-                  </span>
-                  {addStep.type !== 'done' && addStep.type !== 'error' && (
-                    <span className="text-xs font-mono text-[var(--app-muted)]">
-                      Step {ADD_STEPS.findIndex(s => s.key === addStep.type) + 1}/{ADD_STEPS.length}
-                    </span>
-                  )}
+                <div className="text-sm font-semibold text-[var(--app-danger)]">Add Liquidity Failed</div>
+                <div className="text-xs text-[var(--app-danger)] bg-red-400/10 rounded-lg px-3 py-2">{addStep.message}</div>
+                <button onClick={resetAddStep} className="w-full py-2 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] rounded-xl text-sm font-medium hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] transition-colors">
+                  Try Again
+                </button>
+              </div>
+            )}
+            {addStep.type === 'done' && (
+              <div className="bg-[var(--app-panel)] rounded-xl p-4 border border-[var(--app-border)] space-y-3">
+                <div className="flex items-center gap-2 text-[var(--app-success)]">
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                  <span className="text-sm font-semibold">Liquidity Added</span>
                 </div>
-                {addStep.type !== 'done' && addStep.type !== 'error' && (
-                  <div className="h-1.5 bg-[var(--app-panel-soft)] rounded-full overflow-hidden border border-[var(--app-border)]">
-                    <div
-                      className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)]"
-                      style={{ width: `${((ADD_STEPS.findIndex(s => s.key === addStep.type) + 1) / ADD_STEPS.length) * 100}%` }}
-                    />
-                  </div>
-                )}
-                {addStep.type !== 'error' && (
-                  <div className="space-y-1.5">
-                    {ADD_STEPS.map((def, idx) => {
-                      const currentIdx = addStep.type === 'done' ? ADD_STEPS.length : ADD_STEPS.findIndex(s => s.key === addStep.type);
-                      const isDone = idx < currentIdx;
-                      const isCurrent = addStep.type !== 'done' && idx === currentIdx;
-                      return (
-                        <div key={def.key} className={`flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-xs transition-colors ${isCurrent ? 'bg-[var(--app-blue)]/10 text-[var(--app-blue-3)]' : isDone ? 'text-[var(--app-success)]' : 'text-[var(--app-muted)]'}`}>
-                          {isDone ? (
-                            <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-                          ) : isCurrent ? (
-                            <div className="w-4 h-4 flex-shrink-0 border-2 border-[var(--app-blue)] border-t-transparent rounded-full animate-spin" />
-                          ) : (
-                            <div className="w-4 h-4 flex-shrink-0 rounded-full border border-[var(--app-border)]" />
-                          )}
-                          <span className="font-medium">{idx + 1}. {def.label}</span>
-                          {isCurrent && <span className="ml-auto text-[10px] text-[var(--app-muted)]">sign...</span>}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-                {addStep.type === 'error' && (
-                  <div className="text-xs text-[var(--app-danger)] bg-red-400/10 rounded-lg px-3 py-2">{addStep.message}</div>
-                )}
-                {(addStep.type === 'done' || addStep.type === 'error') && (
-                  <button onClick={resetAddStep} className="w-full py-2 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] rounded-xl text-sm font-medium hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] transition-colors">
-                    {addStep.type === 'done' ? 'Add More Liquidity' : 'Try Again'}
-                  </button>
-                )}
+                <button onClick={resetAddStep} className="w-full py-2 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] rounded-xl text-sm font-medium hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] transition-colors">
+                  Add More Liquidity
+                </button>
               </div>
             )}
             <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)]">
@@ -944,44 +922,16 @@ function LiquidityPage() {
           </div>
         ) : (
           <div className="p-6 space-y-3">
-            {removeStep.type !== 'idle' && (
-              <div className="bg-[var(--app-panel)] rounded-xl p-4 border border-[var(--app-border)] space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-semibold text-[var(--app-text)]">
-                    {removeStep.type === 'done' ? 'Liquidity Removed' : removeStep.type === 'error' ? 'Remove Failed' : 'Removing Liquidity'}
-                  </span>
-                  {removeStep.type !== 'done' && removeStep.type !== 'error' && (
-                    <span className="text-xs font-mono text-[var(--app-muted)]">Step 1/1</span>
-                  )}
-                </div>
-                {removeStep.type === 'removing' && (
-                  <div className="h-1.5 bg-[var(--app-panel-soft)] rounded-full overflow-hidden border border-[var(--app-border)]">
-                    <div className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)]" style={{ width: '50%' }} />
-                  </div>
-                )}
-                {removeStep.type === 'removing' && (
-                  <div className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-xs bg-[var(--app-blue)]/10 text-[var(--app-blue-3)]">
-                    <div className="w-4 h-4 flex-shrink-0 border-2 border-[var(--app-blue)] border-t-transparent rounded-full animate-spin" />
-                    <span className="font-medium">1. Remove liquidity</span>
-                    <span className="ml-auto text-[10px] text-[var(--app-muted)]">sign...</span>
-                  </div>
-                )}
-                {removeStep.type === 'done' && (
-                  <div className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-xs text-[var(--app-success)]">
-                    <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-                    <span className="font-medium">1. Remove liquidity</span>
-                  </div>
-                )}
-                {removeStep.type === 'error' && (
-                  <div className="text-xs text-[var(--app-danger)] bg-red-400/10 rounded-lg px-3 py-2">{removeStep.message}</div>
-                )}
-                {(removeStep.type === 'done' || removeStep.type === 'error') && (
-                  <button onClick={resetRemoveStep} className="w-full py-2 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] rounded-xl text-sm font-medium hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] transition-colors">
-                    {removeStep.type === 'done' ? 'Done' : 'Try Again'}
-                  </button>
-                )}
-              </div>
-            )}
+            <LoadingModal
+              isOpen={removeStep.type === 'removing'}
+              title="Removing Liquidity"
+              steps={[{ key: 'removing', label: 'Remove liquidity' }]}
+              currentStep={removeStep.type}
+              error={removeStep.type === 'error' ? removeStep.message : undefined}
+              done={removeStep.type === 'done'}
+              doneLabel="Liquidity removed successfully"
+              onClose={resetRemoveStep}
+            />
             <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)]">
               <div className="text-xs text-[var(--app-muted)] mb-1">Your LP Balance</div>
               <div className="text-2xl font-mono">{formatUnits(lpBalance, 12)} LP</div>
