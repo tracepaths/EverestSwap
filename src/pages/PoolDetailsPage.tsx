@@ -300,7 +300,7 @@ export default function PoolDetailsPage() {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <span className={`px-3 py-1 rounded-full text-xs font-bold ${pool.active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+            <span className="px-3 py-1 rounded-full text-xs font-bold ${pool.active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}">
               {pool.active ? 'Active' : 'Paused'}
             </span>
             <span className="text-xs text-[var(--app-muted)] bg-[var(--app-panel-soft)] px-3 py-1 rounded-lg">
