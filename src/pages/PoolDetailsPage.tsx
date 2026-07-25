@@ -95,12 +95,6 @@ function LiquidityPosition({
   );
 }
 
-function formatTimeAgo(blocks: number) {
-  if (blocks < 1440) return `${blocks} blocks ago`;
-  const days = Math.floor(blocks / 1440);
-  return days === 1 ? '1 day ago' : `${days} days ago`;
-}
-
 export default function PoolDetailsPage() {
   const { address } = useParams<{ address: string }>();
   const { rpc, isConnected, walletAddress, addToast } = useApp();
@@ -112,7 +106,6 @@ export default function PoolDetailsPage() {
   const [removeStep, setRemoveStep] = useState<RemoveStep>({ type: 'idle' });
   const [showConfirm, setShowConfirm] = useState(false);
   const [confirmText, setConfirmText] = useState('');
-  const [pendingPositionRemovals, setPendingPositionRemovals] = useState<Set<string>>(new Set());
 
   const loadPoolDetails = useCallback(async () => {
     if (!address) return;
@@ -157,11 +150,11 @@ export default function PoolDetailsPage() {
     }
   }, [address, rpc, addToast]);
 
-  const loadUserPositions = async () => {
+  const loadUserPositions = useCallback(async () => {
     if (!address || !isConnected || !walletAddress) return;
     setLoadingPositions(true);
     try {
-      const allPositions = await rpc.getAllPositions(CONTRACTS.router).catch(() => []);
+      const allPositions = await rpc.getPositions(address, walletAddress).catch(() => []);
       const userPositions = allPositions.filter(
         (pos: any) => pos.pool === address && pos.owner.toLowerCase() === walletAddress.toLowerCase()
       );
@@ -171,7 +164,7 @@ export default function PoolDetailsPage() {
     } finally {
       setLoadingPositions(false);
     }
-  };
+  }, [address, isConnected, walletAddress, rpc]);
 
   const isPoolRemovable = (p: MyPool) => {
     const emptyA = Number(p.reserveA) === 0 || p.reserveA === '0' || p.reserveA === '';
@@ -207,7 +200,6 @@ export default function PoolDetailsPage() {
   };
 
   const handleRemovePosition = async (positionId: string) => {
-    setPendingPositionRemovals(prev => new Set(prev).add(positionId));
     try {
       const hash = await walletService.callContract({
         contract: CONTRACTS.router,
@@ -221,12 +213,6 @@ export default function PoolDetailsPage() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Remove failed';
       addToast('error', `Remove failed: ${msg}`);
-    } finally {
-      setPendingPositionRemovals(prev => {
-        const next = new Set(prev);
-        next.delete(positionId);
-        return next;
-      });
     }
   };
 
@@ -300,7 +286,7 @@ export default function PoolDetailsPage() {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <span className="px-3 py-1 rounded-full text-xs font-bold ${pool.active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}">
+            <span className={`px-3 py-1 rounded-full text-xs font-bold ${pool.active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
               {pool.active ? 'Active' : 'Paused'}
             </span>
             <span className="text-xs text-[var(--app-muted)] bg-[var(--app-panel-soft)] px-3 py-1 rounded-lg">
@@ -316,19 +302,19 @@ export default function PoolDetailsPage() {
         <div className="grid grid-cols-3 gap-4">
           <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 text-center border border-[var(--app-border-soft)]">
             <div className="text-[10px] text-[var(--app-muted)] uppercase tracking-wider mb-1">Reserve A</div>
-            <div className={`font-mono text-lg font-bold ${Number(pool.reserveA) === 0 ? 'text-green-400' : 'text-[var(--app-text)]'}`:
+            <div className={`font-mono text-lg font-bold ${Number(pool.reserveA) === 0 ? 'text-green-400' : 'text-[var(--app-text)]'}`}>
               {Number(pool.reserveA) === 0 ? '0 ✓' : pool.reserveA}
             </div>
           </div>
           <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 text-center border border-[var(--app-border-soft)]">
             <div className="text-[10px] text-[var(--app-muted)] uppercase tracking-wider mb-1">Reserve B</div>
-            <div className={`font-mono text-lg font-bold ${Number(pool.reserveB) === 0 ? 'text-green-400' : 'text-[var(--app-text)]'}`:
+            <div className={`font-mono text-lg font-bold ${Number(pool.reserveB) === 0 ? 'text-green-400' : 'text-[var(--app-text)]'}`}>
               {Number(pool.reserveB) === 0 ? '0 ✓' : pool.reserveB}
             </div>
           </div>
           <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 text-center border border-[var(--app-border-soft)]">
             <div className="text-[10px] text-[var(--app-muted)] uppercase tracking-wider mb-1">Total LP</div>
-            <div className={`font-mono text-lg font-bold ${Number(pool.totalLp) === 0 ? 'text-green-400' : 'text-[var(--app-text)]'}`:
+            <div className={`font-mono text-lg font-bold ${Number(pool.totalLp) === 0 ? 'text-green-400' : 'text-[var(--app-text)]'}`}>
               {Number(pool.totalLp) === 0 ? '0 ✓' : pool.totalLp}
             </div>
           </div>
