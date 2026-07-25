@@ -57,6 +57,27 @@ export interface TokenLaunchConfig {
   customTaxRecipient: string;
 }
 
+// [V9] Reward Pool types
+export interface RewardPoolConfig {
+  rewardToken: string;
+  rewardAmount: string;
+  duration: number;       // in epochs
+  creatorLockDuration: number;
+  distributionType: 'linear';
+}
+
+export interface RewardPoolInfo {
+  rewardToken: string;
+  rewardTotal: string;
+  rewardRemaining: string;
+  rewardPerEpoch: string;
+  rewardStartEpoch: number;
+  rewardEndEpoch: number;
+  distributionType: number;
+  creator: string;
+  creatorLockEnd: number;
+}
+
 export {
   RPC_URL,
   INDEXER_URL,

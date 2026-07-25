@@ -139,6 +139,31 @@ Create custom trading pairs for any two tokens.
 8. The wizard runs 6-9 automatic steps (takes ~30-60 seconds)
 9. On success, click **Add / Manage Liquidity** to manage your new pool
 
+### Create a Reward Pool
+
+Reward pools let you incentivize liquidity with your own OCS01-compatible tokens.
+
+1. Go to the **Pool** page and click **Create Pool**
+2. Select Token A and Token B (same as standard pool)
+3. Choose a **Fee Tier** (same as standard pool)
+4. **Pool Type**: Toggle to **Reward Pool**
+5. **Reward Configuration**:
+   - **Reward Token**: Select any OCS01-compatible token (must have `grant`/`pull` interface)
+   - **Reward Amount**: Enter the total reward supply (no minimum required)
+   - **Duration**: Choose distribution period (1d, 7d, 30d, 90d, 365d)
+   - **Creator Lock**: Minimum 7 days (anti-rugpull protection)
+6. **Distribution Preview**: Review daily rate and summary
+7. Click **Create Pool** — the wizard deploys RewardPool contract, sets config, and grants rewards
+8. **Important**: Reward configuration is **immutable** after creation — you cannot change the token, amount, or duration
+
+#### Reward Pool Rules
+- Distribution is **linear** — rewards accrue proportionally per epoch
+- Formula: `claimable = per_epoch × elapsed × user_lp / total_lp`
+- Creator LP tokens are **locked for 7 days minimum** (anti-rugpull)
+- Reward config is **one-shot** — cannot be edited after setting
+- Emergency withdraw available only after reward end + 7-day cooldown
+- All standard AMM features (swaps, routing, liquidity) work identically
+
 ---
 
 ## Portfolio

@@ -130,3 +130,47 @@ If devnet has stale state, the user can:
 ## Verdict
 **Auto-wrap+swap OCT → OES is fully implemented and the code is correct.**
 The devnet RPC currently has stuck state from prior tests (2M pending withdrawal) that doesn't reflect a code bug.
+
+---
+
+## [V9] Reward Pool Test Scenarios
+
+### Scenario R1: Create Reward Pool
+**Setup**: WOCT/OES pool with custom OCS01 reward token
+1. Open Pool page → Create Pool
+2. Token A: WOCT, Token B: OES
+3. Fee Tier: 0.30%
+4. Pool Type: Toggle to **Reward Pool**
+5. Reward Token: Select any OCS01 token (e.g., imported custom token)
+6. Reward Amount: 1000
+7. Duration: 7 days (100800 epochs)
+8. Creator Lock: 7 days (default)
+9. **Verify**: Distribution Preview shows rate and summary
+10. Click **Create Pool**
+11. **Expected**: 8-9 transactions (compile, deploy, set_tokens, set_reward_config, set_fee, register_reward_pool, grant_reward)
+12. **Verify**: Success shows "Reward Pool Created" with token, amount, duration
+
+### Scenario R2: Claim Rewards
+**Setup**: Open Liquidity page for reward pool
+1. Select the reward pool created in R1
+2. **Verify**: "REWARD POOL" badge displayed
+3. **Verify**: Claimable Rewards section shows reward token and amount
+4. Click **Claim**
+5. **Expected**: Toast shows claiming progress, then success
+6. **Verify**: Claimable amount decreases, wallet balance increases
+
+### Scenario R3: Reward Pool Badge in Pool List
+1. Open Pool page
+2. **Verify**: Reward pools show green "REWARD" badge next to pair name
+3. **Verify**: "Custom Reward" info shows reward token and per-epoch rate
+4. Click on reward pool → navigates to Liquidity page with reward info
+
+### Scenario R4: Immutable Config Protection
+1. Try to call `set_reward_config()` again on a reward pool
+2. **Expected**: Transaction fails with "config already set" error
+
+### Scenario R5: Standard Pool Unaffected
+1. Create or select a standard (non-reward) pool
+2. **Verify**: No reward info panel shown in Liquidity page
+3. **Verify**: No claim button visible
+4. **Verify**: Swap and liquidity functions work normally

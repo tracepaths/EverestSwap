@@ -860,6 +860,80 @@ export class OctraRpc {
     }
   }
 
+  // [V9] Reward Pool methods
+
+  async getRewardInfo(poolAddress: string): Promise<{
+    rewardToken: string;
+    rewardTotal: string;
+    rewardRemaining: string;
+    rewardPerEpoch: string;
+    rewardStartEpoch: number;
+    rewardEndEpoch: number;
+    distributionType: number;
+    creator: string;
+    creatorLockEnd: number;
+  }> {
+    try {
+      const raw: unknown = await this.contractView(poolAddress, 'get_reward_info', []);
+      const r = Array.isArray(raw) ? raw : (raw && typeof raw === 'object' && 'result' in raw ? (raw as { result: unknown }).result as unknown[] : []);
+      return {
+        rewardToken: String(r?.[0] ?? ''),
+        rewardTotal: String(r?.[1] ?? '0'),
+        rewardRemaining: String(r?.[2] ?? '0'),
+        rewardPerEpoch: String(r?.[3] ?? '0'),
+        rewardStartEpoch: Number(r?.[4] ?? 0),
+        rewardEndEpoch: Number(r?.[5] ?? 0),
+        distributionType: Number(r?.[6] ?? 0),
+        creator: String(r?.[7] ?? ''),
+        creatorLockEnd: Number(r?.[8] ?? 0),
+      };
+    } catch {
+      return {
+        rewardToken: '', rewardTotal: '0', rewardRemaining: '0',
+        rewardPerEpoch: '0', rewardStartEpoch: 0, rewardEndEpoch: 0,
+        distributionType: 0, creator: '', creatorLockEnd: 0,
+      };
+    }
+  }
+
+  async getClaimable(poolAddress: string, positionId: number): Promise<string> {
+    try {
+      const raw: unknown = await this.contractView(poolAddress, 'get_claimable', [positionId]);
+      return String((raw && typeof raw === 'object' && 'result' in raw ? (raw as { result: unknown }).result : raw) ?? '0');
+    } catch {
+      return '0';
+    }
+  }
+
+  async isRewardPoolConfigured(poolAddress: string): Promise<boolean> {
+    try {
+      const raw: unknown = await this.contractView(poolAddress, 'is_reward_configured', []);
+      const val = (raw && typeof raw === 'object' && 'result' in raw ? (raw as { result: unknown }).result : raw);
+      return val === true || val === 'true';
+    } catch {
+      return false;
+    }
+  }
+
+  async getRewardTokenFromFactory(factoryAddress: string, poolAddress: string): Promise<string> {
+    try {
+      const raw: unknown = await this.contractView(factoryAddress, 'get_reward_token', [poolAddress]);
+      return String((raw && typeof raw === 'object' && 'result' in raw ? (raw as { result: unknown }).result : raw) ?? '');
+    } catch {
+      return '';
+    }
+  }
+
+  async getRewardPools(factoryAddress: string): Promise<string[]> {
+    try {
+      const raw: unknown = await this.contractView(factoryAddress, 'get_reward_pools', []);
+      const arr = Array.isArray(raw) ? raw : (raw && typeof raw === 'object' && 'result' in raw ? (raw as { result: unknown }).result as unknown[] : []);
+      return (arr || []).map(String);
+    } catch {
+      return [];
+    }
+  }
+
   clearCache(): void {
     clearTokenCache();
   }

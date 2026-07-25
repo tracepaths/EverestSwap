@@ -47,6 +47,7 @@ export const CONTRACTS = {
   router: import.meta.env.EVERESTSWAP_MAINNET_ROUTER_ADDRESS || '',
   oes: import.meta.env.EVERESTSWAP_MAINNET_OES_ADDRESS || '',
   woct: import.meta.env.EVERESTSWAP_MAINNET_WOCT_ADDRESS || '',
+  rewardPoolTemplate: '',
 } as const;
 
 // [V7-FIX] Mainnet explorer URL fully configurable via env vars

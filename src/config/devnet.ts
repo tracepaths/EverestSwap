@@ -51,6 +51,7 @@ export const CONTRACTS = {
   woct: import.meta.env.EVERESTSWAP_DEVNET_WOCT_ADDRESS || 'oct4pAKouypxmP7Uk79uGzEpkkidsNAK3fQhxy1HDUmBRLE',
   dogo: import.meta.env.EVERESTSWAP_DEVNET_DOGO_ADDRESS || 'octJ4mZP8bKidAq4VAy5VrcUwgJTh9Dzop5M4fkKqs79J3k',
   dogoPool: import.meta.env.EVERESTSWAP_DEVNET_DOGO_POOL_ADDRESS || 'oct764KAUBycN5PiqakWCPFvbzWsRJtG4kbhGkVr6KKawpV',
+  rewardPoolTemplate: '',  // reference only — pools are permissionless
 } as const;
 
 // [V7-FIX] Explorer URL fully configurable via env vars

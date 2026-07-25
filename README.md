@@ -7,9 +7,11 @@ A decentralized exchange (DEX) interface for the Octra Network, built with React
 - **Swap** — Trade tokens with constant-product AMM (x*y=k), 0.3% fee
 - **Liquidity** — Add/remove liquidity with locked/unlocked positions
 - **Pool Creation** — Create custom trading pairs with configurable fee tiers
+- **[V9] Reward Pools** — Create pools with custom OCS01 token rewards, linear distribution, anti-rugpull protection
 - **Token Launch** — Deploy new ERC20-compatible tokens on Octra
 - **Price Chart** — Real-time price data via indexer
 - **Position Management** — Per-user LP positions with optional time locks
+- **[V9] Reward Claiming** — Claim custom rewards from reward pools via LiquidityPage
 
 ## Quick Start
 

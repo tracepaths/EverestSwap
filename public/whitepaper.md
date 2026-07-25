@@ -133,6 +133,47 @@ Each trading pair has its own SwapPool contract. The pool implements:
 | 1.00% | 1.00% | Exotic / volatile pairs |
 | Custom | User-defined | Numerator/denominator |
 
+### RewardPool (V9)
+
+RewardPool extends SwapPool with custom reward distribution. It maintains the identical AMM interface (swaps, routing, liquidity all work unchanged) while adding a one-shot, immutable reward configuration.
+
+#### Reward Distribution Model
+
+- **Linear Distribution**: Rewards accrue proportionally per epoch
+- **Formula**: `claimable = per_epoch × elapsed × user_lp / total_lp`
+- **Per-Epoch Rate**: `total_reward / (reward_end - reward_start)`
+- **One-Shot Configuration**: `set_reward_config()` can only be called once — the reward token, amount, start/end epochs are immutable after setting
+
+#### Anti-Rugpull Protection
+
+- **Immutable Reward Config**: Once set, reward token, amount, and duration cannot be changed
+- **Creator LP Lock**: Creator must lock LP tokens for minimum 7 days
+- **Emergency Withdraw Cooldown**: Available only after `reward_end` + 7-day cooldown (100800 epochs)
+- **Permissionless Registration**: Anyone can create reward pools via factory's `register_reward_pool()`
+
+#### Duration Presets
+
+| Preset | Epochs | Days |
+|--------|--------|------|
+| 1 day | 14,400 | 1 |
+| 7 days | 100,800 | 7 |
+| 30 days | 432,000 | 30 |
+| 90 days | 1,296,000 | 90 |
+| 365 days | 5,256,000 | 365 |
+
+#### Reward Token Requirements
+
+- Must be OCS01-compatible (implements `grant`, `pull`, `transfer`)
+- No minimum reward supply — creator free to choose any amount
+- Creator must hold sufficient reward tokens to fund the pool
+
+#### Claim Mechanics
+
+1. User calls `claim_reward()` on the pool contract
+2. Pool calculates `per_epoch × elapsed × user_lp / total_lp`
+3. Pool transfers reward tokens to user via `transfer()`
+4. Claimable amount updates each epoch as distribution progresses
+
 ### Router
 
 The Router contract provides a convenient entry point for swaps:

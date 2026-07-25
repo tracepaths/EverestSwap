@@ -171,3 +171,60 @@ export function formatCompoundEstimate(estimate: CompoundEstimate): string {
   
   return `Rewards: ${rewardsOct.toFixed(6)} OCT | Gas: ${gasCostOct.toFixed(6)} OCT | APR: ${estimate.estimatedApr.toFixed(2)}%`;
 }
+
+// ── [V9] Reward Pool Compound Estimation ─────────────────────────────────
+
+export interface RewardPoolEstimate {
+  claimable: bigint;
+  rewardPerEpoch: number;
+  rewardTokenSymbol: string;
+  rewardTokenDecimals: number;
+  distributionProgress: number; // 0-100%
+}
+
+/**
+ * Calculate claimable rewards for a user in a RewardPool
+ */
+export async function calculateRewardPoolRewards(
+  rpc: OctraRpc,
+  poolAddress: string,
+  _userAddress: string,
+  positionId: number
+): Promise<RewardPoolEstimate> {
+  try {
+    const [rewardInfo, claimable, epochRes] = await Promise.all([
+      rpc.getRewardInfo(poolAddress),
+      rpc.getClaimable(poolAddress, positionId),
+      rpc.call<{ epoch_id: number }>('epoch_current'),
+    ]);
+
+    const rewardMetaResolved = await rpc.getTokenMeta(rewardInfo.rewardToken);
+    const currentEpoch = epochRes?.epoch_id || 0;
+
+    // Calculate distribution progress
+    const totalEpochs = rewardInfo.rewardEndEpoch - rewardInfo.rewardStartEpoch;
+    const elapsed = Math.max(0, Math.min(currentEpoch - rewardInfo.rewardStartEpoch, totalEpochs));
+    const progress = totalEpochs > 0 ? (elapsed / totalEpochs) * 100 : 0;
+
+    // Calculate reward per epoch
+    const rewardPerEpoch = totalEpochs > 0
+      ? Number(BigInt(rewardInfo.rewardTotal) / BigInt(totalEpochs))
+      : 0;
+
+    return {
+      claimable: BigInt(claimable),
+      rewardPerEpoch,
+      rewardTokenSymbol: rewardMetaResolved.symbol || '???',
+      rewardTokenDecimals: rewardMetaResolved.decimals,
+      distributionProgress: Math.min(100, progress),
+    };
+  } catch {
+    return {
+      claimable: 0n,
+      rewardPerEpoch: 0,
+      rewardTokenSymbol: '???',
+      rewardTokenDecimals: 6,
+      distributionProgress: 0,
+    };
+  }
+}

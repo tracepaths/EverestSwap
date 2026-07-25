@@ -40,6 +40,7 @@ everestswap/
 - `rpc.waitForReceipt(hash)` polls until confirmed
 - Token approvals: user calls `token.grant(pool, amount)` → pool calls `token.pull(user, pool, amount)`
 - Liquidity positions: locked (with unlock_time) or unlocked, managed via `add_liquidity` / `remove_liquidity(position_id, ...)`
+- **[V9] Reward Pools**: Standard AMM + custom reward distribution. PoolPage supports creating reward pools with any OCS01 token. LiquidityPage shows reward info and claim button for reward pools.
 
 ## Optional Indexer (DEVNET-LOCAL-FIRST)
 

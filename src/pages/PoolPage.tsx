@@ -25,6 +25,9 @@ interface PoolDisplay {
   decimalsB: number;
   feeTier: string;
   rewardsPerEpoch: number;
+  isRewardPool: boolean;
+  rewardTokenSymbol?: string;
+  rewardPerEpoch?: string;
 }
 
 interface TokenMeta {
@@ -39,12 +42,14 @@ type CreateStep =
   | { type: 'computing_address' }
   | { type: 'deploying' }
   | { type: 'setting_tokens' }
+  | { type: 'setting_reward' }
   | { type: 'setting_fee' }
   | { type: 'registering' }
+  | { type: 'granting_reward' }
   | { type: 'granting_a' }
   | { type: 'granting_b' }
   | { type: 'adding_liquidity' }
-  | { type: 'done'; poolAddress: string }
+  | { type: 'done'; poolAddress: string; rewardInfo?: { rewardToken: string; rewardAmount: string; duration: number } }
   | { type: 'error'; message: string };
 
 function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddress }: {
@@ -74,6 +79,15 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
   const [step, setStep] = useState<CreateStep>({ type: 'idle' });
   // [V6-SECURITY-FIX MED-13] Double-submit guard
   const [creating, setCreating] = useState(false);
+  // [V9] Reward Pool state
+  const [poolType, setPoolType] = useState<'standard' | 'reward'>('standard');
+  const [rewardToken, setRewardToken] = useState('');
+  const [rewardMeta, setRewardMeta] = useState<TokenMeta | null>(null);
+  const [rewardAmount, setRewardAmount] = useState('');
+  const [rewardDuration, setRewardDuration] = useState<number>(432000);
+  const [creatorLockDays, setCreatorLockDays] = useState(7);
+  const [showRewardSelect, setShowRewardSelect] = useState(false);
+  const [rewardBalance, setRewardBalance] = useState<string | null>(null);
 
   const mountedRef = useRef(true);
   // [SECURITY] F-2: Synchronous submit guard (creating state is async, race exists)
@@ -155,6 +169,25 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
       }
     }
   };
+
+  // [V9] Reward token selection handler
+  const handleSelectRewardToken = (address: string, meta: TokenMeta) => {
+    setRewardToken(address);
+    setRewardMeta(meta);
+    setRewardAmount('');
+    if (walletAddress) {
+      rpc.getTokenBalance(address, walletAddress).then(bal => { if (mountedRef.current) setRewardBalance(bal); }).catch(() => { if (mountedRef.current) setRewardBalance(null); });
+    }
+  };
+
+  // [V9] Duration presets
+  const DURATION_PRESETS = [
+    { label: '1d', value: 14400 },
+    { label: '7d', value: 100800 },
+    { label: '30d', value: 432000 },
+    { label: '90d', value: 1296000 },
+    { label: '365d', value: 5256000 },
+  ];
 
   const getFeeParams = (): { num: number; denom: number } => {
     if (feeTier === '0.01') return { num: 1, denom: 10000 };
@@ -284,7 +317,9 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
     try {
       safeSetStep({ type: 'compiling' });
 
-      const sourceResp = await fetch('/contracts/SwapPool.aml');
+      // [V9] Choose contract source based on pool type
+      const contractFile = poolType === 'reward' ? '/contracts/RewardPool.aml' : '/contracts/SwapPool.aml';
+      const sourceResp = await fetch(contractFile);
       const source = await sourceResp.text();
 
       const compileResult = await rpc.compileAml(source);
@@ -329,6 +364,25 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
 
       await rpc.waitForReceipt(tokenTxHash, 60);
 
+      // [V9] Reward pool: set reward config before fee
+      if (poolType === 'reward' && rewardToken && rewardAmount && rewardMeta) {
+        safeSetStep({ type: 'setting_reward' });
+
+        const rawReward = parseUnits(rewardAmount, rewardMeta.decimals);
+        const epochInfoForReward = await rpc.call<{ epoch_id: number }>('epoch_current');
+        const currentEpoch = epochInfoForReward?.epoch_id || 0;
+        const rewardStart = currentEpoch + 100; // start shortly after creation
+        const rewardEnd = rewardStart + rewardDuration;
+
+        const rewardConfigHash = await walletService.callContract({
+          contract: poolAddress,
+          method: 'set_reward_config',
+          params: [rewardToken, rawReward, rewardStart, rewardEnd],
+          rpc,
+        });
+        await rpc.waitForReceipt(rewardConfigHash, 60);
+      }
+
       safeSetStep({ type: 'setting_fee' });
 
       const { num, denom } = getFeeParams();
@@ -343,20 +397,22 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
 
       safeSetStep({ type: 'registering' });
 
+      // [V9] Register with appropriate factory method
+      const regMethod = poolType === 'reward' ? 'register_reward_pool' : 'register_pool';
+      const regParams = poolType === 'reward'
+        ? [tokenA, tokenB, rewardToken, poolAddress]
+        : [tokenA, tokenB, poolAddress];
+
       const regTxHash = await walletService.callContract({
         contract: factoryAddr,
-        method: 'register_pool',
-        params: [tokenA, tokenB, poolAddress],
+        method: regMethod,
+        params: regParams,
         rpc,
       });
 
       await rpc.waitForReceipt(regTxHash, 60);
 
-      // [BUG-FIX] Call set_factory on the newly deployed pool so that
-      // validate_initial_price (called during add_liquidity) uses the real factory
-      // address instead of `origin` (the constructor's placeholder).
-      // Without this, the equilibrium price guard call goes to origin and fails silently,
-      // or could route to an unexpected contract in edge cases.
+      // [BUG-FIX] Call set_factory on the newly deployed pool
       try {
         const setFactoryHash = await walletService.callContract({
           contract: poolAddress,
@@ -366,9 +422,21 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
         });
         await rpc.waitForReceipt(setFactoryHash, 60);
       } catch (sfErr) {
-        // set_factory is a best-effort step — if it fails (e.g. already set),
-        // log and continue. Pool creation can still succeed.
         console.warn('[PoolPage] set_factory failed (non-fatal):', sfErr instanceof Error ? sfErr.message : String(sfErr));
+      }
+
+      // [V9] Grant reward token to pool (reward pool only)
+      if (poolType === 'reward' && rewardToken && rewardAmount && rewardMeta) {
+        safeSetStep({ type: 'granting_reward' });
+
+        const rawReward = parseUnits(rewardAmount, rewardMeta.decimals);
+        const grantRewardHash = await walletService.callContract({
+          contract: rewardToken,
+          method: 'grant',
+          params: [poolAddress, rawReward],
+          rpc,
+        });
+        await rpc.waitForReceipt(grantRewardHash, 60);
       }
 
       // [V7-SECURITY-FIX] Guard against null meta during initial liquidity
@@ -423,7 +491,11 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
       }
 
       if (mountedRef.current) {
-        setStep({ type: 'done', poolAddress });
+        // [V9] Include reward info in done state for reward pools
+        const rewardInfo = poolType === 'reward' && rewardToken && rewardAmount && rewardMeta
+          ? { rewardToken: rewardMeta.symbol, rewardAmount, duration: rewardDuration }
+          : undefined;
+        setStep({ type: 'done', poolAddress, rewardInfo });
         rpc.clearCache();
         onPoolCreated();
       }
@@ -460,15 +532,26 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
     setFeeTier('0.30');
     setInitAmountA('');
     setInitAmountB('');
+    // [V9] Reset reward pool state
+    setPoolType('standard');
+    setRewardToken('');
+    setRewardMeta(null);
+    setRewardAmount('');
+    setRewardDuration(100800);
+    setCreatorLockDays(7);
+    setShowRewardSelect(false);
+    setRewardBalance(null);
   };
 
   const allStepDefs: { key: CreateStep['type']; label: string }[] = [
     { key: 'compiling', label: 'Compile contract' },
     { key: 'computing_address', label: 'Compute pool address' },
-    { key: 'deploying', label: 'Deploy SwapPool' },
+    { key: 'deploying', label: poolType === 'reward' ? 'Deploy RewardPool' : 'Deploy SwapPool' },
     { key: 'setting_tokens', label: 'Set pool tokens' },
+    ...(poolType === 'reward' ? [{ key: 'setting_reward' as const, label: 'Set reward config' }] : []),
     { key: 'setting_fee', label: 'Set pool fee' },
-    { key: 'registering', label: 'Register pool' },
+    { key: 'registering', label: poolType === 'reward' ? 'Register reward pool' : 'Register pool' },
+    ...(poolType === 'reward' ? [{ key: 'granting_reward' as const, label: 'Grant reward token' }] : []),
     { key: 'granting_a', label: `Grant ${metaA?.symbol ?? 'Token A'}` },
     { key: 'granting_b', label: `Grant ${metaB?.symbol ?? 'Token B'}` },
     { key: 'adding_liquidity', label: 'Add initial liquidity' },
@@ -638,6 +721,135 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
             )}
           </div>
 
+          {/* [V9] Pool Type Toggle */}
+          <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)]">
+            <div className="text-xs text-[var(--app-muted)] mb-2">Pool Type</div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setPoolType('standard')}
+                className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  poolType === 'standard'
+                    ? 'bg-[var(--app-blue)] text-[var(--app-text)]'
+                    : 'bg-[var(--app-hover)] hover:bg-[var(--app-hover)]'
+                }`}
+              >
+                Standard AMM
+              </button>
+              <button
+                onClick={() => setPoolType('reward')}
+                className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  poolType === 'reward'
+                    ? 'bg-[var(--app-blue)] text-[var(--app-text)]'
+                    : 'bg-[var(--app-hover)] hover:bg-[var(--app-hover)]'
+                }`}
+              >
+                Reward Pool
+              </button>
+            </div>
+          </div>
+
+          {/* [V9] Reward Configuration — only when reward pool selected */}
+          {poolType === 'reward' && (
+            <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-green-500/20 space-y-3">
+              <div className="text-xs text-green-400 font-medium">Reward Configuration</div>
+
+              {/* Reward Token Selector */}
+              <div>
+                <label className="text-[10px] text-[var(--app-muted-2)]">Reward Token (OCS01 compatible)</label>
+                <button
+                  onClick={() => setShowRewardSelect(true)}
+                  className={`w-full flex items-center justify-between bg-[var(--app-panel-soft)] text-sm font-medium outline-none rounded-lg px-3 py-2 border border-[var(--app-border)] hover:border-green-500/50 transition-colors mt-1 ${rewardToken ? '' : 'text-[var(--app-muted-2)]'}`}
+                >
+                  <span>{rewardMeta ? rewardMeta.symbol : 'Select reward token'}</span>
+                  <svg className="w-4 h-4 text-[var(--app-muted)] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {rewardMeta && (
+                  <div className="text-[10px] text-[var(--app-muted)] mt-1">
+                    Balance: {rewardBalance === null ? '...' : formatUnits(rewardBalance, rewardMeta.decimals)} {rewardMeta.symbol}
+                  </div>
+                )}
+                <TokenSelectModal
+                  isOpen={showRewardSelect}
+                  onClose={() => setShowRewardSelect(false)}
+                  onSelect={handleSelectRewardToken}
+                  rpc={rpc}
+                  excludeAddress={tokenA || undefined}
+                />
+              </div>
+
+              {/* Reward Amount */}
+              <div>
+                <label className="text-[10px] text-[var(--app-muted-2)]">Reward Amount</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={rewardAmount}
+                  onChange={e => setRewardAmount(sanitizeNumericInput(e.target.value))}
+                  placeholder="0.0"
+                  className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-1.5 text-sm font-mono outline-none mt-1"
+                />
+                {rewardAmount && rewardMeta && (
+                  <div className="text-[10px] text-[var(--app-muted)] mt-1">
+                    {formatUnits(parseUnits(rewardAmount, rewardMeta.decimals), rewardMeta.decimals)} {rewardMeta.symbol}
+                  </div>
+                )}
+              </div>
+
+              {/* Duration Presets */}
+              <div>
+                <label className="text-[10px] text-[var(--app-muted-2)]">Distribution Duration</label>
+                <div className="flex gap-1.5 mt-1">
+                  {DURATION_PRESETS.map(d => (
+                    <button
+                      key={d.value}
+                      onClick={() => setRewardDuration(d.value)}
+                      className={`flex-1 py-1.5 rounded-lg text-[11px] font-medium transition-colors ${
+                        rewardDuration === d.value
+                          ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                          : 'bg-[var(--app-hover)] hover:bg-[var(--app-hover)]'
+                      }`}
+                    >
+                      {d.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="text-[10px] text-[var(--app-muted)] mt-1">
+                  {rewardDuration} epochs (~{Math.round(rewardDuration / 14400)} days)
+                </div>
+              </div>
+
+              {/* Creator Lock */}
+              <div>
+                <label className="text-[10px] text-[var(--app-muted-2)]">Creator Lock Period (Anti-Rugpull)</label>
+                <div className="flex items-center gap-2 mt-1">
+                  <input
+                    type="number"
+                    value={creatorLockDays}
+                    onChange={e => setCreatorLockDays(Math.max(7, parseInt(e.target.value) || 7))}
+                    className="w-20 bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-1.5 text-sm font-mono outline-none"
+                    min="7"
+                  />
+                  <span className="text-xs text-[var(--app-muted)]">days (min 7)</span>
+                </div>
+              </div>
+
+              {/* Preview */}
+              {rewardAmount && rewardMeta && (
+                <div className="bg-[var(--app-panel)] rounded-lg p-3 space-y-1.5">
+                  <div className="text-[10px] font-medium text-green-400">Distribution Preview</div>
+                  <div className="text-[10px] text-[var(--app-muted)]">
+                    Rate: {formatUnits(String(Math.floor(Number(rewardAmount) * (rewardMeta.decimals > 0 ? Math.pow(10, rewardMeta.decimals) : 1) / (rewardDuration / 14400))), rewardMeta.decimals)} {rewardMeta.symbol}/day
+                  </div>
+                  <div className="text-[10px] text-green-400/80 pt-1 border-t border-[var(--app-border)]">
+                    Creator LP locked {creatorLockDays} days | Reward immutable | Linear distribution
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
             <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)] space-y-3">
               <div className="text-xs text-[var(--app-muted)] font-medium">Initial Liquidity (optional)</div>
@@ -796,6 +1008,21 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
               <div className="text-xs text-[var(--app-muted)] break-all font-mono bg-[var(--app-panel-soft)] rounded-lg px-3 py-2">
                 Pool: {'poolAddress' in stepSnapshot ? stepSnapshot.poolAddress : ''}
               </div>
+              {/* [V9] Show reward info for reward pools */}
+              {'rewardInfo' in stepSnapshot && stepSnapshot.rewardInfo && (
+                <div className="text-xs bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2 space-y-1">
+                  <div className="text-green-400 font-medium">Reward Pool Created</div>
+                  <div className="text-[var(--app-muted)]">
+                    Reward: {stepSnapshot.rewardInfo.rewardAmount} {stepSnapshot.rewardInfo.rewardToken}
+                  </div>
+                  <div className="text-[var(--app-muted)]">
+                    Duration: {stepSnapshot.rewardInfo.duration} epochs (~{Math.round(stepSnapshot.rewardInfo.duration / 14400)} days)
+                  </div>
+                  <div className="text-green-400/80 text-[10px]">
+                    LP tokens locked 7 days | Reward immutable | Linear distribution
+                  </div>
+                </div>
+              )}
               <button
                 onClick={() => navigate(`/liquidity?pool=${'poolAddress' in stepSnapshot ? stepSnapshot.poolAddress : ''}`)}
                 className="w-full py-2 bg-green-600 hover:bg-green-700 rounded-xl text-sm font-medium transition-colors"
@@ -835,6 +1062,13 @@ function PoolPage() {
       if (CONTRACTS.pool && !poolAddrs.includes(CONTRACTS.pool)) {
         poolAddrs.push(CONTRACTS.pool);
       }
+
+      // [V9] Fetch reward pools list
+      let rewardPoolAddrs: string[] = [];
+      try {
+        rewardPoolAddrs = await rpc.getRewardPools(CONTRACTS.factory);
+      } catch { /* noop */ }
+
       const displays: PoolDisplay[] = [];
       for (const addr of poolAddrs) {
         try {
@@ -862,6 +1096,24 @@ function PoolPage() {
           try {
             totalLockedLp = await rpc.getTotalLockedLp(addr);
           } catch { /* noop */ }
+
+          // [V9] Check if this is a reward pool and fetch reward info
+          const isRewardPool = rewardPoolAddrs.includes(addr);
+          let rewardTokenSymbol = '';
+          let rewardPerEpoch = 0;
+          if (isRewardPool) {
+            try {
+              const rewardInfo = await rpc.getRewardInfo(addr);
+              const rewardMeta = await rpc.getTokenMeta(rewardInfo.rewardToken);
+              rewardTokenSymbol = rewardMeta.symbol || '???';
+              if (rewardInfo.rewardEndEpoch > rewardInfo.rewardStartEpoch) {
+                const totalEpochs = rewardInfo.rewardEndEpoch - rewardInfo.rewardStartEpoch;
+                const rawAmount = BigInt(rewardInfo.rewardTotal);
+                rewardPerEpoch = Number(rawAmount / BigInt(totalEpochs));
+              }
+            } catch { /* noop */ }
+          }
+
           displays.push({
             address: addr,
             tokenA: info.tokenA, tokenB: info.tokenB,
@@ -873,6 +1125,9 @@ function PoolPage() {
             decimalsA: metaA.decimals, decimalsB: metaB.decimals,
             feeTier: feeParams.percent,
             rewardsPerEpoch,
+            isRewardPool,
+            rewardTokenSymbol,
+            rewardPerEpoch: String(rewardPerEpoch),
           });
         } catch {
           // skip this pool
@@ -961,7 +1216,15 @@ function PoolPage() {
                         <div className="w-8 h-8 rounded-full bg-[var(--app-blue-2)] flex items-center justify-center text-xs font-bold border-2 border-[var(--app-bg)]">{p.symbolB[0] || '?'}</div>
                       </div>
                       <div>
-                        <div className="font-medium">{p.symbolA}/{p.symbolB}</div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{p.symbolA}/{p.symbolB}</span>
+                          {/* [V9] Reward pool badge */}
+                          {p.isRewardPool && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-medium bg-green-500/20 text-green-400 border border-green-500/30">
+                              REWARD
+                            </span>
+                          )}
+                        </div>
                         <div className="text-xs text-[var(--app-muted)]">{p.feeTier} fee tier</div>
                       </div>
                     </div>
@@ -990,6 +1253,17 @@ function PoolPage() {
                       <div className="text-xs text-[var(--app-muted)]">OES Rewards</div>
                       <div className="font-mono mt-0.5">{p.rewardsPerEpoch > 0 ? `${formatUnits(String(p.rewardsPerEpoch), 6)}/ep` : '--'}</div>
                     </div>
+                    {/* [V9] Reward pool info */}
+                    {p.isRewardPool && p.rewardTokenSymbol && (
+                      <div className="col-span-2 sm:col-span-4 pt-2 border-t border-[var(--app-border)]">
+                        <div className="flex items-center gap-2 text-xs">
+                          <span className="text-green-400 font-medium">Custom Reward:</span>
+                          <span className="font-mono text-green-400/80">
+                            {p.rewardPerEpoch ? `${formatUnits(String(p.rewardPerEpoch), 12)} ${p.rewardTokenSymbol}/epoch` : 'Configured'}
+                          </span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                   {Number(p.totalLockedLp) > 0 && (
                     <div className="mt-3 flex items-center gap-3 text-xs">

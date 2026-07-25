@@ -61,6 +61,12 @@ function LiquidityPage() {
   const [userEditedB, setUserEditedB] = useState(false);
   const [addStep, setAddStep] = useState<AddLiquidityStep>({ type: 'idle' });
   const [removeStep, setRemoveStep] = useState<RemoveLiquidityStep>({ type: 'idle' });
+  // [V9] Reward pool state
+  const [isRewardPool, setIsRewardPool] = useState(false);
+  const [rewardTokenSymbol, setRewardTokenSymbol] = useState('');
+  const [rewardTokenDecimals, setRewardTokenDecimals] = useState(6);
+  const [claimableReward, setClaimableReward] = useState('0');
+  const [claimingReward, setClaimingReward] = useState(false);
   // [V9] Probe result for `add_liquidity` readiness. When the pool's stored
   // factory address is invalid (not a contract, or doesn't implement
   // validate_initial_price), the very first add_liquidity silently reverts
@@ -219,6 +225,34 @@ function LiquidityPage() {
       try {
         const locked = await rpc.getTotalLockedLp(poolAddr);
         if (mountedRef.current && pool?.address === targetPoolAddr) setTotalLockedLp(locked);
+      } catch { /* noop */ }
+
+      // [V9] Detect reward pool and fetch claimable reward
+      try {
+        const isReward = await rpc.isRewardPoolConfigured(poolAddr);
+        if (mountedRef.current && pool?.address === targetPoolAddr) {
+          setIsRewardPool(isReward);
+          if (isReward) {
+            const rInfo = await rpc.getRewardInfo(poolAddr);
+            if (mountedRef.current && pool?.address === targetPoolAddr) {
+              const rMeta = await rpc.getTokenMeta(rInfo.rewardToken);
+              if (mountedRef.current && pool?.address === targetPoolAddr) {
+                setRewardTokenSymbol(rMeta.symbol || '???');
+                setRewardTokenDecimals(rMeta.decimals);
+              }
+            }
+            // Fetch claimable amount (use first position)
+            try {
+              const userPositions = await rpc.getPositions(poolAddr, walletAddress);
+              if (userPositions.length > 0) {
+                const claimable = await rpc.getClaimable(poolAddr, userPositions[0].id);
+                if (mountedRef.current && pool?.address === targetPoolAddr) {
+                  setClaimableReward(claimable);
+                }
+              }
+            } catch { /* noop */ }
+          }
+        }
       } catch { /* noop */ }
     }
     // [V9] Probe pool's factory-callback readiness (works regardless of wallet
@@ -446,6 +480,46 @@ function LiquidityPage() {
     } finally {
       addSubmittingRef.current = false;
       setLoading(false);
+    }
+  };
+
+  // [V9] Claim reward pool rewards
+  const handleClaimReward = async () => {
+    if (!pool || claimingReward) return;
+    setClaimingReward(true);
+    let toastId = '';
+    try {
+      // Get first position to check claimable
+      const userPositions = await rpc.getPositions(pool.address, walletAddress);
+      if (userPositions.length === 0) {
+        addToast('error', 'No positions found to claim rewards.');
+        setClaimingReward(false);
+        return;
+      }
+      const claimable = await rpc.getClaimable(pool.address, userPositions[0].id);
+      if (claimable === '0' || BigInt(claimable) === 0n) {
+        addToast('error', 'No rewards to claim yet.');
+        setClaimingReward(false);
+        return;
+      }
+      toastId = addToast('pending', 'Claiming rewards...');
+      const txHash = await walletService.callContract({
+        contract: pool.address,
+        method: 'claim_reward',
+        params: [],
+        rpc,
+      });
+      await rpc.waitForReceipt(txHash, 60);
+      updateToast(toastId, 'success', 'Rewards claimed successfully!');
+      // Refresh claimable
+      const newClaimable = await rpc.getClaimable(pool.address, userPositions[0].id);
+      setClaimableReward(newClaimable);
+      refreshBalance();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Claim failed';
+      updateToast(toastId, 'error', msg);
+    } finally {
+      setClaimingReward(false);
     }
   };
 
@@ -915,6 +989,33 @@ function LiquidityPage() {
                 {positions.length} position{positions.length === 1 ? '' : 's'}
               </div>
             </div>
+
+            {/* [V9] Reward pool info panel */}
+            {isRewardPool && (
+              <div className="bg-green-500/5 rounded-xl p-4 border border-green-500/20 space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-medium bg-green-500/20 text-green-400 border border-green-500/30">
+                    REWARD POOL
+                  </span>
+                  <span className="text-xs text-green-400/80">{rewardTokenSymbol}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <div>
+                    <div className="text-xs text-[var(--app-muted)]">Claimable Rewards</div>
+                    <div className="text-lg font-mono text-green-400">
+                      {formatUnits(claimableReward, rewardTokenDecimals)} {rewardTokenSymbol}
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleClaimReward}
+                    disabled={!isConnected || claimingReward || claimableReward === '0'}
+                    className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-[#2D4A6F] disabled:text-[var(--app-muted-2)] rounded-xl text-sm font-medium transition-colors"
+                  >
+                    {claimingReward ? 'Claiming...' : 'Claim'}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {positions.length === 0 ? (
               <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)] text-center text-sm text-[var(--app-muted)]">
