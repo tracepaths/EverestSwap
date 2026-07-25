@@ -9,6 +9,7 @@ import LaunchTokenPage from './pages/LaunchTokenPage'
 import DocsPage from './pages/DocsPage'
 import AdminPage from './pages/AdminPage'
 import MyPoolsPage from './pages/MyPoolsPage'
+import PoolDetailsPage from './pages/PoolDetailsPage'
 
 function App() {
   return (
@@ -20,6 +21,7 @@ function App() {
           <Route path="/dashboard" element={<PortfolioPage />} />
           <Route path="/pool" element={<PoolPage />} />
           <Route path="/my-pools" element={<MyPoolsPage />} />
+          <Route path="/my-pools/:address" element={<PoolDetailsPage />} />
           <Route path="/launch" element={<LaunchTokenPage />} />
           <Route path="/docs" element={<DocsPage />} />
           <Route path="/admin" element={<AdminPage />} />
