@@ -39,6 +39,7 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
   const [tokens, setTokens] = useState<TokenItem[]>([...COMMON_TOKENS.map(t => ({ ...t, isCommon: true, isTrusted: false, balance: null }))]);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+  const loadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
   const [importMode, setImportMode] = useState(false);
   const [importAddr, setImportAddr] = useState('');
@@ -50,18 +51,24 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
   // [SECURITY] F-11: dialog ref for Escape key handler
   const dialogRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!isOpen) {
-      setQuery('');
-      setImportMode(false);
-      setImportAddr('');
-      setImportMeta(null);
-      return;
-    }
+   useEffect(() => {
+     if (!isOpen) {
+       setQuery('');
+       setImportMode(false);
+       setImportAddr('');
+       setImportMeta(null);
+       return;
+     }
      // [SECURITY] F-11: Auto-focus the modal so Escape key works
      setTimeout(() => dialogRef.current?.focus(), 50);
      setLoading(true);
      setFailed(false);
+     loadTimeoutRef.current = setTimeout(() => {
+       if (loading) {
+         setLoading(false);
+         setFailed(true);
+       }
+     }, 10000);
      (async () => {
        try {
          // Load saved tokens from localStorage
@@ -126,11 +133,18 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
          setTokens(fallback);
          setFailed(true);
        } finally {
+         if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
          setLoading(false);
          setTimeout(() => searchRef.current?.focus(), 100);
        }
      })();
    }, [isOpen, rpc, excludeNative]);
+
+   useEffect(() => {
+     return () => {
+       if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
+     };
+   }, []);
 
   // [SECURITY] Use ref to avoid stale closure on tokens
   const tokensRef = useRef(tokens);
@@ -345,9 +359,9 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
       tabIndex={-1}
       onKeyDown={e => { if (e.key === 'Escape') onClose(); }}
     >
-      <div
-        ref={dialogRef}
-        className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] max-w-[52%] w-full flex flex-col max-h-[65%] shadow-2xl"
+       <div
+         ref={dialogRef}
+         className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] max-w-[90vw] w-full max-w-lg flex flex-col max-h-[70vh] shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--app-border)]">
