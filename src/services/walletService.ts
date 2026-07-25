@@ -21,6 +21,7 @@ async function fetchRecommendedOu(rpc: OctraRpc, opType: string): Promise<string
 
 export class WalletService {
   private sdk: ZeroXIOWallet;
+  private rpc!: OctraRpc;
   private _address = '';
   private _balance = '';
   private _publicKey = '';
@@ -36,6 +37,10 @@ export class WalletService {
       requiredPermissions: ['read_balance', 'send_transactions', 'read_public_key'],
     });
     this.setupAccountChangeListener();
+  }
+
+  setRpc(rpc: OctraRpc): void {
+    this.rpc = rpc;
   }
 
   private setupAccountChangeListener(): void {
@@ -117,8 +122,8 @@ export class WalletService {
     });
     this._address = result.address;
     if (result.publicKey) this._publicKey = result.publicKey;
-    const bal = await this.sdk.getBalance(true);
-    this._balance = bal?.total ? bal.total.toFixed(6) : '0';
+    const bal = await this.rpc.call<{ balance: string; balance_raw: string; nonce: number }>('octra_balance', [this._address]);
+    this._balance = bal?.balance || '0';
     return this._address;
   }
 
@@ -131,8 +136,8 @@ export class WalletService {
 
   async getBalance(): Promise<string> {
     if (!this._address) throw new Error('Not connected');
-    const bal = await this.sdk.getBalance(true);
-    this._balance = bal?.total ? bal.total.toFixed(6) : '0';
+    const bal = await this.rpc.call<{ balance: string; balance_raw: string; nonce: number }>('octra_balance', [this._address]);
+    this._balance = bal?.balance || '0';
     return this._balance;
   }
 

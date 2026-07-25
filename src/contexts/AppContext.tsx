@@ -46,6 +46,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return saved === 'light' || saved === 'blue' || saved === 'dark' ? saved : 'dark';
   });
   const [rpc] = useState(() => new OctraRpc());
+  walletService.setRpc(rpc);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [isWalletInstalled, setIsWalletInstalled] = useState(false);
   const isConnecting = useRef(false);

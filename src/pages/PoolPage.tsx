@@ -667,6 +667,8 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
                   onSelect={handleSelectTokenA}
                   rpc={rpc}
                   excludeAddress={tokenB || undefined}
+                  walletAddress={walletAddress}
+                  isConnected={isConnected}
                 />
 
                 {/* Token B */}
@@ -697,6 +699,8 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
                   onSelect={handleSelectTokenB}
                   rpc={rpc}
                   excludeAddress={tokenA || undefined}
+                  walletAddress={walletAddress}
+                  isConnected={isConnected}
                 />
               </div>
 
@@ -832,6 +836,8 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
                       onSelect={handleSelectRewardToken}
                       rpc={rpc}
                       excludeAddress={tokenA || undefined}
+                      walletAddress={walletAddress}
+                      isConnected={isConnected}
                     />
                   </div>
 
