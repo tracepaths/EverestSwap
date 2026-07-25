@@ -351,7 +351,7 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
   return (
     // [SECURITY] F-11/F-12: Escape key handler + aria-modal accessibility
     <div
-      className="fixed inset-0 bg-black/75 backdrop-blur-xl z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 bg-black/75 backdrop-blur-xl z-[60] flex items-center justify-center p-4"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
