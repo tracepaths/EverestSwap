@@ -36,8 +36,9 @@ interface Props {
 
 export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, excludeAddress, walletAddress, isConnected, excludeNative }: Props) {
   const [query, setQuery] = useState('');
-  const [tokens, setTokens] = useState<TokenItem[]>([]);
+  const [tokens, setTokens] = useState<TokenItem[]>([...COMMON_TOKENS.map(t => ({ ...t, isCommon: true, isTrusted: false, balance: null }))]);
   const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
   const [balanceLoading, setBalanceLoading] = useState(false);
   const [importMode, setImportMode] = useState(false);
   const [importAddr, setImportAddr] = useState('');
@@ -57,27 +58,27 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
       setImportMeta(null);
       return;
     }
-    // [SECURITY] F-11: Auto-focus the modal so Escape key works
-    setTimeout(() => dialogRef.current?.focus(), 50);
-    setLoading(true);
-    setTokens([]);
-    (async () => {
-      try {
-        // Load saved tokens from localStorage
-        const savedTokens = tokenStorage.getAll();
-        
-        // [SECURITY] Verify common tokens against factory trust registry to prevent
-        // impersonation if env vars are compromised
-        const commonTrustChecks = await Promise.all(
-          COMMON_TOKENS
-            .filter(t => t.address !== '')
-            .map(async (t) => ({ addr: t.address, trusted: await rpc.isTrustedToken(CONTRACTS.factory, t.address) }))
-        );
-        const trustedCommonAddrs = new Set(
-          commonTrustChecks.filter(c => c.trusted).map(c => c.addr)
-        );
-
-        const trustedAddrs = await rpc.getTrustedTokens(CONTRACTS.factory);
+     // [SECURITY] F-11: Auto-focus the modal so Escape key works
+     setTimeout(() => dialogRef.current?.focus(), 50);
+     setLoading(true);
+     setFailed(false);
+     (async () => {
+       try {
+         // Load saved tokens from localStorage
+         const savedTokens = tokenStorage.getAll();
+         
+         // [SECURITY] Verify common tokens against factory trust registry to prevent
+         // impersonation if env vars are compromised
+         const commonTrustChecks = await Promise.all(
+           COMMON_TOKENS
+             .filter(t => t.address !== '')
+             .map(async (t) => ({ addr: t.address, trusted: await rpc.isTrustedToken(CONTRACTS.factory, t.address) }))
+         );
+         const trustedCommonAddrs = new Set(
+           commonTrustChecks.filter(c => c.trusted).map(c => c.addr)
+         );
+ 
+         const trustedAddrs = await rpc.getTrustedTokens(CONTRACTS.factory);
         const metaPromises = trustedAddrs.map(async (addr) => {
           try {
             const meta = await rpc.getTokenMeta(addr);
@@ -114,21 +115,22 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
         if (excludeNative) {
           deduped = deduped.filter(t => t.address !== '');
         }
-        setTokens(deduped);
-      } catch {
-        // [SECURITY] On error, mark common tokens as unverified (not trusted)
-        // [SECURITY] F-5: Still apply excludeNative filter
-        let fallback: TokenItem[] = COMMON_TOKENS.map(t => ({ ...t, isCommon: true, isTrusted: false, balance: null }));
-        if (excludeNative) {
-          fallback = fallback.filter(t => t.address !== '');
-        }
-        setTokens(fallback);
-      } finally {
-        setLoading(false);
-        setTimeout(() => searchRef.current?.focus(), 100);
-      }
-    })();
-  }, [isOpen, rpc, excludeNative]);
+         setTokens(deduped);
+       } catch {
+         // [SECURITY] On error, mark common tokens as unverified (not trusted)
+         // [SECURITY] F-5: Still apply excludeNative filter
+         let fallback: TokenItem[] = COMMON_TOKENS.map(t => ({ ...t, isCommon: true, isTrusted: false, balance: null }));
+         if (excludeNative) {
+           fallback = fallback.filter(t => t.address !== '');
+         }
+         setTokens(fallback);
+         setFailed(true);
+       } finally {
+         setLoading(false);
+         setTimeout(() => searchRef.current?.focus(), 100);
+       }
+     })();
+   }, [isOpen, rpc, excludeNative]);
 
   // [SECURITY] Use ref to avoid stale closure on tokens
   const tokensRef = useRef(tokens);
@@ -379,6 +381,16 @@ export default function TokenSelectModal({ isOpen, onClose, onSelect, rpc, exclu
               {[1, 2, 3].map(i => (
                 <div key={i} className="h-12 bg-[var(--app-panel-soft)] rounded-xl animate-pulse" />
               ))}
+            </div>
+          ) : failed ? (
+            <div className="text-center py-8 text-base text-[var(--app-muted)]">
+              <div className="mb-2">Failed to load token list</div>
+              <button
+                onClick={() => { setLoading(true); setFailed(false); }}
+                className="text-[var(--app-blue-3)] hover:text-[var(--app-blue)] text-sm underline"
+              >
+                Retry
+              </button>
             </div>
           ) : filteredMine.length === 0 && filteredOthers.length === 0 ? (
             <div className="text-center py-8 text-base text-[var(--app-muted)]">
