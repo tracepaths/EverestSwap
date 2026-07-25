@@ -30,7 +30,7 @@ export const WOCT_TOKEN: TokenInfo = {
 };
 
 export const OES_TOKEN: TokenInfo = {
-  address: import.meta.env.EVERESTSWAP_DEVNET_OES_ADDRESS || 'oct9LgGSpkrqbpWPQpYervyryzDtbGYph2hHvcBi9ZppNvD',
+  address: import.meta.env.EVERESTSWAP_DEVNET_OES_ADDRESS || 'octGURUy7hQhXHVcP9bovbJnpoXqCv2gpWBrk6fqtXqJ2sC',
   symbol: 'OES',
   name: 'Octra Everest Swap',
   decimals: 6,
@@ -47,7 +47,7 @@ export const CONTRACTS = {
   factory: import.meta.env.EVERESTSWAP_DEVNET_FACTORY_ADDRESS || 'octJbkjXrAqvZdg2JZVZTyQqpYB52HYkBPDmGMmEQBMgSFE',
   pool: import.meta.env.EVERESTSWAP_DEVNET_POOL_ADDRESS || 'oct2ws6ug4Va8R8ctPvE76zyc8fgBJDTC4BgG4WjJXCBo8R',
   router: import.meta.env.EVERESTSWAP_DEVNET_ROUTER_ADDRESS || 'octEtQJQDFC85tXtGpERHX69rNoo1GJA7EVUaLezANQxC8K',
-  oes: import.meta.env.EVERESTSWAP_DEVNET_OES_ADDRESS || 'oct9LgGSpkrqbpWPQpYervyryzDtbGYph2hHvcBi9ZppNvD',
+  oes: import.meta.env.EVERESTSWAP_DEVNET_OES_ADDRESS || 'octGURUy7hQhXHVcP9bovbJnpoXqCv2gpWBrk6fqtXqJ2sC',
   woct: import.meta.env.EVERESTSWAP_DEVNET_WOCT_ADDRESS || 'oct4g33tzC2cJncL5RFr9TRiyk8yCNP1h2xaogiWJS5opNv',
   dogo: import.meta.env.EVERESTSWAP_DEVNET_DOGO_ADDRESS || 'octJ4mZP8bKidAq4VAy5VrcUwgJTh9Dzop5M4fkKqs79J3k',
   dogoPool: import.meta.env.EVERESTSWAP_DEVNET_DOGO_POOL_ADDRESS || 'oct764KAUBycN5PiqakWCPFvbzWsRJtG4kbhGkVr6KKawpV',
