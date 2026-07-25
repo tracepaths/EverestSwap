@@ -7,6 +7,7 @@ import PortfolioPage from './pages/PortfolioPage'
 import PoolPage from './pages/PoolPage'
 import LaunchTokenPage from './pages/LaunchTokenPage'
 import DocsPage from './pages/DocsPage'
+import AdminPage from './pages/AdminPage'
 
 function App() {
   return (
@@ -19,6 +20,7 @@ function App() {
           <Route path="/pool" element={<PoolPage />} />
           <Route path="/launch" element={<LaunchTokenPage />} />
           <Route path="/docs" element={<DocsPage />} />
+          <Route path="/admin" element={<AdminPage />} />
         </Route>
       </Routes>
     </AppProvider>
