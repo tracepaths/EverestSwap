@@ -119,7 +119,7 @@ export function InputGroup({
   type = 'text',
   disabled = false,
   error = false,
-  className: _className = '',
+  className = '',
 }: {
   label: string;
   value: string;
@@ -131,7 +131,7 @@ export function InputGroup({
   className?: string;
 }) {
   return (
-    <div className="flex items-center gap-3">
+    <div className={`flex items-center gap-3 ${className}`}>
       <label className="text-sm text-[var(--app-muted)] w-32 shrink-0 font-medium">{label}</label>
       <input
         type={type}
