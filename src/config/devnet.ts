@@ -13,7 +13,7 @@ export const INDEXER_URL = import.meta.env.EVERESTSWAP_DEVNET_INDEXER_URL || 'ht
 // NEVER use hardcoded keys for mainnet — mainnet deployer values come
 // from EVERESTSWAP_MAINNET_DEPLOYER_* environment variables via config/mainnet.ts
 export const DEPLOYER_PUBLIC_KEY = import.meta.env.EVERESTSWAP_DEVNET_DEPLOYER_PUBLIC_KEY || 'lc+hLMhjOhHLOtk2bxw21gKLdPL9HZWEXGUVaVo9oY4=';
-export const DEPLOYER_ADDRESS = import.meta.env.EVERESTSWAP_DEVNET_DEPLOYER_ADDRESS || 'octGXi34vZfYwi3idjSa6m34vLJCoJHNMNAGeHyqh7JVEvy';
+export const DEPLOYER_ADDRESS = import.meta.env.EVERESTSWAP_DEVNET_DEPLOYER_ADDRESS || 'oct2mhQQYM3MmDwMxbcpvTCMgSVPxh47YUdZGn3aR1r13PK';
 
 export const OCT_TOKEN: TokenInfo = {
   address: '',
@@ -23,7 +23,7 @@ export const OCT_TOKEN: TokenInfo = {
 };
 
 export const WOCT_TOKEN: TokenInfo = {
-  address: import.meta.env.EVERESTSWAP_DEVNET_WOCT_ADDRESS || 'oct4pAKouypxmP7Uk79uGzEpkkidsNAK3fQhxy1HDUmBRLE',
+  address: import.meta.env.EVERESTSWAP_DEVNET_WOCT_ADDRESS || 'oct4g33tzC2cJncL5RFr9TRiyk8yCNP1h2xaogiWJS5opNv',
   symbol: 'WOCT',
   name: 'Wrapped OCT',
   decimals: 6,
@@ -44,14 +44,14 @@ export const DOGO_TOKEN: TokenInfo = {
 };
 
 export const CONTRACTS = {
-  factory: import.meta.env.EVERESTSWAP_DEVNET_FACTORY_ADDRESS || 'oct6QAJuPwbfHQUb1uQBsuceQgATK5AqStqwQPhPv29BmQx',
-  pool: import.meta.env.EVERESTSWAP_DEVNET_POOL_ADDRESS || 'octHzDX3aUCvFVRifUQoPdsaXqSvRLozGqJu3wzSDk2AZ25',
-  router: import.meta.env.EVERESTSWAP_DEVNET_ROUTER_ADDRESS || 'oct27w262B5fscy8mRRdAtTTYrRgpR2sseJyp2HMGWYGaWW',
+  factory: import.meta.env.EVERESTSWAP_DEVNET_FACTORY_ADDRESS || 'octJbkjXrAqvZdg2JZVZTyQqpYB52HYkBPDmGMmEQBMgSFE',
+  pool: import.meta.env.EVERESTSWAP_DEVNET_POOL_ADDRESS || 'oct2ws6ug4Va8R8ctPvE76zyc8fgBJDTC4BgG4WjJXCBo8R',
+  router: import.meta.env.EVERESTSWAP_DEVNET_ROUTER_ADDRESS || 'octEtQJQDFC85tXtGpERHX69rNoo1GJA7EVUaLezANQxC8K',
   oes: import.meta.env.EVERESTSWAP_DEVNET_OES_ADDRESS || 'oct9LgGSpkrqbpWPQpYervyryzDtbGYph2hHvcBi9ZppNvD',
-  woct: import.meta.env.EVERESTSWAP_DEVNET_WOCT_ADDRESS || 'oct4pAKouypxmP7Uk79uGzEpkkidsNAK3fQhxy1HDUmBRLE',
+  woct: import.meta.env.EVERESTSWAP_DEVNET_WOCT_ADDRESS || 'oct4g33tzC2cJncL5RFr9TRiyk8yCNP1h2xaogiWJS5opNv',
   dogo: import.meta.env.EVERESTSWAP_DEVNET_DOGO_ADDRESS || 'octJ4mZP8bKidAq4VAy5VrcUwgJTh9Dzop5M4fkKqs79J3k',
   dogoPool: import.meta.env.EVERESTSWAP_DEVNET_DOGO_POOL_ADDRESS || 'oct764KAUBycN5PiqakWCPFvbzWsRJtG4kbhGkVr6KKawpV',
-  rewardPoolTemplate: '',  // reference only — pools are permissionless
+  rewardPoolTemplate: 'octCfD5XbQwiPUH1CYcQZPJuSuNEbPTtix7LfJAepeGzSr3',
 } as const;
 
 // [V7-FIX] Explorer URL fully configurable via env vars
