@@ -2,14 +2,11 @@ import { Routes, Route } from 'react-router-dom'
 import { AppProvider } from './contexts/AppContext'
 import Layout from './components/Layout'
 import SwapPage from './pages/SwapPage'
-import LiquidityPage from './pages/LiquidityPage'
-import PortfolioPage from './pages/PortfolioPage'
 import PoolPage from './pages/PoolPage'
+import PortfolioPage from './pages/PortfolioPage'
 import LaunchTokenPage from './pages/LaunchTokenPage'
 import DocsPage from './pages/DocsPage'
 import AdminPage from './pages/AdminPage'
-import MyPoolsPage from './pages/MyPoolsPage'
-import PoolDetailsPage from './pages/PoolDetailsPage'
 
 function App() {
   return (
@@ -17,11 +14,8 @@ function App() {
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<SwapPage />} />
-          <Route path="/liquidity" element={<LiquidityPage />} />
           <Route path="/dashboard" element={<PortfolioPage />} />
-          <Route path="/pool" element={<PoolPage />} />
-          <Route path="/my-pools" element={<MyPoolsPage />} />
-          <Route path="/my-pools/:address" element={<PoolDetailsPage />} />
+          <Route path="/pool/*" element={<PoolPage />} />
           <Route path="/launch" element={<LaunchTokenPage />} />
           <Route path="/docs" element={<DocsPage />} />
           <Route path="/admin" element={<AdminPage />} />

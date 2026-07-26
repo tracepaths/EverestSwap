@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import MyPoolsPage from '../pages/MyPoolsPage';
+import PoolPage from '../pages/PoolPage';
 
-describe('MyPoolsPage Component', () => {
+describe('PoolPage Component', () => {
   it('should be a valid component', () => {
-    expect(MyPoolsPage).toBeDefined();
+    expect(PoolPage).toBeDefined();
   });
 });

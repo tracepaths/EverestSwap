@@ -1,9 +1,9 @@
-// Simple test to verify the MyPoolsPage component exists and imports correctly
+// Simple test to verify the PoolPage component exists and imports correctly
 import { describe, it, expect } from 'vitest';
-import MyPoolsPage from '../pages/MyPoolsPage';
+import PoolPage from '../pages/PoolPage';
 
-describe('MyPoolsPage', () => {
+describe('PoolPage', () => {
   it('should be a valid component', () => {
-    expect(MyPoolsPage).toBeDefined();
+    expect(PoolPage).toBeDefined();
   });
 });

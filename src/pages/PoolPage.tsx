@@ -1,13 +1,25 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { Routes, Route, Link, useNavigate, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { useApp } from '../contexts/AppContext';
-import type { OctraRpc } from '../services/octraRpc';
-import { CONTRACTS, WOCT_TOKEN } from '../types';
-import { formatUnits, parseUnits, sanitizeNumericInput, parseRawBalance } from '../services/swapService';
-import { walletService } from '../services/walletService';
-import TokenSelectModal from '../components/TokenSelectModal';
-import LoadingModal from '../components/LoadingModal';
 import { usePriceService } from '../hooks/usePriceService';
+import { useMyPools, usePoolData } from '../hooks/usePoolData';
+import { formatUnits, parseUnits, sanitizeNumericInput } from '../services/swapService';
+import { walletService } from '../services/walletService';
+import { CONTRACTS } from '../types';
+import { recordTx } from '../services/txHistory';
+import CreatePoolForm from '../components/CreatePoolForm';
+import ReserveIndicator from '../components/ReserveIndicator';
+import RemovePoolModal from '../components/RemovePoolModal';
+import { formatAddress, isPoolRemovable, usePoolRemoval } from '../utils/poolUtils';
+import type { MyPool, RemoveStep } from '../utils/poolUtils';
+import type { LpPosition } from '../services/octraRpc';
+
+interface ExtendedLpPosition extends LpPosition {
+  reserveA?: string;
+  reserveB?: string;
+  unlocked?: boolean;
+  lockTime?: number;
+}
 
 interface PoolDisplay {
   address: string;
@@ -30,1130 +42,46 @@ interface PoolDisplay {
   rewardPerEpoch?: string;
 }
 
-interface TokenMeta {
-  symbol: string;
-  name: string;
-  decimals: number;
-}
-
-type CreateStep =
+type AddLiquidityStep =
   | { type: 'idle' }
-  | { type: 'compiling' }
-  | { type: 'computing_address' }
-  | { type: 'deploying' }
-  | { type: 'setting_tokens' }
-  | { type: 'setting_reward' }
-  | { type: 'setting_fee' }
-  | { type: 'registering' }
-  | { type: 'granting_reward' }
   | { type: 'granting_a' }
   | { type: 'granting_b' }
   | { type: 'adding_liquidity' }
-  | { type: 'done'; poolAddress: string; rewardInfo?: { rewardToken: string; rewardAmount: string; duration: number } }
+  | { type: 'done'; txHash: string }
   | { type: 'error'; message: string };
 
-function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddress }: {
-  rpc: OctraRpc;
-  isConnected: boolean;
-  onPoolCreated: () => void;
-  connect: () => void | Promise<void>;
-  walletAddress: string;
-}) {
-  const navigate = useNavigate();
-  const [tokenA, setTokenA] = useState('');
-  const [tokenB, setTokenB] = useState('');
-  const [metaA, setMetaA] = useState<TokenMeta | null>(null);
-  const [metaB, setMetaB] = useState<TokenMeta | null>(null);
-  const [balanceA, setBalanceA] = useState<string | null>(null);
-  const [balanceB, setBalanceB] = useState<string | null>(null);
-  const [showTokenASelect, setShowTokenASelect] = useState(false);
-  const [showTokenBSelect, setShowTokenBSelect] = useState(false);
-  const [hasValidPair, setHasValidPair] = useState(false);
-  const [feeTier, setFeeTier] = useState<'0.01' | '0.05' | '0.30' | '1.00' | 'custom'>('0.30');
-  const [customNum, setCustomNum] = useState('3');
-  const [customDenom, setCustomDenom] = useState('1000');
-  const [initAmountA, setInitAmountA] = useState('');
-  const [initAmountB, setInitAmountB] = useState('');
-  const [step, setStep] = useState<CreateStep>({ type: 'idle' });
-  // [V6-SECURITY-FIX MED-13] Double-submit guard
-  const [creating, setCreating] = useState(false);
-  // [V9] Reward Pool state
-  const [poolType, setPoolType] = useState<'standard' | 'reward'>('standard');
-  const [rewardToken, setRewardToken] = useState('');
-  const [rewardMeta, setRewardMeta] = useState<TokenMeta | null>(null);
-  const [rewardAmount, setRewardAmount] = useState('');
-  const [rewardDuration, setRewardDuration] = useState<number>(432000);
-  const [creatorLockDays, setCreatorLockDays] = useState(7);
-  const [showRewardSelect, setShowRewardSelect] = useState(false);
-  const [rewardBalance, setRewardBalance] = useState<string | null>(null);
-
-  const mountedRef = useRef(true);
-  // [SECURITY] F-2: Synchronous submit guard (creating state is async, race exists)
-  const createSubmittingRef = useRef(false);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => { mountedRef.current = false; };
-  }, []);
-
-  useEffect(() => {
-    if (!tokenA || !tokenB) { setHasValidPair(false); return; }
-    // [V7-FIX] If either token IS WOCT, the pool IS the WOCT pair — always valid
-    if (tokenA === WOCT_TOKEN.address || tokenB === WOCT_TOKEN.address) {
-      setHasValidPair(true);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      const factoryAddr = CONTRACTS.factory;
-      const woctAddr = WOCT_TOKEN.address;
-      const tokenAHasPool = await rpc.hasExistingPool(factoryAddr, woctAddr, tokenA);
-      if (cancelled) return;
-      if (tokenAHasPool) { setHasValidPair(true); return; }
-      const tokenBHasPool = await rpc.hasExistingPool(factoryAddr, woctAddr, tokenB);
-      if (cancelled) return;
-      setHasValidPair(tokenBHasPool);
-    })();
-    return () => { cancelled = true; };
-  }, [rpc, tokenA, tokenB]);
-
-  // [SECURITY] F-4: Check if the EXACT pair (tokenA, tokenB) already has a pool.
-  // If it does, the deploy will succeed but register_pool will revert. Warn the user.
-  const [pairAlreadyExists, setPairAlreadyExists] = useState(false);
-  useEffect(() => {
-    if (!tokenA || !tokenB || tokenA === tokenB) { setPairAlreadyExists(false); return; }
-    let cancelled = false;
-    (async () => {
-      try {
-        const factoryAddr = CONTRACTS.factory;
-        const poolAddr = await rpc.getPoolAddress(factoryAddr, tokenA, tokenB);
-        if (cancelled) return;
-        setPairAlreadyExists(!!poolAddr && poolAddr !== '');
-      } catch {
-        if (!cancelled) setPairAlreadyExists(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [rpc, tokenA, tokenB]);
-
-  // [V7-PASS10] LOW-28: prevent selecting the same token for both A and B
-  const handleSelectTokenA = (address: string, meta: TokenMeta) => {
-    if (address === tokenB) return;
-    setTokenA(address);
-    setMetaA(meta);
-    setInitAmountA('');
-    // Fetch balance
-    if (walletAddress) {
-      if (address === '') {
-        rpc.getBalance(walletAddress).then(bal => { if (mountedRef.current) setBalanceA(parseRawBalance(bal.balance_raw, 6)); }).catch(() => { if (mountedRef.current) setBalanceA(null); });
-      } else {
-        rpc.getTokenBalance(address, walletAddress).then(bal => { if (mountedRef.current) setBalanceA(bal); }).catch(() => { if (mountedRef.current) setBalanceA(null); });
-      }
-    }
-  };
-
-  const handleSelectTokenB = (address: string, meta: TokenMeta) => {
-    if (address === tokenA) return;
-    setTokenB(address);
-    setMetaB(meta);
-    setInitAmountB('');
-    // Fetch balance
-    if (walletAddress) {
-      if (address === '') {
-        rpc.getBalance(walletAddress).then(bal => { if (mountedRef.current) setBalanceB(parseRawBalance(bal.balance_raw, 6)); }).catch(() => { if (mountedRef.current) setBalanceB(null); });
-      } else {
-        rpc.getTokenBalance(address, walletAddress).then(bal => { if (mountedRef.current) setBalanceB(bal); }).catch(() => { if (mountedRef.current) setBalanceB(null); });
-      }
-    }
-  };
-
-  // [V9] Reward token selection handler
-  const handleSelectRewardToken = (address: string, meta: TokenMeta) => {
-    setRewardToken(address);
-    setRewardMeta(meta);
-    setRewardAmount('');
-    if (walletAddress) {
-      rpc.getTokenBalance(address, walletAddress).then(bal => { if (mountedRef.current) setRewardBalance(bal); }).catch(() => { if (mountedRef.current) setRewardBalance(null); });
-    }
-  };
-
-  const getFeeParams = (): { num: number; denom: number } => {
-    if (feeTier === '0.01') return { num: 1, denom: 10000 };
-    if (feeTier === '0.05') return { num: 5, denom: 10000 };
-    if (feeTier === '1.00') return { num: 100, denom: 10000 };
-    if (feeTier === 'custom') {
-      const num = parseInt(customNum, 10) || 3;
-      const denom = parseInt(customDenom, 10) || 1000;
-      // [V6-SECURITY-FIX MED-10] Validate fee params
-      if (num <= 0 || denom <= 0 || num >= denom) {
-        throw new Error('Invalid fee: numerator must be > 0 and < denominator');
-      }
-      // [V7-FIX] Validate fee range matches contract: 0.03% <= fee <= 1%
-      // Contract: num * 10000 >= denom * 3 AND num * 1000 <= denom * 10
-      if (num * 10000 < denom * 3) {
-        throw new Error('Fee too low (min 0.03%, e.g. 3/10000)');
-      }
-      if (num * 1000 > denom * 10) {
-        throw new Error('Fee too high (max 1%, e.g. 10/1000)');
-      }
-      return { num, denom };
-    }
-    return { num: 3, denom: 1000 };
-  };
-
-  const handleCreatePool = async () => {
-    if (!tokenA || !tokenB) return;
-    // [V6-SECURITY-FIX MED-13] Double-submit guard
-    if (creating) return;
-    // [SECURITY] F-2: Synchronous ref guard to prevent double-click double-submit
-    if (createSubmittingRef.current) return;
-    createSubmittingRef.current = true;
-    setCreating(true);
-    // [SECURITY] FM-5: Helper to safely set step only if component is still mounted
-    const safeSetStep = (s: typeof step) => {
-      if (mountedRef.current) setStep(s);
-    };
-    // [V7-PASS10] HIGH-8: pre-flight check for paused/blacklisted tokens.
-    // Catches before deploy so user doesn't waste gas on a pool that will fail
-    // at the grant step due to paused/blacklist checks.
-    // tokenA/tokenB are address strings; resolve to symbols via getTokenMeta when needed.
-    try {
-      const resolveSym = async (addr: string): Promise<string> => {
-        try { const m = await rpc.getTokenMeta(addr); return m.symbol; } catch { return addr.slice(0, 6); }
-      };
-      const userAddr = walletService.address || '';
-      if (tokenA) {
-        const statusA = await rpc.getTokenStatus(tokenA, userAddr);
-        if (statusA.paused) {
-          const symA = await resolveSym(tokenA);
-          safeSetStep({ type: 'error', message: `${symA} is paused — cannot create pool` });
-          createSubmittingRef.current = false;
-          setCreating(false);
-          return;
-        }
-        if (statusA.blacklisted) {
-          const symA = await resolveSym(tokenA);
-          safeSetStep({ type: 'error', message: `Your wallet is blacklisted from ${symA}` });
-          createSubmittingRef.current = false;
-          setCreating(false);
-          return;
-        }
-      }
-      if (tokenB) {
-        const statusB = await rpc.getTokenStatus(tokenB, userAddr);
-        if (statusB.paused) {
-          const symB = await resolveSym(tokenB);
-          safeSetStep({ type: 'error', message: `${symB} is paused — cannot create pool` });
-          createSubmittingRef.current = false;
-          setCreating(false);
-          return;
-        }
-        if (statusB.blacklisted) {
-          const symB = await resolveSym(tokenB);
-          safeSetStep({ type: 'error', message: `Your wallet is blacklisted from ${symB}` });
-          createSubmittingRef.current = false;
-          setCreating(false);
-          return;
-        }
-      }
-    } catch { /* noop — proceed if status fetch fails */ }
-    const factoryAddr = CONTRACTS.factory;
-    if (!factoryAddr) {
-      safeSetStep({ type: 'error', message: 'Factory contract not configured' });
-      // [V7-FIX] Reset ref guard on early return to prevent permanent button death
-      createSubmittingRef.current = false;
-      setCreating(false);
-      return;
-    }
-    // [SECURITY] F-6: Snapshot the wallet address at the start of the flow.
-    // If the wallet disconnects/changes account mid-flow, the deploy contract
-    // address and subsequent transactions will use the wrong identity.
-    const walletSnapshot = walletService.address;
-    if (!walletSnapshot) {
-      safeSetStep({ type: 'error', message: 'Wallet not connected' });
-      // [V7-FIX] Reset ref guard on early return
-      createSubmittingRef.current = false;
-      setCreating(false);
-      return;
-    }
-
-    // [V7-FIX] Pre-check balance before starting — pool creation costs
-    // ~1+ OCT for deploy + 5 init txs. Fail fast with clear message.
-    try {
-      const bal = await rpc.getBalance(walletService.address);
-      // Need at least 1 OCT (1_000_000 base units at 6 decimals) to safely cover deploy + 5 txs + fees
-      const minRequired = 1000000n;
-      const rawOCT = parseRawBalance(bal.balance_raw, 6);
-      if (BigInt(rawOCT) < minRequired) {
-        const octBal = Number(rawOCT) / 1_000_000;
-        throw new Error(
-          `Insufficient OCT for pool creation. Need at least 1 OCT, have ${octBal.toFixed(6)} OCT.`
-        );
-      }
-    } catch (e) {
-      if (e instanceof Error && e.message.startsWith('Insufficient')) {
-        safeSetStep({ type: 'error', message: e.message });
-        // [V7-FIX] Reset ref guard on early return
-        createSubmittingRef.current = false;
-        setCreating(false);
-        return;
-      }
-      // If balance check itself failed, log and continue (don't block)
-      console.warn('Balance pre-check failed:', e);
-    }
-
-    try {
-      safeSetStep({ type: 'compiling' });
-
-      // [V9] Choose contract source based on pool type
-      const contractFile = poolType === 'reward' ? '/contracts/RewardPool.aml' : '/contracts/SwapPool.aml';
-      const sourceResp = await fetch(contractFile);
-      const source = await sourceResp.text();
-
-      const compileResult = await rpc.compileAml(source);
-      const bytecode = compileResult.bytecode;
-
-      safeSetStep({ type: 'computing_address' });
-
-      const balance = await rpc.call<{ balance: string; nonce: number }>('octra_balance', [walletSnapshot]);
-      // [SECURITY] F-6: Re-verify wallet hasn't changed
-      if (walletService.address !== walletSnapshot) {
-        throw new Error('Wallet changed during deploy — aborting');
-      }
-      const deployNonce = balance.nonce + 1;
-
-      const addrResult = await rpc.computeContractAddress(bytecode, walletService.address, deployNonce);
-      const poolAddress = addrResult.address;
-
-      safeSetStep({ type: 'deploying' });
-
-      let feeOu = '100000';
-      try {
-        const feeResp = await rpc.getRecommendedFee('deploy');
-        feeOu = feeResp.recommended || '100000';
-      } catch { /* fallback */ }
-
-      const deployTxHash = await walletService.signAndSubmitDeployTx(rpc, {
-        bytecode,
-        poolAddress,
-        feeOu,
-      });
-
-      await rpc.waitForReceipt(deployTxHash, 60);
-
-      safeSetStep({ type: 'setting_tokens' });
-
-      const tokenTxHash = await walletService.callContract({
-        contract: poolAddress,
-        method: 'set_tokens',
-        params: [tokenA, tokenB],
-        rpc,
-      });
-
-      await rpc.waitForReceipt(tokenTxHash, 60);
-
-      // [V9] Reward pool: set reward config before fee
-      if (poolType === 'reward' && rewardToken && rewardAmount && rewardMeta) {
-        safeSetStep({ type: 'setting_reward' });
-
-        const rawReward = parseUnits(rewardAmount, rewardMeta.decimals);
-        const epochInfoForReward = await rpc.call<{ epoch_id: number }>('epoch_current');
-        const currentEpoch = epochInfoForReward?.epoch_id || 0;
-        const rewardStart = currentEpoch + 100; // start shortly after creation
-        const rewardEnd = rewardStart + rewardDuration;
-
-        const rewardConfigHash = await walletService.callContract({
-          contract: poolAddress,
-          method: 'set_reward_config',
-          params: [rewardToken, rawReward, rewardStart, rewardEnd],
-          rpc,
-        });
-        await rpc.waitForReceipt(rewardConfigHash, 60);
-      }
-
-      safeSetStep({ type: 'setting_fee' });
-
-      const { num, denom } = getFeeParams();
-      const feeTxHash = await walletService.callContract({
-        contract: poolAddress,
-        method: 'set_fee_params',
-        params: [num, denom],
-        rpc,
-      });
-
-      await rpc.waitForReceipt(feeTxHash, 60);
-
-      safeSetStep({ type: 'registering' });
-
-      // [V9] Register with appropriate factory method
-      const regMethod = poolType === 'reward' ? 'register_reward_pool' : 'register_pool';
-      const regParams = poolType === 'reward'
-        ? [tokenA, tokenB, rewardToken, poolAddress]
-        : [tokenA, tokenB, poolAddress];
-
-      const regTxHash = await walletService.callContract({
-        contract: factoryAddr,
-        method: regMethod,
-        params: regParams,
-        rpc,
-      });
-
-      await rpc.waitForReceipt(regTxHash, 60);
-
-      // [BUG-FIX] Call set_factory on the newly deployed pool
-      try {
-        const setFactoryHash = await walletService.callContract({
-          contract: poolAddress,
-          method: 'set_factory',
-          params: [factoryAddr],
-          rpc,
-        });
-        await rpc.waitForReceipt(setFactoryHash, 60);
-      } catch (sfErr) {
-        console.warn('[PoolPage] set_factory failed (non-fatal):', sfErr instanceof Error ? sfErr.message : String(sfErr));
-      }
-
-      // [V9] Grant reward token to pool (reward pool only)
-      if (poolType === 'reward' && rewardToken && rewardAmount && rewardMeta) {
-        safeSetStep({ type: 'granting_reward' });
-
-        const rawReward = parseUnits(rewardAmount, rewardMeta.decimals);
-        const grantRewardHash = await walletService.callContract({
-          contract: rewardToken,
-          method: 'grant',
-          params: [poolAddress, rawReward],
-          rpc,
-        });
-        await rpc.waitForReceipt(grantRewardHash, 60);
-      }
-
-      // [V7-SECURITY-FIX] Guard against null meta during initial liquidity
-      const rawInitA = initAmountA && metaA ? parseUnits(initAmountA, metaA.decimals) : null;
-      const rawInitB = initAmountB && metaB ? parseUnits(initAmountB, metaB.decimals) : null;
-
-      // [V7-FIX] Validate that initial liquidity amounts are consistent:
-      // - both empty = no initial liquidity (allowed)
-      // - both positive = ok
-      // - one set, one not = error (user forgot one)
-      if ((initAmountA && !initAmountB) || (initAmountB && !initAmountA)) {
-        throw new Error('Enter both amounts for initial liquidity, or leave both empty.');
-      }
-
-      if (rawInitA && rawInitB && BigInt(rawInitA) > 0 && BigInt(rawInitB) > 0) {
-        safeSetStep({ type: 'granting_a' });
-
-        const grantAHash = await walletService.callContract({
-          contract: tokenA,
-          method: 'grant',
-          params: [poolAddress, rawInitA],
-          rpc,
-        });
-        await rpc.waitForReceipt(grantAHash, 60);
-
-        safeSetStep({ type: 'granting_b' });
-
-        const grantBHash = await walletService.callContract({
-          contract: tokenB,
-          method: 'grant',
-          params: [poolAddress, rawInitB],
-          rpc,
-        });
-        await rpc.waitForReceipt(grantBHash, 60);
-
-        safeSetStep({ type: 'adding_liquidity' });
-
-        // [V7-FIX] Use chain epoch (not unix timestamp) for deadline
-        const epochInfo = await rpc.call<{ epoch_id: number }>('epoch_current');
-        const deadline = (epochInfo?.epoch_id || 0) + 300;
-        // [BUG-FIX] Use minLp='1' for initial pool. The contract enforces its own
-        // minimum_liquidity (burns 1000 LP). Using '1001' can cause 'min_lp not satisfied'
-        // if sqrt(rawA * rawB) is between 1001 and 2001. Using '1' lets the contract
-        // do its own minimum check and accept any valid initial liquidity.
-        const addHash = await walletService.callContract({
-          contract: poolAddress,
-          method: 'add_liquidity',
-          params: [rawInitA, rawInitB, '1', String(deadline), '0'],
-          rpc,
-        });
-        await rpc.waitForReceipt(addHash, 60);
-      }
-
-      if (mountedRef.current) {
-        // [V9] Include reward info in done state for reward pools
-        const rewardInfo = poolType === 'reward' && rewardToken && rewardAmount && rewardMeta
-          ? { rewardToken: rewardMeta.symbol, rewardAmount, duration: rewardDuration }
-          : undefined;
-        setStep({ type: 'done', poolAddress, rewardInfo });
-        rpc.clearCache();
-        onPoolCreated();
-      }
-    } catch (e) {
-      if (mountedRef.current) {
-        const errMsg = e instanceof Error ? e.message : 'Unknown error';
-        // [V7-FIX] Check if failure is due to duplicate pool (race condition)
-        if (errMsg.includes('pool already exists') && mountedRef.current) {
-          try {
-            const existing = await rpc.getPoolAddress(CONTRACTS.factory, tokenA, tokenB);
-            safeSetStep({ type: 'error', message: `Pool already exists at ${existing}. Try a different pair.` });
-          } catch {
-            safeSetStep({ type: 'error', message: errMsg });
-          }
-        } else {
-          safeSetStep({ type: 'error', message: errMsg });
-        }
-      }
-    } finally {
-      // [SECURITY] F-2: Reset ref guard
-      createSubmittingRef.current = false;
-      setCreating(false);
-    }
-  };
-
-  const reset = () => {
-    setStep({ type: 'idle' });
-    setWizardStep(1);
-    setTokenA('');
-    setTokenB('');
-    setMetaA(null);
-    setMetaB(null);
-    setFeeTier('0.30');
-    setInitAmountA('');
-    setInitAmountB('');
-    // [V9] Reset reward pool state
-    setPoolType('standard');
-    setRewardToken('');
-    setRewardMeta(null);
-    setRewardAmount('');
-    setRewardDuration(100800);
-    setCreatorLockDays(7);
-    setShowRewardSelect(false);
-    setRewardBalance(null);
-  };
-
-  const isValidA = tokenA !== '' && metaA !== null;
-  const isValidB = metaB !== null;
-
-  const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
-
-  const feeTiers = [
-    { label: '0.01%', value: '0.01' as const },
-    { label: '0.05%', value: '0.05' as const },
-    { label: '0.30%', value: '0.30' as const },
-    { label: '1.00%', value: '1.00' as const },
-    { label: 'Custom', value: 'custom' as const },
-  ];
-
-  const DURATION_PRESETS = [
-    { label: '1d', value: 14400 },
-    { label: '7d', value: 100800 },
-    { label: '30d', value: 432000 },
-    { label: '90d', value: 1296000 },
-    { label: '365d', value: 5256000 },
-  ];
-
-  const allStepDefs: { key: CreateStep['type']; label: string }[] = [
-    { key: 'compiling', label: 'Compile contract' },
-    { key: 'computing_address', label: 'Compute pool address' },
-    { key: 'deploying', label: poolType === 'reward' ? 'Deploy RewardPool' : 'Deploy SwapPool' },
-    { key: 'setting_tokens', label: 'Set pool tokens' },
-    ...(poolType === 'reward' ? [{ key: 'setting_reward' as const, label: 'Set reward config' }] : []),
-    { key: 'setting_fee', label: 'Set pool fee' },
-    { key: 'registering', label: poolType === 'reward' ? 'Register reward pool' : 'Register pool' },
-    ...(poolType === 'reward' ? [{ key: 'granting_reward' as const, label: 'Grant reward token' }] : []),
-    { key: 'granting_a', label: `Grant ${metaA?.symbol ?? 'Token A'}` },
-    { key: 'granting_b', label: `Grant ${metaB?.symbol ?? 'Token B'}` },
-    { key: 'adding_liquidity', label: 'Add initial liquidity' },
-  ];
-
-  const hasInitLiquidity = !!(initAmountA && metaA && initAmountB && metaB
-    && Number(initAmountA) > 0 && Number(initAmountB) > 0);
-
-  function bigintSqrt(n: bigint): bigint {
-    if (n < 2n) return n;
-    let x = n, y = (x + 1n) / 2n;
-    while (y < x) { x = y; y = (x + n / x) / 2n; }
-    return x;
-  }
-  const sim = (() => {
-    if (!hasInitLiquidity || !metaA || !metaB) return null;
-    try {
-      const rawA = BigInt(parseUnits(initAmountA, metaA.decimals));
-      const rawB = BigInt(parseUnits(initAmountB, metaB.decimals));
-      if (rawA <= 0n || rawB <= 0n) return null;
-      const k = rawA * rawB;
-      const lpGross = bigintSqrt(k);
-      const MIN_LIQ = 1000n;
-      const lpNet = lpGross > MIN_LIQ ? lpGross - MIN_LIQ : 0n;
-      const priceAinB = Number(initAmountB) / Number(initAmountA);
-      const priceBinA = Number(initAmountA) / Number(initAmountB);
-      const sharePct = 100;
-      return { rawA, rawB, k, lpGross, lpNet, priceAinB, priceBinA, sharePct };
-    } catch { return null; }
-  })();
-  const stepDefs = hasInitLiquidity ? allStepDefs : allStepDefs.slice(0, 6);
-
-  const stepType = step.type;
-  const stepSnapshot = step;
-
-  const step1Valid = isValidA && isValidB && hasValidPair;
-  const step2Valid = poolType === 'standard' || (rewardToken && rewardAmount && Number(rewardAmount) > 0);
-
-  return (
-    <>
-    <LoadingModal
-      isOpen={step.type !== 'idle' && step.type !== 'error' && step.type !== 'done'}
-      title="Creating Pool"
-      steps={stepDefs}
-      currentStep={step.type}
-      error={step.type === 'error' ? step.message : undefined}
-      onCancel={reset}
-    />
-    <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] p-6 space-y-5">
-       {/* Step indicator */}
-       <div className="flex items-center gap-2">
-         {([1, 2, 3] as const).map((s, idx) => (
-           <div key={s} className="flex items-center gap-2 flex-1">
-             <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 transition-colors ${
-               wizardStep === s ? 'bg-[var(--app-blue)] text-white shadow-lg shadow-[var(--app-blue)]/30' :
-               wizardStep > s ? 'bg-[var(--app-success)] text-white' :
-               'bg-[var(--app-panel-soft)] text-[var(--app-muted)] border border-[var(--app-border)]'
-             }`}>
-               {wizardStep > s ? (
-                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                 </svg>
-               ) : s}
-             </div>
-             <span className={`text-xs font-medium ${
-               wizardStep === s ? 'text-[var(--app-text)]' : 'text-[var(--app-muted)]'
-             }`}>
-               {s === 1 ? 'Tokens' : s === 2 ? 'Configure' : 'Liquidity'}
-             </span>
-             {idx < 2 && <div className={`flex-1 h-px mx-1 ${wizardStep > s ? 'bg-[var(--app-success)]' : 'bg-[var(--app-border)]'}`} />}
-           </div>
-         ))}
-       </div>
-
-       {/* Step summary */}
-       {(wizardStep === 2 || wizardStep === 3) && (metaA || metaB) && (
-         <div className="flex flex-wrap items-center gap-2 text-[10px]">
-           <span className="bg-[var(--app-panel-soft)] rounded-full px-2 py-0.5 font-mono">
-             {metaA ? metaA.symbol : '?'} / {metaB ? metaB.symbol : '?'}
-           </span>
-           <span className="bg-[var(--app-panel-soft)] rounded-full px-2 py-0.5">
-             {feeTier === 'custom' ? `${customNum}/${customDenom}` : `${feeTier}%`}
-           </span>
-           {poolType === 'reward' && (
-             <span className="bg-green-500/10 text-green-400 rounded-full px-2 py-0.5 border border-green-500/20">Reward</span>
-           )}
-           {hasInitLiquidity && (
-             <span className="bg-[var(--app-panel-soft)] rounded-full px-2 py-0.5">w/ Liquidity</span>
-           )}
-         </div>
-       )}
-
-      {step.type === 'idle' || step.type === 'error' ? (
-        <>
-          {/* ===== STEP 1: Select Tokens ===== */}
-          {wizardStep === 1 && (
-            <div className="space-y-4">
-               <div className="grid grid-cols-2 gap-3">
-                 {/* Token A */}
-                 <button
-                   onClick={() => setShowTokenASelect(true)}
-                   className={`bg-[var(--app-panel-soft)] rounded-xl p-4 border transition-colors text-left ${
-                     isValidA ? 'border-[var(--app-blue)]/40 shadow-sm shadow-[var(--app-blue)]/10' : 'border-[var(--app-border)] hover:border-[var(--app-blue)]/50'
-                   }`}
-                 >
-                   <div className="flex items-center gap-3">
-                     {metaA ? (
-                       <div className="w-9 h-9 rounded-full bg-[var(--app-blue)] flex items-center justify-center text-sm font-bold text-white shrink-0">
-                         {metaA.symbol[0]}
-                       </div>
-                     ) : (
-                       <div className="w-9 h-9 rounded-full bg-[var(--app-hover)] flex items-center justify-center text-sm font-bold text-[var(--app-muted-2)] shrink-0">
-                         ?
-                       </div>
-                     )}
-                     <div className="flex-1 min-w-0">
-                       <div className="text-[10px] text-[var(--app-muted)] mb-1">Token A</div>
-                       {metaA ? (
-                         <>
-                           <div className="text-base font-bold truncate">{metaA.symbol}</div>
-                           <div className="text-[11px] text-[var(--app-muted)] truncate">{metaA.name}</div>
-                           {walletAddress && (
-                             <div className="text-[11px] text-[var(--app-muted-2)] mt-1 font-mono">
-                               {balanceA === null ? '...' : formatUnits(balanceA, metaA.decimals)}
-                             </div>
-                           )}
-                         </>
-                       ) : (
-                         <div className="text-sm text-[var(--app-muted-2)]">Select token</div>
-                       )}
-                     </div>
-                   </div>
-                 </button>
-                 <TokenSelectModal
-                   isOpen={showTokenASelect}
-                   onClose={() => setShowTokenASelect(false)}
-                   onSelect={handleSelectTokenA}
-                   rpc={rpc}
-                   excludeAddress={tokenB || undefined}
-                   walletAddress={walletAddress}
-                   isConnected={isConnected}
-                 />
-
-                 {/* Token B */}
-                 <button
-                   onClick={() => setShowTokenBSelect(true)}
-                   className={`bg-[var(--app-panel-soft)] rounded-xl p-4 border transition-colors text-left ${
-                     isValidB ? 'border-[var(--app-blue)]/40 shadow-sm shadow-[var(--app-blue)]/10' : 'border-[var(--app-border)] hover:border-[var(--app-blue)]/50'
-                   }`}
-                 >
-                   <div className="flex items-center gap-3">
-                     {metaB ? (
-                       <div className="w-9 h-9 rounded-full bg-[var(--app-blue-2)] flex items-center justify-center text-sm font-bold text-white shrink-0">
-                         {metaB.symbol[0]}
-                       </div>
-                     ) : (
-                       <div className="w-9 h-9 rounded-full bg-[var(--app-hover)] flex items-center justify-center text-sm font-bold text-[var(--app-muted-2)] shrink-0">
-                         ?
-                       </div>
-                     )}
-                     <div className="flex-1 min-w-0">
-                       <div className="text-[10px] text-[var(--app-muted)] mb-1">Token B</div>
-                       {metaB ? (
-                         <>
-                           <div className="text-base font-bold truncate">{metaB.symbol}</div>
-                           <div className="text-[11px] text-[var(--app-muted)] truncate">{metaB.name}</div>
-                           {walletAddress && (
-                             <div className="text-[11px] text-[var(--app-muted-2)] mt-1 font-mono">
-                               {balanceB === null ? '...' : formatUnits(balanceB, metaB.decimals)}
-                             </div>
-                           )}
-                         </>
-                       ) : (
-                         <div className="text-sm text-[var(--app-muted-2)]">Select token</div>
-                       )}
-                     </div>
-                   </div>
-                 </button>
-                 <TokenSelectModal
-                   isOpen={showTokenBSelect}
-                   onClose={() => setShowTokenBSelect(false)}
-                   onSelect={handleSelectTokenB}
-                   rpc={rpc}
-                   excludeAddress={tokenA || undefined}
-                   walletAddress={walletAddress}
-                   isConnected={isConnected}
-                 />
-               </div>
-
-               {step.type === 'error' && (
-                 <div className="text-sm text-[var(--app-danger)] bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3 flex items-start gap-2">
-                   <svg className="w-5 h-5 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                   </svg>
-                   <span>{step.message}</span>
-                 </div>
-               )}
-
-               {isValidA && isValidB && !hasValidPair && (
-                 <div className="text-sm text-[var(--app-danger)] bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3 flex items-start gap-2">
-                   <svg className="w-5 h-5 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                   </svg>
-                   <span>At least one token must already have a pair with WOCT</span>
-                 </div>
-               )}
-
-               {pairAlreadyExists && (
-                 <div className="text-sm text-[var(--app-danger)] bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3 flex items-start gap-2">
-                   <svg className="w-5 h-5 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                   </svg>
-                   <span>This pair already has a pool — create would fail</span>
-                 </div>
-               )}
-
-              <button
-                onClick={() => {
-                  if (!isConnected) { connect(); return; }
-                  setWizardStep(2);
-                }}
-                disabled={!step1Valid}
-                className="w-full py-3 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-xl font-medium transition-colors"
-              >
-                {!isConnected ? 'Connect Wallet' : 'Continue'}
-              </button>
-            </div>
-          )}
-
-          {/* ===== STEP 2: Configure Pool ===== */}
-          {wizardStep === 2 && (
-            <div className="space-y-4">
-              {/* Fee Tier */}
-              <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)]">
-                <div className="text-xs text-[var(--app-muted)] mb-2">Fee Tier</div>
-                <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-                  {feeTiers.map(f => (
-                    <button
-                      key={f.value}
-                      onClick={() => setFeeTier(f.value)}
-                      className={`py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                        feeTier === f.value
-                          ? 'bg-[var(--app-blue)] text-white'
-                          : 'bg-[var(--app-hover)] hover:bg-[var(--app-hover)] text-[var(--app-muted)]'
-                      }`}
-                    >
-                      {f.label}
-                    </button>
-                  ))}
-                </div>
-                {feeTier === 'custom' && (
-                  <div className="flex flex-col gap-2 mt-3">
-                    <div className="flex gap-2">
-                      <div className="flex-1">
-                        <label className="text-[10px] text-[var(--app-muted-2)]">Numerator</label>
-                        <input
-                          type="number"
-                          value={customNum}
-                          onChange={e => setCustomNum(e.target.value)}
-                          className={`w-full bg-[var(--app-panel-soft)] border rounded-lg px-3 py-2 text-sm font-mono outline-none mt-1 ${(() => { const n = parseInt(customNum, 10) || 0; const d = parseInt(customDenom, 10) || 1; return n <= 0 || d <= 0 || n >= d ? 'border-red-500/50' : 'border-[var(--app-border)]'; })()}`}
-                          min="1"
-                        />
-                      </div>
-                      <div className="flex-1">
-                        <label className="text-[10px] text-[var(--app-muted-2)]">Denominator</label>
-                        <input
-                          type="number"
-                          value={customDenom}
-                          onChange={e => setCustomDenom(e.target.value)}
-                          className={`w-full bg-[var(--app-panel-soft)] border rounded-lg px-3 py-2 text-sm font-mono outline-none mt-1 ${(() => { const n = parseInt(customNum, 10) || 0; const d = parseInt(customDenom, 10) || 1; return n <= 0 || d <= 0 || n >= d ? 'border-red-500/50' : 'border-[var(--app-border)]'; })()}`}
-                          min="1"
-                        />
-                      </div>
-                    </div>
-                    <div className="text-[10px] text-[var(--app-muted)]">
-                      {(() => {
-                        const n = parseInt(customNum, 10) || 0;
-                        const d = parseInt(customDenom, 10) || 1;
-                        if (n <= 0 || d <= 0) return 'Enter valid values';
-                        if (n >= d) return 'Numerator must be less than denominator';
-                        const pct = (n / d) * 100;
-                        if (n * 10000 < d * 3) return `${pct.toFixed(2)}% — fee too low (min 0.03%)`;
-                        if (n * 1000 > d * 10) return `${pct.toFixed(2)}% — fee too high (max 1%)`;
-                        return `${pct.toFixed(2)}% — valid`;
-                      })()}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Pool Type */}
-              <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)]">
-                <div className="text-xs text-[var(--app-muted)] mb-2">Pool Type</div>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => setPoolType('standard')}
-                    className={`py-3 rounded-xl text-sm font-medium transition-colors border-2 ${
-                      poolType === 'standard'
-                        ? 'border-[var(--app-blue)] bg-[var(--app-blue)]/10 text-[var(--app-blue)]'
-                        : 'border-transparent bg-[var(--app-hover)] text-[var(--app-muted)]'
-                    }`}
-                  >
-                    Standard AMM
-                  </button>
-                  <button
-                    onClick={() => setPoolType('reward')}
-                    className={`py-3 rounded-xl text-sm font-medium transition-colors border-2 ${
-                      poolType === 'reward'
-                        ? 'border-green-500 bg-green-500/10 text-green-400'
-                        : 'border-transparent bg-[var(--app-hover)] text-[var(--app-muted)]'
-                    }`}
-                  >
-                    Reward Pool
-                  </button>
-                </div>
-              </div>
-
-              {/* Reward Config */}
-              {poolType === 'reward' && (
-                <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-green-500/20 space-y-3">
-                  <div className="text-xs text-green-400 font-medium">Reward Configuration</div>
-
-                  <div>
-                    <label className="text-[10px] text-[var(--app-muted-2)]">Reward Token (OCS01)</label>
-                    <button
-                      onClick={() => setShowRewardSelect(true)}
-                      className={`w-full flex items-center justify-between bg-[var(--app-panel-soft)] text-sm font-medium outline-none rounded-lg px-3 py-2 border border-[var(--app-border)] hover:border-green-500/50 transition-colors mt-1 ${rewardToken ? '' : 'text-[var(--app-muted-2)]'}`}
-                    >
-                      <span>{rewardMeta ? rewardMeta.symbol : 'Select token'}</span>
-                      <svg className="w-4 h-4 text-[var(--app-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </button>
-                    {rewardMeta && rewardBalance && (
-                      <div className="text-[10px] text-[var(--app-muted)] mt-1">
-                        Balance: {formatUnits(rewardBalance, rewardMeta.decimals)} {rewardMeta.symbol}
-                      </div>
-                    )}
-                    <TokenSelectModal
-                      isOpen={showRewardSelect}
-                      onClose={() => setShowRewardSelect(false)}
-                      onSelect={handleSelectRewardToken}
-                      rpc={rpc}
-                      excludeAddress={tokenA || undefined}
-                      walletAddress={walletAddress}
-                      isConnected={isConnected}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[10px] text-[var(--app-muted-2)]">Reward Amount</label>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      value={rewardAmount}
-                      onChange={e => setRewardAmount(sanitizeNumericInput(e.target.value))}
-                      placeholder="0.0"
-                      className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-2 text-sm font-mono outline-none mt-1"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[10px] text-[var(--app-muted-2)]">Duration</label>
-                    <div className="grid grid-cols-5 gap-1.5 mt-1">
-                      {DURATION_PRESETS.map(d => (
-                        <button
-                          key={d.value}
-                          onClick={() => setRewardDuration(d.value)}
-                          className={`py-1.5 rounded-lg text-[11px] font-medium transition-colors ${
-                            rewardDuration === d.value
-                              ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-                              : 'bg-[var(--app-hover)] text-[var(--app-muted)]'
-                          }`}
-                        >
-                          {d.label}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="text-[10px] text-[var(--app-muted)] mt-1">
-                      ~{Math.round(rewardDuration / 14400)} days
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-[10px] text-[var(--app-muted-2)]">Creator Lock (anti-rugpull)</label>
-                    <div className="flex items-center gap-2 mt-1">
-                      <input
-                        type="number"
-                        value={creatorLockDays}
-                        onChange={e => setCreatorLockDays(Math.max(7, parseInt(e.target.value) || 7))}
-                        className="w-20 bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-1.5 text-sm font-mono outline-none"
-                        min="7"
-                      />
-                      <span className="text-xs text-[var(--app-muted)]">days min</span>
-                    </div>
-                  </div>
-
-                  {rewardAmount && rewardMeta && (
-                    <div className="bg-[var(--app-panel)] rounded-lg p-3 text-[10px] text-green-400/80 space-y-0.5">
-                      <div>Distribution: linear over ~{Math.round(rewardDuration / 14400)} days</div>
-                      <div>Creator LP locked {creatorLockDays}d | Reward immutable</div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setWizardStep(1)}
-                  className="flex-1 py-3 bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-xl font-medium text-sm hover:bg-[var(--app-hover)] transition-colors"
-                >
-                  Back
-                </button>
-                <button
-                  onClick={() => setWizardStep(3)}
-                  disabled={!step2Valid}
-                  className="flex-[2] py-3 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-xl font-medium transition-colors"
-                >
-                  Continue
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* ===== STEP 3: Initial Liquidity ===== */}
-          {wizardStep === 3 && (
-            <div className="space-y-4">
-              <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)] space-y-3">
-                <div className="text-xs text-[var(--app-muted)] font-medium">Initial Liquidity (optional)</div>
-                <div>
-                  <label className="text-[10px] text-[var(--app-muted-2)]">{metaA?.symbol ?? 'Token A'}</label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={initAmountA}
-                    onChange={e => setInitAmountA(sanitizeNumericInput(e.target.value))}
-                    placeholder="0.0"
-                    className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-2 text-sm font-mono outline-none mt-1"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] text-[var(--app-muted-2)]">{metaB?.symbol ?? 'Token B'}</label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={initAmountB}
-                    onChange={e => setInitAmountB(sanitizeNumericInput(e.target.value))}
-                    placeholder="0.0"
-                    className="w-full bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-lg px-3 py-2 text-sm font-mono outline-none mt-1"
-                  />
-                </div>
-              </div>
-
-               {/* Price simulation */}
-               {sim && (
-                 <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)] space-y-2 text-xs">
-                   <div className="text-[10px] text-[var(--app-muted)] font-medium">Pool Preview</div>
-                   <div className="flex justify-between">
-                     <span className="text-[var(--app-muted)]">Price</span>
-                     <span className="font-mono">1 {metaA?.symbol} = {sim.priceAinB.toLocaleString(undefined, { maximumFractionDigits: 6 })} {metaB?.symbol}</span>
-                   </div>
-                   <div className="flex justify-between">
-                     <span className="text-[var(--app-muted)]">LP minted</span>
-                     <span className="font-mono">{formatUnits(sim.lpNet.toString(), 6)}</span>
-                   </div>
-                   <div className="flex justify-between">
-                     <span className="text-[var(--app-muted)]">Your share</span>
-                     <span className="font-mono">{sim.sharePct.toFixed(0)}%</span>
-                   </div>
-                 </div>
-               )}
-
-               {!initAmountA && !initAmountB && (
-                 <div className="text-sm text-[var(--app-muted)] bg-[var(--app-panel-soft)] rounded-lg px-3 py-2 text-center">
-                   Skip liquidity to create an empty pool
-                 </div>
-               )}
-
-               {/* Review summary */}
-               <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 border border-[var(--app-border)] space-y-2 text-sm">
-                 <div className="text-[10px] text-[var(--app-muted)] font-medium mb-2">Review</div>
-                 <div className="flex justify-between">
-                   <span className="text-[var(--app-muted)]">Pair</span>
-                   <span className="font-mono font-medium">{metaA?.symbol ?? '?'} / {metaB?.symbol ?? '?'}</span>
-                 </div>
-                 <div className="flex justify-between">
-                   <span className="text-[var(--app-muted)]">Fee Tier</span>
-                   <span className="font-mono font-medium">{feeTier === 'custom' ? `${customNum}/${customDenom}` : `${feeTier}%`}</span>
-                 </div>
-                 <div className="flex justify-between">
-                   <span className="text-[var(--app-muted)]">Type</span>
-                   <span className="font-mono font-medium">{poolType === 'reward' ? 'Reward Pool' : 'Standard AMM'}</span>
-                 </div>
-                 {hasInitLiquidity && (
-                   <div className="flex justify-between">
-                     <span className="text-[var(--app-muted)]">Liquidity</span>
-                     <span className="font-mono font-medium">{initAmountA} {metaA?.symbol} + {initAmountB} {metaB?.symbol}</span>
-                   </div>
-                 )}
-                 {poolType === 'reward' && rewardMeta && rewardAmount && (
-                   <div className="flex justify-between">
-                     <span className="text-[var(--app-muted)]">Reward</span>
-                     <span className="font-mono font-medium text-green-400">{rewardAmount} {rewardMeta.symbol}</span>
-                   </div>
-                 )}
-               </div>
-
-               <div className="flex gap-3">
-                 <button
-                   onClick={() => setWizardStep(2)}
-                   className="flex-1 py-3 bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-xl font-medium text-sm hover:bg-[var(--app-hover)] transition-colors"
-                 >
-                   Back
-                 </button>
-                 <button
-                   onClick={handleCreatePool}
-                   disabled={creating}
-                   className="flex-[2] py-3 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:bg-[var(--app-panel)] disabled:text-[var(--app-muted-2)] rounded-xl font-medium transition-colors"
-                 >
-                   {creating ? 'Creating...' : initAmountA && initAmountB ? 'Create Pool + Add Liquidity' : 'Create Pool'}
-                 </button>
-               </div>
-             </div>
-           )}
-         </>
-       ) : stepType === 'done' ? (
-         <div className="bg-[var(--app-panel-soft)] rounded-xl p-6 border border-[var(--app-border)] space-y-4">
-           <div className="flex items-center gap-3">
-             <div className="w-12 h-12 rounded-full bg-[var(--app-success)] flex items-center justify-center animate-bounce">
-               <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-               </svg>
-             </div>
-             <div>
-               <div className="text-base font-semibold text-[var(--app-success)]">Pool Created</div>
-               <div className="text-xs text-[var(--app-muted)]">Your pool is now live</div>
-             </div>
-           </div>
-           <div className="text-sm text-[var(--app-muted)] break-all font-mono bg-[var(--app-panel)] rounded-lg px-3 py-2">
-             Pool: {'poolAddress' in stepSnapshot ? stepSnapshot.poolAddress : ''}
-           </div>
-           {'rewardInfo' in stepSnapshot && stepSnapshot.rewardInfo && (
-             <div className="text-sm bg-green-500/10 border border-green-500/20 rounded-lg px-4 py-3 space-y-1.5">
-               <div className="text-green-400 font-semibold">Reward Pool Created</div>
-               <div className="text-[var(--app-muted)]">
-                 Reward: {stepSnapshot.rewardInfo.rewardAmount} {stepSnapshot.rewardInfo.rewardToken}
-               </div>
-               <div className="text-[var(--app-muted)]">
-                 Duration: {stepSnapshot.rewardInfo.duration} epochs (~{Math.round(stepSnapshot.rewardInfo.duration / 14400)} days)
-               </div>
-               <div className="text-green-400/80 text-xs">
-                 LP tokens locked 7d | Reward immutable | Linear distribution
-               </div>
-             </div>
-           )}
-           <button
-             onClick={() => navigate(`/liquidity?pool=${'poolAddress' in stepSnapshot ? stepSnapshot.poolAddress : ''}`)}
-             className="w-full py-2.5 bg-green-600 hover:bg-green-700 rounded-xl text-sm font-medium transition-colors"
-           >
-             Add / Manage Liquidity
-           </button>
-           <button
-             onClick={reset}
-             className="w-full py-2.5 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] rounded-xl text-sm font-medium hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] transition-colors"
-           >
-             Create Another Pool
-           </button>
-        </div>
-      ) : null}
-    </div>
-    </>
-  );
+type RemoveLiquidityStep =
+  | { type: 'idle' }
+  | { type: 'removing' }
+  | { type: 'done'; txHash: string }
+  | { type: 'error'; message: string };
+
+type Tab = 'browse' | 'my-pools' | 'liquidity';
+
+interface DynamicPool {
+  address: string;
+  tokenA: { address: string; symbol: string; name: string; decimals: number };
+  tokenB: { address: string; symbol: string; name: string; decimals: number };
+  label: string;
 }
 
-function PoolPage() {
+function BrowsePools({ onPoolSelect }: { onPoolSelect: (address: string) => void }) {
   const { rpc, isConnected, connect, walletAddress } = useApp();
-  const navigate = useNavigate();
   const { getTokenUsd, octPrice } = usePriceService(rpc);
   const [pools, setPools] = useState<PoolDisplay[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [poolPrices, setPoolPrices] = useState<Record<string, { priceA: number; priceB: number; tvlUsd: number }>>({});
-
   const mountedRef = useRef(true);
 
   const loadPools = useCallback(async () => {
     setLoading(true);
     try {
       const poolAddrs = await rpc.getAllPools(CONTRACTS.factory);
-      // Include config pool if not already in factory list
       if (CONTRACTS.pool && !poolAddrs.includes(CONTRACTS.pool)) {
         poolAddrs.push(CONTRACTS.pool);
       }
 
-      // [V9] Fetch reward pools list
       let rewardPoolAddrs: string[] = [];
       try {
         rewardPoolAddrs = await rpc.getRewardPools(CONTRACTS.factory);
@@ -1164,7 +92,6 @@ function PoolPage() {
         try {
           const info = await rpc.getPoolInfo(addr);
           if (!info.tokenA || !info.tokenB) continue;
-          // [V7-PASS10] LOW-35: parallelize meta + fee fetch
           const [metaA, metaB, feeParams] = await Promise.all([
             rpc.getTokenMeta(info.tokenA),
             rpc.getTokenMeta(info.tokenB),
@@ -1174,8 +101,6 @@ function PoolPage() {
           if (!metaB.symbol || metaB.symbol === '???') continue;
           let rewardsPerEpoch = 0;
           try {
-            // [V7-FIX] Validate oesAddr is actually an OES contract (has get_rewards_info).
-            // Don't fallback to tokenB which could be WOCT or any other token.
             const oesAddr = CONTRACTS.oes;
             if (oesAddr) {
               const rewardsInfo = await rpc.getOesRewardsInfo(oesAddr);
@@ -1187,7 +112,6 @@ function PoolPage() {
             totalLockedLp = await rpc.getTotalLockedLp(addr);
           } catch { /* noop */ }
 
-          // [V9] Check if this is a reward pool and fetch reward info
           const isRewardPool = rewardPoolAddrs.includes(addr);
           let rewardTokenSymbol = '';
           let rewardPerEpoch = 0;
@@ -1258,7 +182,6 @@ function PoolPage() {
     return () => { cancelled = true; };
   }, [pools, getTokenUsd]);
 
-  // [V7-SECURITY-FIX] Use BigInt to avoid precision loss on large LP values
   const totalLPAll = pools.reduce((sum, p) => {
     try { return sum + BigInt(p.totalLP); } catch { return sum; }
   }, 0n);
@@ -1266,8 +189,14 @@ function PoolPage() {
   return (
     <div className="page-surface mx-auto w-full max-w-5xl pt-1 sm:pt-3 space-y-5">
       <div className="page-heading">
-        <div><div className="page-kicker">EverestSwap markets</div><h1 className="page-title">Pools</h1><p className="page-subtitle">Explore available liquidity and route your next trade.</p></div>
-        <button onClick={() => setShowCreate(!showCreate)} className="page-action">{showCreate ? 'Close builder' : 'Create pool'}</button>
+        <div>
+          <div className="page-kicker">EverestSwap markets</div>
+          <h1 className="page-title">Pools</h1>
+          <p className="page-subtitle">Explore available liquidity and route your next trade.</p>
+        </div>
+        <button onClick={() => setShowCreate(!showCreate)} className="page-action">
+          {showCreate ? 'Close builder' : 'Create pool'}
+        </button>
       </div>
 
       {showCreate && (
@@ -1281,7 +210,15 @@ function PoolPage() {
       )}
 
       <div className="page-panel overflow-hidden">
-        <div className="page-panel-header"><div><h2 className="page-panel-title">Active pools</h2><p className="page-panel-copy">Live reserves, fee tiers, and locked liquidity.</p></div><span className="swap-live-label"><span className="status-dot" />{pools.length} tracked</span></div>
+        <div className="page-panel-header">
+          <div>
+            <h2 className="page-panel-title">Active pools</h2>
+            <p className="page-panel-copy">Live reserves, fee tiers, and locked liquidity.</p>
+          </div>
+          <span className="swap-live-label">
+            <span className="status-dot" />{pools.length} tracked
+          </span>
+        </div>
         <div className="p-4 sm:p-6">
           {loading ? (
             <div className="space-y-3">
@@ -1296,7 +233,7 @@ function PoolPage() {
               {pools.map(p => (
                 <button
                   key={p.address}
-                  onClick={() => navigate(`/liquidity?pool=${p.address}`)}
+                  onClick={() => onPoolSelect(p.address)}
                   className="w-full p-4 text-left hover:bg-[var(--app-hover)] transition-colors"
                 >
                   <div className="flex items-center justify-between">
@@ -1308,7 +245,6 @@ function PoolPage() {
                       <div>
                         <div className="flex items-center gap-2">
                           <span className="font-medium">{p.symbolA}/{p.symbolB}</span>
-                          {/* [V9] Reward pool badge */}
                           {p.isRewardPool && (
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-medium bg-green-500/20 text-green-400 border border-green-500/30">
                               REWARD
@@ -1343,7 +279,6 @@ function PoolPage() {
                       <div className="text-xs text-[var(--app-muted)]">OES Rewards</div>
                       <div className="font-mono mt-0.5">{p.rewardsPerEpoch > 0 ? `${formatUnits(String(p.rewardsPerEpoch), 6)}/ep` : '--'}</div>
                     </div>
-                    {/* [V9] Reward pool info */}
                     {p.isRewardPool && p.rewardTokenSymbol && (
                       <div className="col-span-2 sm:col-span-4 pt-2 border-t border-[var(--app-border)]">
                         <div className="flex items-center gap-2 text-xs">
@@ -1379,26 +314,1196 @@ function PoolPage() {
       </div>
 
       <div className="page-panel p-4 sm:p-5">
-      <h3 className="text-sm font-semibold mb-3">Pool Analytics</h3>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-        <div>
-          <div className="text-xs text-[var(--app-muted)]">Total Pools</div>
-          <div className="font-medium mt-0.5">{pools.length}</div>
-        </div>
-        <div>
-          <div className="text-xs text-[var(--app-muted)]">Total Liquidity</div>
-          <div className="font-medium mt-0.5">{formatUnits(totalLPAll.toString(), 12)} LP</div>
-        </div>
-        <div>
-          <div className="text-xs text-[var(--app-muted)]">OCT Price</div>
-          <div className="font-medium mt-0.5 font-mono">{octPrice > 0 ? `$${octPrice.toFixed(4)}` : '...'}</div>
-        </div>
-        <div>
-          <div className="text-xs text-[var(--app-muted)]">Total Pools TVL</div>
-          <div className="font-medium mt-0.5">{Object.values(poolPrices).reduce((s, v) => s + v.tvlUsd, 0) > 0 ? `~$${Object.values(poolPrices).reduce((s, v) => s + v.tvlUsd, 0).toFixed(2)}` : '...'}</div>
+        <h3 className="text-sm font-semibold mb-3">Pool Analytics</h3>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+          <div>
+            <div className="text-xs text-[var(--app-muted)]">Total Pools</div>
+            <div className="font-medium mt-0.5">{pools.length}</div>
+          </div>
+          <div>
+            <div className="text-xs text-[var(--app-muted)]">Total Liquidity</div>
+            <div className="font-medium mt-0.5">{formatUnits(totalLPAll.toString(), 12)} LP</div>
+          </div>
+          <div>
+            <div className="text-xs text-[var(--app-muted)]">OCT Price</div>
+            <div className="font-medium mt-0.5 font-mono">{octPrice > 0 ? `$${octPrice.toFixed(4)}` : '...'}</div>
+          </div>
+          <div>
+            <div className="text-xs text-[var(--app-muted)]">Total Pools TVL</div>
+            <div className="font-medium mt-0.5">
+              {Object.values(poolPrices).reduce((s, v) => s + v.tvlUsd, 0) > 0
+                ? `~$${Object.values(poolPrices).reduce((s, v) => s + v.tvlUsd, 0).toFixed(2)}`
+                : '...'}
+            </div>
+          </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function MyPoolsList({ onPoolSelect }: { onPoolSelect: (address: string) => void }) {
+  const { myPools, loading, loadMyPools } = useMyPools();
+  const { addToast, isConnected } = useApp();
+  const [removeStep, setRemoveStep] = useState<RemoveStep>({ type: 'idle' });
+  const [selectedPool, setSelectedPool] = useState<MyPool | null>(null);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const { removePool } = usePoolRemoval(addToast, () => {
+    loadMyPools();
+  });
+
+  const handleRemove = async (confirmTextParam: string) => {
+    if (!selectedPool) return { type: 'error' as const, message: 'No pool selected' };
+    const result = await removePool(selectedPool.address, confirmTextParam);
+    setRemoveStep(result);
+    if (result.type === 'done') {
+      setShowConfirm(false);
+      setSelectedPool(null);
+    }
+    return result;
+  };
+
+  if (!isConnected) {
+    return (
+      <div className="page-surface mx-auto w-full max-w-5xl pt-1 sm:pt-3">
+        <div className="page-heading">
+          <div>
+            <div className="page-kicker">My Pools</div>
+            <h1 className="page-title">Pools You Own</h1>
+            <p className="page-subtitle">Connect your wallet to view pools you've created.</p>
+          </div>
+        </div>
+        <div className="page-panel p-8 text-center">
+          <div className="text-5xl mb-4">🔒</div>
+          <h2 className="text-xl font-bold text-[var(--app-text)] mb-2">Wallet Not Connected</h2>
+          <p className="text-sm text-[var(--app-muted)] mb-4">Connect your wallet to see your pools.</p>
+        </div>
       </div>
+    );
+  }
+
+  return (
+    <div className="page-surface mx-auto w-full max-w-5xl pt-1 sm:pt-3 space-y-5">
+      <div className="page-heading">
+        <div>
+          <div className="page-kicker">My Pools</div>
+          <h1 className="page-title">Pools You Own</h1>
+          <p className="page-subtitle">Manage and remove pools you've created.</p>
+        </div>
+        <button onClick={loadMyPools} className="page-action">Refresh</button>
+      </div>
+
+      {myPools.length > 0 && (
+        <div className="page-panel p-4 text-sm text-[var(--app-muted)]">
+          <span className="font-medium text-[var(--app-warning)]">ℹ</span> Pools with zero reserves and zero LP tokens can be safely removed from the factory.
+        </div>
+      )}
+
+      <div className="space-y-4">
+        {loading ? (
+          <div className="space-y-3">
+            {[1, 2, 3].map(i => (
+              <div key={i} className="h-32 bg-[var(--app-panel-soft)] rounded-xl animate-pulse" />
+            ))}
+          </div>
+        ) : myPools.length === 0 ? (
+          <div className="page-panel p-8 text-center">
+            <div className="text-5xl mb-4">🏊</div>
+            <h2 className="text-xl font-bold text-[var(--app-text)] mb-2">No Pools Found</h2>
+            <p className="text-sm text-[var(--app-muted)]">You don't own any pools yet.</p>
+          </div>
+        ) : (
+          myPools.map(pool => (
+            <div key={pool.address} className="page-panel p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="flex -space-x-2">
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-sm font-bold text-white border-2 border-[var(--app-bg)]">
+                      {pool.symbolA.slice(0, 1)}
+                    </div>
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center text-sm font-bold text-white border-2 border-[var(--app-bg)]">
+                      {pool.symbolB.slice(0, 1)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="font-bold text-[var(--app-text)]">{pool.symbolA} / {pool.symbolB}</div>
+                    <div className="text-xs text-[var(--app-muted)] font-mono">{formatAddress(pool.address)}</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className={`px-3 py-1 rounded-full text-xs font-bold ${pool.active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                    {pool.active ? 'Active' : 'Paused'}
+                  </span>
+                  <span className="text-xs text-[var(--app-muted)] bg-[var(--app-panel-soft)] px-3 py-1 rounded-lg">
+                    Fee: {((pool.feeNum / pool.feeDenom) * 100).toFixed(2)}%
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                <ReserveIndicator value={pool.reserveA} label="Reserve A" />
+                <ReserveIndicator value={pool.reserveB} label="Reserve B" />
+                <ReserveIndicator value={pool.totalLp} label="Total LP" />
+              </div>
+
+              <div className="flex items-center justify-between pt-2">
+                <button
+                  onClick={() => onPoolSelect(pool.address)}
+                  className="text-sm text-[var(--app-blue)] hover:text-[var(--app-blue-hover)] font-medium"
+                >
+                  View Details →
+                </button>
+                <button
+                  disabled={!isPoolRemovable(pool)}
+                  onClick={() => { setSelectedPool(pool); setShowConfirm(true); setRemoveStep({ type: 'idle' }); }}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${isPoolRemovable(pool)
+                    ? 'bg-red-600/90 hover:bg-red-600 text-white cursor-pointer shadow-lg shadow-red-900/30'
+                    : 'bg-[var(--app-panel-soft)] text-[var(--app-muted)] cursor-not-allowed opacity-50'
+                  }`}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                  Remove Pool
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {showConfirm && selectedPool && (
+        <RemovePoolModal
+          pool={selectedPool}
+          isOpen={showConfirm}
+          onClose={() => { setShowConfirm(false); setSelectedPool(null); }}
+          onConfirm={handleRemove}
+          removeStep={removeStep}
+        />
+      )}
+    </div>
+  );
+}
+
+function LiquidityTab() {
+  const { rpc, isConnected, walletAddress, addToast, refreshBalance } = useApp();
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState<'add' | 'remove'>('add');
+  const [pools, setPools] = useState<DynamicPool[]>([]);
+  const [selectedPoolIdx, setSelectedPoolIdx] = useState(0);
+  const [showPoolSelect, setShowPoolSelect] = useState(false);
+  const [poolQuery, setPoolQuery] = useState('');
+  const [poolLoading, setPoolLoading] = useState(true);
+  const [amountA, setAmountA] = useState('');
+  const [amountB, setAmountB] = useState('');
+  const [reserveA, setReserveA] = useState('0');
+  const [reserveB, setReserveB] = useState('0');
+  const [totalLP, setTotalLP] = useState('0');
+  const [lpBalance, setLpBalance] = useState('0');
+  const [positions, setPositions] = useState<ExtendedLpPosition[]>([]);
+  const [selectedPositionId, setSelectedPositionId] = useState<number | null>(null);
+  const [tokenABalance, setTokenABalance] = useState('0');
+  const [tokenBBalance, setTokenBBalance] = useState('0');
+  const [lockOption, setLockOption] = useState<'unlocked' | '30d' | '6m' | '1y' | 'custom'>('unlocked');
+  const [customLockDays, setCustomLockDays] = useState<string>('');
+  const [userEditedB, setUserEditedB] = useState(false);
+  const [addStep, setAddStep] = useState<AddLiquidityStep>({ type: 'idle' });
+  const [removeStep, setRemoveStep] = useState<RemoveLiquidityStep>({ type: 'idle' });
+  const [isRewardPool, setIsRewardPool] = useState(false);
+  const [rewardTokenSymbol, setRewardTokenSymbol] = useState('');
+  const [rewardTokenDecimals, setRewardTokenDecimals] = useState(6);
+  const [claimableReward, setClaimableReward] = useState('0');
+  const [claimingReward, setClaimingReward] = useState(false);
+
+  const pool = pools[selectedPoolIdx];
+  const mountedRef = useRef(true);
+  const poolSearchRef = useRef<HTMLInputElement>(null);
+  const addSubmittingRef = useRef(false);
+  const removeSubmittingRef = useRef(false);
+
+  useEffect(() => {
+    if (showPoolSelect) {
+      setTimeout(() => poolSearchRef.current?.focus(), 100);
+    } else {
+      setPoolQuery('');
+    }
+  }, [showPoolSelect]);
+
+  useEffect(() => {
+    if (!isConnected || !walletAddress) return;
+    let cancelled = false;
+    (async () => {
+      setPoolLoading(true);
+      try {
+        const poolAddrs = await rpc.getAllPools(CONTRACTS.factory);
+        if (CONTRACTS.pool && !poolAddrs.includes(CONTRACTS.pool)) poolAddrs.push(CONTRACTS.pool);
+        const dynamicPools: DynamicPool[] = [];
+        for (const addr of poolAddrs) {
+          try {
+            const info = await rpc.getPoolInfo(addr);
+            if (!info.tokenA || !info.tokenB) continue;
+            const [metaA, metaB] = await Promise.all([
+              rpc.getTokenMeta(info.tokenA),
+              rpc.getTokenMeta(info.tokenB),
+            ]);
+            if (!metaA.symbol || metaA.symbol === '???') continue;
+            if (!metaB.symbol || metaB.symbol === '???') continue;
+            dynamicPools.push({
+              address: addr,
+              tokenA: { address: info.tokenA, symbol: metaA.symbol, name: metaA.name, decimals: metaA.decimals },
+              tokenB: { address: info.tokenB, symbol: metaB.symbol, name: metaB.name, decimals: metaB.decimals },
+              label: `${metaA.symbol}/${metaB.symbol}`,
+            });
+          } catch { /* skip */ }
+        }
+        if (!cancelled && mountedRef.current) setPools(dynamicPools);
+      } catch {
+        if (!cancelled && mountedRef.current) setPools([]);
+      } finally {
+        if (!cancelled && mountedRef.current) setPoolLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [rpc, isConnected, walletAddress]);
+
+  useEffect(() => {
+    const poolAddr = searchParams.get('pool');
+    if (poolAddr && pools.length > 0) {
+      const idx = pools.findIndex(p => p.address === poolAddr);
+      if (idx >= 0) setSelectedPoolIdx(idx);
+    }
+  }, [searchParams, pools]);
+
+  useEffect(() => {
+    if (!pool || !isConnected || !walletAddress) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [reserves, totalLpVal, lpBal, positionsData, balanceA, balanceB] = await Promise.all([
+          rpc.getReserves(pool.address),
+          rpc.getTotalLpSupply(pool.address),
+          rpc.getLpBalance(pool.address, walletAddress),
+          rpc.getPositions(pool.address, walletAddress),
+          rpc.getTokenBalance(pool.tokenA.address, walletAddress),
+          rpc.getTokenBalance(pool.tokenB.address, walletAddress),
+        ]);
+        if (!cancelled && mountedRef.current) {
+          setReserveA(reserves.reserveA);
+          setReserveB(reserves.reserveB);
+          setTotalLP(totalLpVal);
+          setLpBalance(lpBal);
+          setPositions(positionsData);
+          setTokenABalance(balanceA);
+          setTokenBBalance(balanceB);
+        }
+
+        try {
+          const oesAddr = CONTRACTS.oes;
+          if (oesAddr) {
+            await rpc.getOesRewardsInfo(oesAddr);
+          }
+        } catch { /* noop */ }
+
+        try {
+          await rpc.getTotalLockedLp(pool.address);
+        } catch { /* noop */ }
+
+        try {
+          const rewardInfo = await rpc.getRewardInfo(pool.address);
+          if (!cancelled && mountedRef.current) {
+            setIsRewardPool(true);
+            const rewardMeta = await rpc.getTokenMeta(rewardInfo.rewardToken);
+            setRewardTokenSymbol(rewardMeta.symbol || '???');
+            setRewardTokenDecimals(rewardMeta.decimals || 6);
+          }
+            try {
+              const claimable = await rpc.getClaimable(pool.address, 0);
+              if (!cancelled && mountedRef.current) setClaimableReward(claimable);
+            } catch { /* noop */ }
+        } catch {
+          if (!cancelled && mountedRef.current) setIsRewardPool(false);
+        }
+      } catch (err) {
+        console.error('Failed to load pool data:', err);
+      }
+    })();
+
+    const interval = setInterval(() => {
+      if (!pool || !isConnected || !walletAddress) return;
+      (async () => {
+        try {
+          const [reserves, totalLpVal, lpBal, positionsData] = await Promise.all([
+            rpc.getReserves(pool.address),
+            rpc.getTotalLpSupply(pool.address),
+            rpc.getLpBalance(pool.address, walletAddress),
+            rpc.getPositions(pool.address, walletAddress),
+          ]);
+          if (mountedRef.current) {
+            setReserveA(reserves.reserveA);
+            setReserveB(reserves.reserveB);
+            setTotalLP(totalLpVal);
+            setLpBalance(lpBal);
+            setPositions(positionsData);
+          }
+        } catch { /* noop */ }
+      })();
+    }, 10000);
+
+    return () => clearInterval(interval);
+  }, [pool, isConnected, walletAddress, rpc]);
+
+  const poolShare = useMemo(() => {
+    try {
+      if (BigInt(totalLP) === 0n) return '0';
+      const share = (BigInt(lpBalance) * 10000n) / BigInt(totalLP);
+      return (Number(share) / 100).toFixed(2);
+    } catch { return '0'; }
+  }, [lpBalance, totalLP]);
+
+  const selectedPosition = useMemo(() => {
+    if (!selectedPositionId) return null;
+    return positions.find(p => p.id === selectedPositionId) || null;
+  }, [positions, selectedPositionId]);
+
+  const handleAddLiquidity = async () => {
+    if (!pool || !isConnected || !walletAddress) return;
+    if (addSubmittingRef.current) return;
+    addSubmittingRef.current = true;
+    setAddStep({ type: 'granting_a' });
+
+    const safeSetStep = (s: AddLiquidityStep) => {
+      if (mountedRef.current) setAddStep(s);
+    };
+
+    try {
+      const amountAInt = BigInt(parseUnits(amountA, pool.tokenA.decimals));
+      const amountBInt = BigInt(parseUnits(amountB, pool.tokenB.decimals));
+
+      if (amountAInt <= 0n || amountBInt <= 0n) {
+        safeSetStep({ type: 'error', message: 'Amounts must be greater than 0' });
+        addSubmittingRef.current = false;
+        return;
+      }
+
+      if (amountAInt > BigInt(tokenABalance)) {
+        safeSetStep({ type: 'error', message: `Insufficient ${pool.tokenA.symbol} balance` });
+        addSubmittingRef.current = false;
+        return;
+      }
+      if (amountBInt > BigInt(tokenBBalance)) {
+        safeSetStep({ type: 'error', message: `Insufficient ${pool.tokenB.symbol} balance` });
+        addSubmittingRef.current = false;
+        return;
+      }
+
+      const epochInfo = await rpc.call<{ epoch_id: number }>('epoch_current');
+      const deadline = epochInfo.epoch_id + 300;
+
+      let lockBlocks = 0;
+      if (lockOption === '30d') lockBlocks = 30 * 1440;
+      else if (lockOption === '6m') lockBlocks = 180 * 1440;
+      else if (lockOption === '1y') lockBlocks = 365 * 1440;
+      else if (lockOption === 'custom') {
+        const days = parseInt(customLockDays, 10);
+        if (isNaN(days) || days <= 0) {
+          safeSetStep({ type: 'error', message: 'Invalid custom lock duration' });
+          addSubmittingRef.current = false;
+          return;
+        }
+        lockBlocks = days * 1440;
+      }
+
+      safeSetStep({ type: 'granting_a' });
+      const grantAHash = await walletService.callContract({
+        contract: pool.tokenA.address,
+        method: 'grant',
+        params: [pool.address, Number(amountAInt)],
+        rpc,
+      });
+      await rpc.waitForReceipt(grantAHash);
+
+      safeSetStep({ type: 'granting_b' });
+      const grantBHash = await walletService.callContract({
+        contract: pool.tokenB.address,
+        method: 'grant',
+        params: [pool.address, Number(amountBInt)],
+        rpc,
+      });
+      await rpc.waitForReceipt(grantBHash);
+
+      safeSetStep({ type: 'adding_liquidity' });
+      const addLiqHash = await walletService.callContract({
+        contract: pool.address,
+        method: 'add_liquidity',
+        params: [amountAInt.toString(), amountBInt.toString(), lockBlocks, deadline, 0],
+        rpc,
+      });
+      await rpc.waitForReceipt(addLiqHash);
+      safeSetStep({ type: 'done', txHash: addLiqHash });
+      addToast('success', 'Liquidity added successfully');
+      recordTx({ hash: addLiqHash, type: 'add_liquidity', summary: 'Add liquidity to ' + pool.address, timestamp: Date.now(), status: 'success' });
+      refreshBalance();
+      setAmountA('');
+      setAmountB('');
+      setUserEditedB(false);
+      setTimeout(() => {
+        if (mountedRef.current) safeSetStep({ type: 'idle' });
+      }, 3000);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Add liquidity failed';
+      safeSetStep({ type: 'error', message: msg });
+      addToast('error', `Add liquidity failed: ${msg}`);
+    } finally {
+      addSubmittingRef.current = false;
+    }
+  };
+
+  const handleRemoveLiquidity = async () => {
+    if (!pool || !isConnected || !walletAddress || !selectedPosition) return;
+    if (removeSubmittingRef.current) return;
+    removeSubmittingRef.current = true;
+    setRemoveStep({ type: 'removing' });
+
+    try {
+      const epochInfo = await rpc.call<{ epoch_id: number }>('epoch_current');
+      const deadline = epochInfo.epoch_id + 300;
+
+      const removeHash = await walletService.callContract({
+        contract: pool.address,
+        method: 'remove_liquidity',
+        params: [selectedPosition.id, 0, 0, deadline],
+        rpc,
+      });
+      await rpc.waitForReceipt(removeHash);
+      setRemoveStep({ type: 'done', txHash: removeHash });
+      addToast('success', 'Liquidity removed successfully');
+      recordTx({ hash: removeHash, type: 'remove_liquidity', summary: 'Remove liquidity from ' + pool.address, timestamp: Date.now(), status: 'success' });
+      refreshBalance();
+      setSelectedPositionId(null);
+      setTimeout(() => {
+        if (mountedRef.current) setRemoveStep({ type: 'idle' });
+      }, 3000);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Remove failed';
+      setRemoveStep({ type: 'error', message: msg });
+      addToast('error', `Remove failed: ${msg}`);
+    } finally {
+      removeSubmittingRef.current = false;
+    }
+  };
+
+  const handleClaimReward = async () => {
+    if (!pool || !isConnected || !walletAddress) return;
+    setClaimingReward(true);
+    try {
+      const hash = await walletService.callContract({
+        contract: pool.address,
+        method: 'claim_reward',
+        params: [],
+        rpc,
+      });
+      await rpc.waitForReceipt(hash);
+      addToast('success', 'Reward claimed successfully');
+      recordTx({ hash, type: 'claim', summary: 'Claim reward from ' + pool.address, timestamp: Date.now(), status: 'success' });
+      refreshBalance();
+      setClaimableReward('0');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Claim failed';
+      addToast('error', `Claim failed: ${msg}`);
+    } finally {
+      setClaimingReward(false);
+    }
+  };
+
+  const handleAmountAChange = (val: string) => {
+    setAmountA(val);
+    if (!userEditedB && val) {
+      try {
+        const amountAInt = BigInt(parseUnits(val, pool.tokenA.decimals));
+        if (BigInt(reserveA) > 0n && BigInt(reserveB) > 0n) {
+          const amountBInt = (amountAInt * BigInt(reserveB)) / BigInt(reserveA);
+          const amountBStr = formatUnits(amountBInt.toString(), pool.tokenB.decimals);
+          setAmountB(amountBStr);
+        }
+      } catch { /* noop */ }
+    }
+  };
+
+  const handleAmountBChange = (val: string) => {
+    setAmountB(val);
+    setUserEditedB(true);
+  };
+
+  if (!isConnected) {
+    return (
+      <div className="page-surface mx-auto w-full max-w-5xl pt-1 sm:pt-3">
+        <div className="page-heading">
+          <div>
+            <div className="page-kicker">Liquidity</div>
+            <h1 className="page-title">Add / Remove Liquidity</h1>
+            <p className="page-subtitle">Provide liquidity to earn trading fees.</p>
+          </div>
+        </div>
+        <div className="page-panel p-8 text-center">
+          <div className="text-5xl mb-4">🔒</div>
+          <h2 className="text-xl font-bold text-[var(--app-text)] mb-2">Wallet Not Connected</h2>
+          <p className="text-sm text-[var(--app-muted)] mb-4">Connect your wallet to manage liquidity.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (poolLoading) {
+    return (
+      <div className="page-surface mx-auto w-full max-w-5xl pt-1 sm:pt-3">
+        <div className="page-heading">
+          <div>
+            <div className="page-kicker">Liquidity</div>
+            <h1 className="page-title">Add / Remove Liquidity</h1>
+          </div>
+        </div>
+        <div className="space-y-3">
+          {[1, 2, 3].map(i => (
+            <div key={i} className="h-24 bg-[var(--app-panel-soft)] rounded-xl animate-pulse" />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (!pool) {
+    return (
+      <div className="page-surface mx-auto w-full max-w-5xl pt-1 sm:pt-3">
+        <div className="page-heading">
+          <div>
+            <div className="page-kicker">Liquidity</div>
+            <h1 className="page-title">Add / Remove Liquidity</h1>
+            <p className="page-subtitle">Provide liquidity to earn trading fees.</p>
+          </div>
+          <button onClick={() => setShowPoolSelect(true)} className="page-action">Select Pool</button>
+        </div>
+        <div className="page-panel p-8 text-center">
+          <div className="text-5xl mb-4">🏊</div>
+          <h2 className="text-xl font-bold text-[var(--app-text)] mb-2">No Pool Selected</h2>
+          <p className="text-sm text-[var(--app-muted)] mb-4">Select a pool to add or remove liquidity.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="page-surface mx-auto w-full max-w-5xl pt-1 sm:pt-3 space-y-5">
+      <div className="page-heading">
+        <div>
+          <div className="page-kicker">Liquidity</div>
+          <h1 className="page-title">Add / Remove Liquidity</h1>
+          <p className="page-subtitle">
+            {pool.label} — {tab === 'add' ? 'Add liquidity' : 'Remove liquidity'}
+          </p>
+        </div>
+        <button onClick={() => setShowPoolSelect(true)} className="page-action">Change Pool</button>
+      </div>
+
+      <div className="flex gap-2 mb-4">
+        <button
+          onClick={() => setTab('add')}
+          className={`flex-1 py-2.5 text-sm font-semibold rounded-xl transition-all ${tab === 'add' ? 'bg-[var(--app-blue)] text-white' : 'bg-[var(--app-panel-soft)] text-[var(--app-muted)] hover:bg-[var(--app-hover)]'}`}
+        >
+          Add Liquidity
+        </button>
+        <button
+          onClick={() => setTab('remove')}
+          className={`flex-1 py-2.5 text-sm font-semibold rounded-xl transition-all ${tab === 'remove' ? 'bg-[var(--app-blue)] text-white' : 'bg-[var(--app-panel-soft)] text-[var(--app-muted)] hover:bg-[var(--app-hover)]'}`}
+        >
+          Remove Liquidity
+        </button>
+      </div>
+
+      <div className="page-panel p-5">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="flex -space-x-2">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-xs font-bold text-white">
+                {pool.tokenA.symbol[0]}
+              </div>
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center text-xs font-bold text-white">
+                {pool.tokenB.symbol[0]}
+              </div>
+            </div>
+            <div>
+              <div className="font-bold text-[var(--app-text)]">{pool.tokenA.symbol} / {pool.tokenB.symbol}</div>
+              <div className="text-xs text-[var(--app-muted)] font-mono">{formatAddress(pool.address)}</div>
+            </div>
+          </div>
+          <div className="text-right text-sm">
+            <div className="font-mono">{formatUnits(totalLP, 12)} LP</div>
+            <div className="text-xs text-[var(--app-muted)]">Total LP</div>
+            <div className="text-xs text-[var(--app-muted)]">Your share: {poolShare}%</div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-4 mb-4">
+          <ReserveIndicator value={reserveA} label={`${pool.tokenA.symbol} Reserve`} />
+          <ReserveIndicator value={reserveB} label={`${pool.tokenB.symbol} Reserve`} />
+          <ReserveIndicator value={lpBalance} label="Your LP" />
+        </div>
+
+        {tab === 'add' && (
+          <div className="space-y-4">
+            <div>
+              <div className="flex justify-between text-xs text-[var(--app-muted)] mb-1">
+                <span>{pool.tokenA.symbol} Amount</span>
+                <span>Balance: {formatUnits(tokenABalance, pool.tokenA.decimals)}</span>
+              </div>
+              <input
+                type="number"
+                value={amountA}
+                onChange={e => handleAmountAChange(sanitizeNumericInput(e.target.value))}
+                placeholder="0.00"
+                className="w-full bg-[var(--app-input)] border border-[var(--app-border)] text-[var(--app-text)] rounded-xl px-4 py-3 text-lg outline-none focus:border-[var(--app-blue)] transition-colors"
+              />
+              <div className="flex gap-1 mt-2">
+                {['25', '50', '75', '100'].map(pct => (
+                  <button
+                    key={pct}
+                    onClick={() => {
+                      const pctNum = Number(pct);
+                      const bal = BigInt(tokenABalance);
+                      const amt = (bal * BigInt(pctNum)) / 100n;
+                      const amtStr = formatUnits(amt.toString(), pool.tokenA.decimals);
+                      handleAmountAChange(amtStr);
+                    }}
+                    className="flex-1 py-1.5 text-xs font-semibold bg-[var(--app-panel-soft)] rounded-lg hover:bg-[var(--app-hover)] transition-colors"
+                  >
+                    {pct}%
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div className="flex justify-between text-xs text-[var(--app-muted)] mb-1">
+                <span>{pool.tokenB.symbol} Amount</span>
+                <span>Balance: {formatUnits(tokenBBalance, pool.tokenB.decimals)}</span>
+              </div>
+              <input
+                type="number"
+                value={amountB}
+                onChange={e => handleAmountBChange(sanitizeNumericInput(e.target.value))}
+                placeholder="0.00"
+                className="w-full bg-[var(--app-input)] border border-[var(--app-border)] text-[var(--app-text)] rounded-xl px-4 py-3 text-lg outline-none focus:border-[var(--app-blue)] transition-colors"
+              />
+              <div className="flex gap-1 mt-2">
+                {['25', '50', '75', '100'].map(pct => (
+                  <button
+                    key={pct}
+                    onClick={() => {
+                      const pctNum = Number(pct);
+                      const bal = BigInt(tokenBBalance);
+                      const amt = (bal * BigInt(pctNum)) / 100n;
+                      const amtStr = formatUnits(amt.toString(), pool.tokenB.decimals);
+                      setAmountB(amtStr);
+                      setUserEditedB(true);
+                    }}
+                    className="flex-1 py-1.5 text-xs font-semibold bg-[var(--app-panel-soft)] rounded-lg hover:bg-[var(--app-hover)] transition-colors"
+                  >
+                    {pct}%
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs text-[var(--app-muted)] font-medium mb-2 block">Lock Duration</label>
+              <div className="flex flex-wrap gap-2">
+                {['unlocked', '30d', '6m', '1y', 'custom'].map(opt => (
+                  <button
+                    key={opt}
+                    onClick={() => { setLockOption(opt as any); setCustomLockDays(''); }}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${lockOption === opt ? 'bg-[var(--app-blue)] text-white' : 'bg-[var(--app-panel-soft)] text-[var(--app-muted)] hover:bg-[var(--app-hover)]'}`}
+                  >
+                    {opt === 'unlocked' ? 'Unlocked' : opt === '30d' ? '30 Days' : opt === '6m' ? '6 Months' : opt === '1y' ? '1 Year' : 'Custom'}
+                  </button>
+                ))}
+              </div>
+              {lockOption === 'custom' && (
+                <input
+                  type="number"
+                  value={customLockDays}
+                  onChange={e => setCustomLockDays(sanitizeNumericInput(e.target.value))}
+                  placeholder="Days"
+                  className="mt-2 w-full bg-[var(--app-input)] border border-[var(--app-border)] text-[var(--app-text)] rounded-xl px-3 py-2 text-sm outline-none focus:border-[var(--app-blue)]"
+                />
+              )}
+            </div>
+
+            <button
+              onClick={handleAddLiquidity}
+              disabled={!amountA || !amountB || addStep.type === 'granting_a' || addStep.type === 'granting_b' || addStep.type === 'adding_liquidity'}
+              className="w-full py-3 bg-[var(--app-blue)] hover:bg-[var(--app-blue-2)] text-white font-bold rounded-xl transition-all disabled:opacity-50"
+            >
+              {addStep.type === 'granting_a' ? 'Approving A...' : addStep.type === 'granting_b' ? 'Approving B...' : addStep.type === 'adding_liquidity' ? 'Adding...' : 'Add Liquidity'}
+            </button>
+
+            {addStep.type === 'error' && (
+              <div className="text-xs text-red-400 bg-red-900/20 border border-red-900/40 rounded-lg p-3">
+                {addStep.message}
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === 'remove' && (
+          <div className="space-y-4">
+            <div>
+              <label className="text-xs text-[var(--app-muted)] font-medium mb-2 block">Select Position</label>
+              {positions.length === 0 ? (
+                <div className="text-center py-6 text-sm text-[var(--app-muted)]">No positions found</div>
+              ) : (
+                <select
+                  value={selectedPositionId || ''}
+                  onChange={e => setSelectedPositionId(e.target.value ? Number(e.target.value) : null)}
+                  className="w-full bg-[var(--app-input)] border border-[var(--app-border)] text-[var(--app-text)] rounded-xl px-3 py-2 text-sm outline-none focus:border-[var(--app-blue)]"
+                >
+                  <option value="">Select a position</option>
+                  {positions.map(pos => (
+                    <option key={pos.id} value={pos.id}>
+                      ID: #{pos.id} — {formatUnits(pos.reserveA || '0', pool.tokenA.decimals)} {pool.tokenA.symbol} + {formatUnits(pos.reserveB || '0', pool.tokenB.decimals)} {pool.tokenB.symbol}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            {selectedPosition && (
+              <>
+                <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-[var(--app-muted)]">Token A</span>
+                    <span className="font-mono">{formatUnits(selectedPosition.reserveA || '0', pool.tokenA.decimals)} {pool.tokenA.symbol}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-[var(--app-muted)]">Token B</span>
+                    <span className="font-mono">{formatUnits(selectedPosition.reserveB || '0', pool.tokenB.decimals)} {pool.tokenB.symbol}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-[var(--app-muted)]">Status</span>
+                    <span className={selectedPosition.unlocked ? 'text-green-400' : 'text-yellow-400'}>
+                      {selectedPosition.unlocked ? 'Unlocked' : `Locked (${selectedPosition.lockTime} blocks)`}
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleRemoveLiquidity}
+                  disabled={removeStep.type === 'removing'}
+                  className="w-full py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-all disabled:opacity-50"
+                >
+                  {removeStep.type === 'removing' ? 'Removing...' : 'Remove Liquidity'}
+                </button>
+              </>
+            )}
+
+            {removeStep.type === 'error' && (
+              <div className="text-xs text-red-400 bg-red-900/20 border border-red-900/40 rounded-lg p-3">
+                {removeStep.message}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {isRewardPool && (
+        <div className="page-panel p-5">
+          <h3 className="text-sm font-semibold mb-3">Reward Pool</h3>
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-xs text-[var(--app-muted)]">Claimable {rewardTokenSymbol}</div>
+              <div className="font-mono text-lg font-bold">{formatUnits(claimableReward, rewardTokenDecimals)}</div>
+            </div>
+            <button
+              onClick={handleClaimReward}
+              disabled={claimingReward || Number(claimableReward) === 0}
+              className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-xl transition-all disabled:opacity-50"
+            >
+              {claimingReward ? 'Claiming...' : 'Claim'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showPoolSelect && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="bg-[var(--app-panel)] border border-[var(--app-border)] rounded-2xl w-full max-w-md shadow-2xl">
+            <div className="p-4 border-b border-[var(--app-border-soft)]">
+              <div className="flex items-center gap-2">
+                <input
+                  ref={poolSearchRef}
+                  type="text"
+                  value={poolQuery}
+                  onChange={e => setPoolQuery(e.target.value)}
+                  placeholder="Search pools..."
+                  className="flex-1 bg-[var(--app-input)] border border-[var(--app-border)] text-[var(--app-text)] rounded-xl px-3 py-2 text-sm outline-none focus:border-[var(--app-blue)]"
+                />
+                <button
+                  onClick={() => setShowPoolSelect(false)}
+                  className="px-3 py-2 text-sm text-[var(--app-muted)] hover:text-[var(--app-text)]"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            <div className="max-h-96 overflow-y-auto p-2">
+              {pools.filter(p => p.label.toLowerCase().includes(poolQuery.toLowerCase())).map(p => (
+                <button
+                  key={p.address}
+                  onClick={() => {
+                    const idx = pools.findIndex(pp => pp.address === p.address);
+                    setSelectedPoolIdx(idx);
+                    setShowPoolSelect(false);
+                    setPoolQuery('');
+                  }}
+                  className="w-full p-3 text-left hover:bg-[var(--app-hover)] rounded-xl transition-colors"
+                >
+                  <div className="font-medium">{p.label}</div>
+                  <div className="text-xs text-[var(--app-muted)] font-mono">{formatAddress(p.address)}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PoolDetails() {
+  const { address } = useParams<{ address: string }>();
+  const navigate = useNavigate();
+  const { pool, loading, loadPool, rpc, isConnected, walletAddress } = usePoolData(address);
+  const { addToast } = useApp();
+  const [positions, setPositions] = useState<ExtendedLpPosition[]>([]);
+  const [loadingPositions, setLoadingPositions] = useState(false);
+  const [removeStep, setRemoveStep] = useState<RemoveStep>({ type: 'idle' });
+  const [showConfirm, setShowConfirm] = useState(false);
+  const { removePool } = usePoolRemoval(addToast, () => {
+    navigate('/pool/my-pools');
+  });
+
+  const handleRemove = async (confirmTextParam: string) => {
+    if (!pool) return { type: 'error' as const, message: 'No pool selected' };
+    const result = await removePool(pool.address, confirmTextParam);
+    setRemoveStep(result);
+    if (result.type === 'done') {
+      setShowConfirm(false);
+    }
+    return result;
+  };
+
+  const handleRemovePosition = async (positionId: number) => {
+    try {
+      const hash = await walletService.callContract({
+        contract: CONTRACTS.router,
+        method: 'remove_liquidity',
+        params: [positionId],
+        rpc,
+      });
+      await rpc.waitForReceipt(hash);
+      addToast('success', `Position #${positionId} removed successfully`);
+      loadPool(address!);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Remove failed';
+      addToast('error', `Remove failed: ${msg}`);
+    }
+  };
+
+  useEffect(() => {
+    if (!address || !isConnected || !walletAddress) return;
+    let cancelled = false;
+    (async () => {
+      setLoadingPositions(true);
+      try {
+        const allPositions = await rpc.getPositions(address, walletAddress).catch(() => []);
+        const userPositions = allPositions.filter(
+          (pos: any) => pos.pool === address && pos.owner.toLowerCase() === walletAddress.toLowerCase()
+        );
+        if (!cancelled) setPositions(userPositions);
+      } catch (err) {
+        console.error('Failed to load positions:', err);
+      } finally {
+        if (!cancelled) setLoadingPositions(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [address, isConnected, walletAddress, rpc]);
+
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center min-h-[60vh]">
+        <svg className="w-8 h-8 animate-spin" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+        </svg>
+      </div>
+    );
+  }
+
+  if (!pool) {
+    return (
+      <div className="text-center py-12">
+        <div className="text-5xl">❌</div>
+        <h2 className="text-xl font-bold text-[var(--app-text)] mt-4">Pool Not Found</h2>
+        <p className="text-sm text-[var(--app-muted)] mt-2">The requested pool could not be found.</p>
+        <Link to="/pool/my-pools" className="inline-block mt-4 px-4 py-2 bg-[var(--app-blue)] hover:bg-[var(--app-blue-hover)] text-white font-semibold rounded-xl transition-all">
+          Back to My Pools
+        </Link>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto max-w-3xl w-full space-y-6 pb-16 pt-2 px-2">
+      <div className="flex items-center gap-4">
+        <Link to="/pool/my-pools" className="flex items-center gap-2 px-3 py-2 bg-[var(--app-panel)] hover:bg-[var(--app-panel-soft)] text-[var(--app-text)] font-semibold rounded-xl transition-all">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+          Back to My Pools
+        </Link>
+        <div className="flex-1">
+          <div className="flex items-center gap-2 text-xs font-mono text-indigo-400 uppercase tracking-wider mb-1">
+            <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
+            Pool Details
+          </div>
+          <h1 className="text-2xl font-extrabold text-white tracking-tight">
+            {pool.symbolA} / {pool.symbolB}
+          </h1>
+        </div>
+      </div>
+
+      <div className="bg-[var(--app-panel)] rounded-2xl border border-[var(--app-border)] p-6 space-y-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex -space-x-2">
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 border-2 border-[var(--app-panel)] flex items-center justify-center text-sm font-bold text-white">
+                {pool.symbolA.slice(0, 1)}
+              </div>
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-pink-600 border-2 border-[var(--app-panel)] flex items-center justify-center text-sm font-bold text-white">
+                {pool.symbolB.slice(0, 1)}
+              </div>
+            </div>
+            <div>
+              <div className="font-bold text-[var(--app-text)] text-lg">{pool.symbolA} / {pool.symbolB}</div>
+              <div className="text-xs text-[var(--app-muted)] font-mono">{formatAddress(pool.address)}</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className={`px-3 py-1 rounded-full text-xs font-bold ${pool.active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+              {pool.active ? 'Active' : 'Paused'}
+            </span>
+            <span className="text-xs text-[var(--app-muted)] bg-[var(--app-panel-soft)] px-3 py-1 rounded-lg">
+              Fee: {((pool.feeNum / pool.feeDenom) * 100).toFixed(2)}%
+            </span>
+            <span className="text-xs text-[var(--app-muted)] bg-[var(--app-panel-soft)] px-3 py-1 rounded-lg">
+              Owner: {formatAddress(pool.owner)}
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-4">
+          <ReserveIndicator value={pool.reserveA} label="Reserve A" />
+          <ReserveIndicator value={pool.reserveB} label="Reserve B" />
+          <ReserveIndicator value={pool.totalLp} label="Total LP" />
+        </div>
+
+        <div className="bg-[var(--app-panel-soft)] rounded-xl p-4 space-y-2">
+          <div className="text-xs text-[var(--app-muted)] uppercase tracking-wider mb-2">Token Contracts</div>
+          <div className="space-y-1 text-xs font-mono">
+            <div className="flex justify-between">
+              <span className="text-[var(--app-muted)]">Token A:</span>
+              <span className="text-[var(--app-text)] break-all">{pool.tokenA}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-[var(--app-muted)]">Token B:</span>
+              <span className="text-[var(--app-text)] break-all">{pool.tokenB}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="pt-4 border-t border-[var(--app-border-soft)]">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="font-bold text-[var(--app-text)]">Pool Removal</h3>
+              <p className="text-xs text-[var(--app-muted)] mt-1">
+                {!isPoolRemovable(pool) && 'Pool can only be removed after all liquidity positions have been withdrawn (zero reserves & zero LP). '}
+                {isPoolRemovable(pool) && 'Pool is empty and safe to remove.'}
+              </p>
+            </div>
+            <button
+              disabled={!isPoolRemovable(pool)}
+              onClick={() => { setShowConfirm(true); setRemoveStep({ type: 'idle' }); }}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${isPoolRemovable(pool)
+                ? 'bg-red-600/90 hover:bg-red-600 text-white cursor-pointer shadow-lg shadow-red-900/30'
+                : 'bg-[var(--app-panel-soft)] text-[var(--app-muted)] cursor-not-allowed opacity-50'
+              }`}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              Remove Pool
+            </button>
+          </div>
+
+          {removeStep.type === 'error' && (
+            <div className="text-xs text-red-400 bg-red-900/20 border border-red-900/40 rounded-lg p-3">
+              {removeStep.message}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="bg-[var(--app-panel)] rounded-2xl border border-[var(--app-border)] p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-bold text-[var(--app-text)]">Your Liquidity Positions</h3>
+            <p className="text-xs text-[var(--app-muted)] mt-1">
+              {positions.length === 0 && 'You have no liquidity positions in this pool.'}
+              {positions.length === 1 && 'You have 1 active liquidity position.'}
+              {positions.length > 1 && `You have ${positions.length} active liquidity positions.`}
+            </p>
+          </div>
+        </div>
+
+        {loadingPositions && (
+          <div className="flex justify-center py-8">
+            <svg className="w-6 h-6 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+            </svg>
+          </div>
+        )}
+
+        {!loadingPositions && positions.length === 0 && (
+          <div className="text-center py-8 text-[var(--app-muted)]">
+            <div className="text-3xl mb-2">💰</div>
+            <p className="text-sm">No liquidity positions found.</p>
+          </div>
+        )}
+
+        {positions.map((position) => (
+          <div key={position.id} className="bg-[var(--app-panel)] rounded-xl p-4 border border-[var(--app-border)] space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-xs font-bold text-white">
+                  💰
+                </div>
+                <div>
+                  <div className="font-bold text-[var(--app-text)]">LP Position</div>
+                  <div className="text-xs text-[var(--app-muted)] font-mono">ID: #{position.id}</div>
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-xs text-[var(--app-muted)]">Value</div>
+                <div className="font-mono text-sm font-bold text-[var(--app-text)]">
+                  {(Number(position.reserveA || '0') + Number(position.reserveB || '0')).toFixed(2)} tokens
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <ReserveIndicator value={position.reserveA || '0'} label="Token A" />
+              <ReserveIndicator value={position.reserveB || '0'} label="Token B" />
+            </div>
+
+            <div className="flex items-center justify-between pt-2">
+              <div className="text-xs text-[var(--app-muted)]">
+                {position.unlocked ? (
+                  <span className="text-green-400">Unlocked</span>
+                ) : (
+                  <span className="text-yellow-400">Locked (in {position.lockTime} blocks)</span>
+                )}
+              </div>
+              <button
+                onClick={() => handleRemovePosition(position.id)}
+                className="flex items-center gap-2 px-3 py-1.5 bg-red-600/90 hover:bg-red-600 text-white text-xs font-semibold rounded-lg transition-all"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                Remove
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {showConfirm && pool && (
+        <RemovePoolModal
+          pool={pool}
+          isOpen={showConfirm}
+          onClose={() => setShowConfirm(false)}
+          onConfirm={handleRemove}
+          removeStep={removeStep}
+        />
+      )}
+    </div>
+  );
+}
+
+function PoolPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const currentTab = useMemo(() => {
+    if (location.pathname === '/pool' || location.pathname === '/pool/') return 'browse';
+    if (location.pathname.startsWith('/pool/my-pools')) return 'my-pools';
+    if (location.pathname.startsWith('/pool/liquidity')) return 'liquidity';
+    if (location.pathname.match(/^\/pool\/[^/]+$/)) return 'details';
+    return 'browse';
+  }, [location.pathname]);
+
+  const handlePoolSelect = (address: string) => {
+    navigate(`/pool/liquidity?pool=${address}`);
+  };
+
+  const handleMyPoolSelect = (address: string) => {
+    navigate(`/pool/${address}`);
+  };
+
+  const tabs: { id: Tab; label: string }[] = [
+    { id: 'browse', label: 'Browse' },
+    { id: 'my-pools', label: 'My Pools' },
+    { id: 'liquidity', label: 'Liquidity' },
+  ];
+
+  return (
+    <div className="min-h-screen">
+      {currentTab !== 'details' && (
+        <div className="page-surface mx-auto w-full max-w-5xl pt-1 sm:pt-3">
+          <div className="flex gap-2 mb-5 p-1 bg-[var(--app-panel-soft)] rounded-xl">
+            {tabs.map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => navigate(`/pool/${tab.id}`)}
+                className={`flex-1 py-2.5 text-sm font-semibold rounded-xl transition-all ${currentTab === tab.id
+                  ? 'bg-[var(--app-blue)] text-white shadow-md'
+                  : 'text-[var(--app-muted)] hover:bg-[var(--app-hover)] hover:text-[var(--app-text)]'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <Routes>
+        <Route index element={<BrowsePools onPoolSelect={handlePoolSelect} />} />
+        <Route path="browse" element={<BrowsePools onPoolSelect={handlePoolSelect} />} />
+        <Route path="my-pools" element={<MyPoolsList onPoolSelect={handleMyPoolSelect} />} />
+        <Route path="liquidity" element={<LiquidityTab />} />
+        <Route path=":address" element={<PoolDetails />} />
+      </Routes>
     </div>
   );
 }
