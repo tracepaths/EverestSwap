@@ -43,6 +43,13 @@ export const DOGO_TOKEN: TokenInfo = {
   decimals: 18,
 };
 
+export const CAT_TOKEN: TokenInfo = {
+  address: import.meta.env.EVERESTSWAP_DEVNET_CAT_ADDRESS || 'octEw9XG14HA5f15mKLr3PYFbXyqMTLgDninhxrZUtyPvPe',
+  symbol: 'CAT',
+  name: 'CAT',
+  decimals: 6,
+};
+
 export const CONTRACTS = {
   factory: import.meta.env.EVERESTSWAP_DEVNET_FACTORY_ADDRESS || 'octJbkjXrAqvZdg2JZVZTyQqpYB52HYkBPDmGMmEQBMgSFE',
   pool: import.meta.env.EVERESTSWAP_DEVNET_POOL_ADDRESS || 'oct2ws6ug4Va8R8ctPvE76zyc8fgBJDTC4BgG4WjJXCBo8R',
@@ -50,6 +57,8 @@ export const CONTRACTS = {
   oes: import.meta.env.EVERESTSWAP_DEVNET_OES_ADDRESS || 'octGURUy7hQhXHVcP9bovbJnpoXqCv2gpWBrk6fqtXqJ2sC',
   woct: import.meta.env.EVERESTSWAP_DEVNET_WOCT_ADDRESS || 'oct4g33tzC2cJncL5RFr9TRiyk8yCNP1h2xaogiWJS5opNv',
   dogo: import.meta.env.EVERESTSWAP_DEVNET_DOGO_ADDRESS || 'octJ4mZP8bKidAq4VAy5VrcUwgJTh9Dzop5M4fkKqs79J3k',
+  cat: import.meta.env.EVERESTSWAP_DEVNET_CAT_ADDRESS || 'octEw9XG14HA5f15mKLr3PYFbXyqMTLgDninhxrZUtyPvPe',
+  catPool: import.meta.env.EVERESTSWAP_DEVNET_CAT_POOL_ADDRESS || 'octEuicdod5B7kfZa6JQsvEpu3yyTpKh9P6vhNRLotPyMz7',
   dogoPool: import.meta.env.EVERESTSWAP_DEVNET_DOGO_POOL_ADDRESS || 'oct764KAUBycN5PiqakWCPFvbzWsRJtG4kbhGkVr6KKawpV',
   rewardPoolTemplate: 'octCfD5XbQwiPUH1CYcQZPJuSuNEbPTtix7LfJAepeGzSr3',
 } as const;

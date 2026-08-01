@@ -33,6 +33,8 @@ everestswap/
 - SwapFactory: `octJbkjXrAqvZdg2JZVZTyQqpYB52HYkBPDmGMmEQBMgSFE`
 - Router: `octEtQJQDFC85tXtGpERHX69rNoo1GJA7EVUaLezANQxC8K`
 - RewardPool: `octCfD5XbQwiPUH1CYcQZPJuSuNEbPTtix7LfJAepeGzSr3`
+- CAT: `octEw9XG14HA5f15mKLr3PYFbXyqMTLgDninhxrZUtyPvPe` (100B supply, 6 decimals, deployed 2026-07-27)
+- CAT_Pool: `octEuicdod5B7kfZa6JQsvEpu3yyTpKh9P6vhNRLotPyMz7` (WOCT/CAT, 1 OCT : 1000 CAT, registered on factory)
 
 ## Key Flows
 
