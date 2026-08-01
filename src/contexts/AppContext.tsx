@@ -101,9 +101,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // [V9] Listen for wallet account changes dispatched by walletService.
   // Updates React state immediately when the user switches accounts in the
   // wallet extension, preventing stale-address "invalid signature" errors.
+  // [FIX] Empty address = wallet locked/disconnected → clear UI state so the
+  // app shows "Connect Wallet" instead of a stale connected state.
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<{ address: string }>).detail;
+      if (detail?.address === '') {
+        setWalletAddress('');
+        setWalletBalance('');
+        return;
+      }
       if (detail?.address && detail.address !== walletAddress) {
         setWalletAddress(detail.address);
         walletService.getBalance().then(b => setWalletBalance(b)).catch(() => {});

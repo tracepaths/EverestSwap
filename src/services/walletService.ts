@@ -59,6 +59,32 @@ export class WalletService {
         }
       });
     } catch { /* SDK may not support events in all environments */ }
+
+    // [FIX] Sync SDK disconnect/extension-lock state into the app so the UI
+    // shows "Connect Wallet" instead of failing later with a cryptic
+    // "Wallet not connected. Call connect() first." error from the SDK.
+    try {
+      this.sdk.on('extensionLocked', () => this.clearDisconnectedState());
+    } catch { /* noop */ }
+    try {
+      this.sdk.on('disconnect', () => this.clearDisconnectedState());
+    } catch { /* noop */ }
+  }
+
+  // [FIX] The SDK resets connectionInfo.isConnected when the extension locks
+  // or disconnects, but our _address would remain set. Clear it and notify the
+  // UI (AppContext listens for wallet-account-changed) so the app re-syncs.
+  private clearDisconnectedState(): void {
+    if (this._address === '') return;
+    const prev = this._address;
+    this._address = '';
+    this._balance = '';
+    this._publicKey = '';
+    try {
+      window.dispatchEvent(new CustomEvent('wallet-account-changed', {
+        detail: { address: '', prevAddress: prev },
+      }));
+    } catch { /* noop */ }
   }
 
   // [V7-PASS10] CRITICAL-2: Acquire the per-address submit lock.
@@ -196,6 +222,31 @@ export class WalletService {
     return '';
   }
 
+  // [FIX] Restore the SDK's connection state before retrying a call.
+  // The SDK's internal isConnected can go stale (extension locked/disconnected)
+  // while our _address still looks valid. getConnectionStatus() is a silent
+  // RPC — it only prompts via connect() when the extension truly has no session.
+  private async ensureSdkConnected(): Promise<boolean> {
+    try {
+      await this.sdk.getConnectionStatus();
+      if (this.sdk.isConnected()) return true;
+    } catch { /* fall through to full connect() */ }
+    if (!this.sdk.isConnected()) {
+      try {
+        await this.connect();
+      } catch {
+        return false;
+      }
+    }
+    return this.sdk.isConnected();
+  }
+
+  private isConnectionRefusedError(e: unknown): boolean {
+    const err = e as { code?: string; message?: string };
+    return err?.code === 'CONNECTION_REFUSED'
+      || /Wallet not connected|not connected|Call connect\(\) first/i.test(err?.message || '');
+  }
+
   async callContract(params: {
     contract: string;
     method: string;
@@ -208,16 +259,33 @@ export class WalletService {
       params.ou = await fetchRecommendedOu(params.rpc, 'call');
     }
     const sdkParams = { contract: params.contract, method: params.method, params: params.params, amount: params.amount, ou: params.ou };
-    const result = await this.sdk.callContract(sdkParams);
-    const resultObj = result && typeof result === 'object' ? (result as Record<string, unknown>) : {};
-    const txHash = typeof resultObj.hash === 'string' ? resultObj.hash
-      : typeof resultObj.txHash === 'string' ? resultObj.txHash
-      : typeof resultObj.tx_hash === 'string' ? resultObj.tx_hash
-      : undefined;
-    if (!txHash) {
-      throw new Error('Submit succeeded but no tx_hash returned');
+
+    const submit = async (): Promise<string> => {
+      const result = await this.sdk.callContract(sdkParams);
+      const resultObj = result && typeof result === 'object' ? (result as Record<string, unknown>) : {};
+      const txHash = typeof resultObj.hash === 'string' ? resultObj.hash
+        : typeof resultObj.txHash === 'string' ? resultObj.txHash
+        : typeof resultObj.tx_hash === 'string' ? resultObj.tx_hash
+        : undefined;
+      if (!txHash) {
+        throw new Error('Submit succeeded but no tx_hash returned');
+      }
+      return txHash;
+    };
+
+    try {
+      return await submit();
+    } catch (e) {
+      // [FIX] SDK connection state can be stale (extension locked/disconnected)
+      // even though our _address is still set. Restore it and retry once.
+      if (this.isConnectionRefusedError(e)) {
+        if (await this.ensureSdkConnected()) {
+          return await submit();
+        }
+        throw new Error('Wallet connection lost. Please reconnect your wallet and try again.', { cause: e });
+      }
+      throw e;
     }
-    return txHash;
   }
 
   // [FIX] Use SDK's signTransaction to fix "invalid signature" error on deploy.
