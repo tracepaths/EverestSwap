@@ -207,23 +207,28 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
       const minLp = hasLiq ? 1 : 0;
       const lockDuration = 0;
 
-      // Pre-approve factory on both tokens (factory pulls tokens for add_liquidity)
-      const grantPromises: Promise<string>[] = [];
+      // [FIX] Sequential grants (not Promise.all) — the Octra wallet extension
+      // only surfaces one signature popup at a time. Issuing two grant requests
+      // in parallel caused the second popup to never appear (the first SDK
+      // call would hang waiting for a popup the extension had queued behind
+      // itself), leaving the modal stuck on "Granting allowances" forever
+      // without any error in the console. Mirroring handleAddLiquidity's
+      // sequential grant-A → waitForReceipt → grant-B → waitForReceipt pattern
+      // also lets us abort early if the user rejects the first popup.
       if (hasLiq && BigInt(liqA!) > 0n) {
-        grantPromises.push(
-          walletService.callContract({ contract: tokenA, method: 'grant', params: [factoryAddr, liqA!], rpc })
-        );
+        const grantAHash = await walletService.callContract({
+          contract: tokenA, method: 'grant', params: [factoryAddr, liqA!], rpc,
+        });
+        await rpc.waitForReceipt(grantAHash, 120);
       }
       if (hasLiq && BigInt(liqB!) > 0n) {
-        grantPromises.push(
-          walletService.callContract({ contract: tokenB, method: 'grant', params: [factoryAddr, liqB!], rpc })
-        );
+        const grantBHash = await walletService.callContract({
+          contract: tokenB, method: 'grant', params: [factoryAddr, liqB!], rpc,
+        });
+        await rpc.waitForReceipt(grantBHash, 120);
       }
       // NOTE: No WOCT grant needed here — SwapFactory.create() only pulls
       // token_a and token_b (WOCT grant only applies to factory.launch()).
-
-      await Promise.all(grantPromises);
-      await new Promise(r => setTimeout(r, 500));
 
       // Call factory.create() — single transaction
       safeSetStep({ type: 'creating' });
