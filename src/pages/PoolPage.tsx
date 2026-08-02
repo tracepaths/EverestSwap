@@ -66,11 +66,10 @@ interface DynamicPool {
 }
 
 function BrowsePools({ onPoolSelect }: { onPoolSelect: (address: string) => void }) {
-  const { rpc, isConnected, connect, walletAddress } = useApp();
+  const { rpc } = useApp();
   const { getTokenUsd, octPrice } = usePriceService(rpc);
   const [pools, setPools] = useState<PoolDisplay[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showCreate, setShowCreate] = useState(false);
   const [poolPrices, setPoolPrices] = useState<Record<string, { priceA: number; priceB: number; tvlUsd: number }>>({});
   const mountedRef = useRef(true);
 
@@ -194,20 +193,8 @@ function BrowsePools({ onPoolSelect }: { onPoolSelect: (address: string) => void
           <h1 className="page-title">Pools</h1>
           <p className="page-subtitle">Explore available liquidity and route your next trade.</p>
         </div>
-        <button onClick={() => setShowCreate(!showCreate)} className="page-action">
-          {showCreate ? 'Close builder' : 'Create pool'}
-        </button>
+        <button onClick={loadPools} className="page-action">Refresh</button>
       </div>
-
-      {showCreate && (
-        <CreatePoolForm
-          rpc={rpc}
-          isConnected={isConnected}
-          onPoolCreated={loadPools}
-          connect={connect}
-          walletAddress={walletAddress}
-        />
-      )}
 
       <div className="page-panel overflow-hidden">
         <div className="page-panel-header">
@@ -344,10 +331,11 @@ function BrowsePools({ onPoolSelect }: { onPoolSelect: (address: string) => void
 
 function MyPoolsList({ onPoolSelect }: { onPoolSelect: (address: string) => void }) {
   const { myPools, loading, loadMyPools } = useMyPools();
-  const { addToast, isConnected } = useApp();
+  const { addToast, isConnected, rpc, connect, walletAddress } = useApp();
   const [removeStep, setRemoveStep] = useState<RemoveStep>({ type: 'idle' });
   const [selectedPool, setSelectedPool] = useState<MyPool | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
   const { removePool } = usePoolRemoval(addToast, () => {
     loadMyPools();
   });
@@ -390,8 +378,20 @@ function MyPoolsList({ onPoolSelect }: { onPoolSelect: (address: string) => void
           <h1 className="page-title">Pools You Own</h1>
           <p className="page-subtitle">Manage and remove pools you've created.</p>
         </div>
-        <button onClick={loadMyPools} className="page-action">Refresh</button>
+        <button onClick={() => setShowCreate(!showCreate)} className="page-action">
+          {showCreate ? 'Close builder' : 'Create pool'}
+        </button>
       </div>
+
+      {showCreate && (
+        <CreatePoolForm
+          rpc={rpc}
+          isConnected={isConnected}
+          onPoolCreated={loadMyPools}
+          connect={connect}
+          walletAddress={walletAddress}
+        />
+      )}
 
       {myPools.length > 0 && (
         <div className="page-panel p-4 text-sm text-[var(--app-muted)]">
@@ -732,10 +732,15 @@ function LiquidityTab() {
       await rpc.waitForReceipt(grantBHash);
 
       safeSetStep({ type: 'adding_liquidity' });
+      // [FIX] PoolPage add_liquidity parameter order must match contract:
+      // add_liquidity(amount_a, amount_b, min_lp, deadline, lock_duration)
+      // Previously lockBlocks was passed as min_lp (always 0) and 0 as lock_duration,
+      // meaning positions were never actually locked despite user's choice.
+      const minLp = 0;
       const addLiqHash = await walletService.callContract({
         contract: pool.address,
         method: 'add_liquidity',
-        params: [amountAInt.toString(), amountBInt.toString(), lockBlocks, deadline, 0],
+        params: [amountAInt.toString(), amountBInt.toString(), minLp, deadline, lockBlocks],
         rpc,
       });
       await rpc.waitForReceipt(addLiqHash);
@@ -768,6 +773,14 @@ function LiquidityTab() {
       const epochInfo = await rpc.call<{ epoch_id: number }>('epoch_current');
       const deadline = epochInfo.epoch_id + 300;
 
+      // [FIX] Validate that the position is unlocked before submitting on-chain.
+      // Previously the user could pick a still-locked position in the dropdown
+      // and only discover the revert after paying gas. Mirror the displayed
+      // `unlocked` flag to fail fast here.
+      if (!selectedPosition.unlocked) {
+        throw new Error(`Position #${selectedPosition.id} is still locked (unlocks in ${selectedPosition.lockTime ?? 0} blocks)`);
+      }
+
       const removeHash = await walletService.callContract({
         contract: pool.address,
         method: 'remove_liquidity',
@@ -789,6 +802,60 @@ function LiquidityTab() {
       addToast('error', `Remove failed: ${msg}`);
     } finally {
       removeSubmittingRef.current = false;
+    }
+  };
+
+  // [UX] Close all unlocked positions in one button to save multiple confirmations.
+  // NOTE: Each call to remove_liquidity closes ONE position (contract has no
+  // partial-amount parameter). For "remove sebagian" add liquidity as multiple
+  // positions and remove one. This helper simply batches those per-position
+  // closures using the contract's close_position(min_a, min_b, deadline) method,
+  // which auto-picks the first unlocked position for the caller.
+  const [closingAll, setClosingAll] = useState(false);
+  const handleCloseAllUnlocked = async () => {
+    if (!pool || !isConnected || !walletAddress) return;
+    const unlockedCount = positions.filter(p => p.unlocked).length;
+    if (unlockedCount === 0) {
+      addToast('error', 'No unlocked positions to remove');
+      return;
+    }
+    if (removeSubmittingRef.current) return;
+    removeSubmittingRef.current = true;
+    setClosingAll(true);
+    setRemoveStep({ type: 'removing' });
+
+    try {
+      let successCount = 0;
+      let lastHash = '';
+      // Loop: each call closes exactly one unlocked position.
+      for (let i = 0; i < unlockedCount; i++) {
+        const epochInfo = await rpc.call<{ epoch_id: number }>('epoch_current');
+        const deadline = epochInfo.epoch_id + 300;
+        const hash = await walletService.callContract({
+          contract: pool.address,
+          method: 'close_position',
+          params: [0, 0, deadline],
+          rpc,
+        });
+        await rpc.waitForReceipt(hash);
+        lastHash = hash;
+        successCount += 1;
+      }
+      setRemoveStep({ type: 'done', txHash: lastHash });
+      addToast('success', `Closed ${successCount} position${successCount > 1 ? 's' : ''}`);
+      if (lastHash) recordTx({ hash: lastHash, type: 'remove_liquidity', summary: `Close all unlocked from ${pool.address}`, timestamp: Date.now(), status: 'success' });
+      refreshBalance();
+      setSelectedPositionId(null);
+      setTimeout(() => {
+        if (mountedRef.current) setRemoveStep({ type: 'idle' });
+      }, 3000);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Close all failed';
+      setRemoveStep({ type: 'error', message: msg });
+      addToast('error', `Close all failed: ${msg}`);
+    } finally {
+      removeSubmittingRef.current = false;
+      setClosingAll(false);
     }
   };
 
@@ -1055,6 +1122,27 @@ function LiquidityTab() {
 
         {tab === 'remove' && (
           <div className="space-y-4">
+            <div className="bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-xl p-3 text-xs text-[var(--app-muted)] leading-relaxed">
+              <span className="font-medium text-[var(--app-text)]">ℹ How removal works:</span> Each
+              <span className="font-mono"> remove_liquidity </span> call closes <span className="font-medium">one</span> full position.
+              For partial removal, add liquidity as multiple positions and remove one. Positions that are still locked cannot be removed.
+            </div>
+
+            {positions.length > 0 && (
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-[var(--app-muted)]">
+                  {positions.length} position{positions.length > 1 ? 's' : ''} ({positions.filter(p => p.unlocked).length} unlocked)
+                </span>
+                <button
+                  onClick={handleCloseAllUnlocked}
+                  disabled={closingAll || positions.filter(p => p.unlocked).length === 0 || removeStep.type === 'removing'}
+                  className="px-3 py-1.5 bg-orange-600/80 hover:bg-orange-600 text-white font-semibold rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed text-xs"
+                >
+                  {closingAll ? 'Closing…' : 'Close all unlocked'}
+                </button>
+              </div>
+            )}
+
             <div>
               <label className="text-xs text-[var(--app-muted)] font-medium mb-2 block">Select Position</label>
               {positions.length === 0 ? (
@@ -1067,8 +1155,8 @@ function LiquidityTab() {
                 >
                   <option value="">Select a position</option>
                   {positions.map(pos => (
-                    <option key={pos.id} value={pos.id}>
-                      ID: #{pos.id} — {formatUnits(pos.reserveA || '0', pool.tokenA.decimals)} {pool.tokenA.symbol} + {formatUnits(pos.reserveB || '0', pool.tokenB.decimals)} {pool.tokenB.symbol}
+                    <option key={pos.id} value={pos.id} disabled={!pos.unlocked}>
+                      ID: #{pos.id} — {formatUnits(pos.reserveA || '0', pool.tokenA.decimals)} {pool.tokenA.symbol} + {formatUnits(pos.reserveB || '0', pool.tokenB.decimals)} {pool.tokenB.symbol}{pos.unlocked ? '' : ' (LOCKED)'}
                     </option>
                   ))}
                 </select>
@@ -1096,10 +1184,10 @@ function LiquidityTab() {
 
                 <button
                   onClick={handleRemoveLiquidity}
-                  disabled={removeStep.type === 'removing'}
-                  className="w-full py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-all disabled:opacity-50"
+                  disabled={removeStep.type === 'removing' || !selectedPosition.unlocked}
+                  className="w-full py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {removeStep.type === 'removing' ? 'Removing...' : 'Remove Liquidity'}
+                  {removeStep.type === 'removing' ? 'Removing...' : selectedPosition.unlocked ? 'Remove Liquidity' : 'Locked — cannot remove'}
                 </button>
               </>
             )}
@@ -1480,7 +1568,7 @@ function PoolPage() {
     <div className="min-h-screen">
       {currentTab !== 'details' && (
         <div className="page-surface mx-auto w-full max-w-5xl pt-1 sm:pt-3">
-          <div className="flex gap-2 mb-5 p-1 bg-[var(--app-panel-soft)] rounded-xl">
+          <div className="sticky top-[68px] z-20 flex gap-2 mb-5 p-1 bg-[var(--app-panel-soft)]/95 backdrop-blur-xl rounded-xl shadow-lg shadow-black/10">
             {tabs.map(tab => (
               <button
                 key={tab.id}

@@ -893,10 +893,10 @@ export default function AdminPage() {
                       className="mt-3"
                       disabled={!isValidOctraAddress(inputPoolNewOwner)}
                       onClick={() =>
-                        promptConfirm('Transfer Pool Ownership', `Propose ${inputPoolNewOwner} as owner of pool ${selectedPoolAddr}?`, async () => {
+                        promptConfirm('Transfer Pool Ownership', `Propose ${inputPoolNewOwner} as owner of pool ${selectedPoolAddr}? (Two-step: recipient must call accept_ownership)`, async () => {
                           const hash = await walletService.callContract({
                             contract: selectedPoolAddr,
-                            method: 'propose_owner',
+                            method: 'transfer_ownership',
                             params: [inputPoolNewOwner],
                             rpc,
                           });

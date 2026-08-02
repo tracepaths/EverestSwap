@@ -12,6 +12,10 @@ export function usePoolData(poolAddress?: string) {
     if (!address) return;
     setLoading(true);
     try {
+      // [FIX] Use `total_lp_supply` view fn (always defined on SwapPool/RewardPool)
+      // instead of accessing storage field `total_lp` directly — many RPC nodes
+      // reject raw storage access, which previously made .catch() fall back to
+      // '0' and falsely reported pools as "removable" when they had active LPs.
       const [tokenA, tokenB, reserveData, active, owner, feeNum, feeDenom, totalLp] = await Promise.all([
         rpc.contractView<string>(address, 'get_token_a', []).catch(() => ''),
         rpc.contractView<string>(address, 'get_token_b', []).catch(() => ''),
@@ -20,7 +24,7 @@ export function usePoolData(poolAddress?: string) {
         rpc.contractView<string>(address, 'owner', []).catch(() => ''),
         rpc.contractView<number>(address, 'fee_numerator', []).catch(() => 3),
         rpc.contractView<number>(address, 'fee_denominator', []).catch(() => 1000),
-        rpc.contractView<string>(address, 'total_lp', []).catch(() => '0'),
+        rpc.getTotalLpSupply(address).catch(() => '0'),
       ]);
 
       let symbolA = '', symbolB = '';
@@ -78,7 +82,7 @@ export function useMyPools() {
               rpc.contractView<string>(addr, 'owner', []).catch(() => ''),
               rpc.contractView<number>(addr, 'fee_numerator', []).catch(() => 3),
               rpc.contractView<number>(addr, 'fee_denominator', []).catch(() => 1000),
-              rpc.contractView<string>(addr, 'total_lp', []).catch(() => '0'),
+              rpc.getTotalLpSupply(addr).catch(() => '0'),
             ]);
 
             if (owner.toLowerCase() !== walletAddress.toLowerCase()) return null;

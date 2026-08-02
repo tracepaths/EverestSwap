@@ -55,6 +55,10 @@ export interface TokenLaunchConfig {
   // [V7-PASS8] H-11 fix: removed 'lp' (not implementable in current contract)
   taxRecipientMode: 'self' | 'burn' | 'custom';
   customTaxRecipient: string;
+
+  // Step 4: Liquidity (for factory.launch())
+  liqTokenAmount: string;
+  liqWoctAmount: string;
 }
 
 // [V9] Reward Pool types
