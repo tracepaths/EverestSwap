@@ -5,7 +5,7 @@ import { usePriceService } from '../hooks/usePriceService';
 import { useMyPools, usePoolData } from '../hooks/usePoolData';
 import { formatUnits, parseUnits, sanitizeNumericInput } from '../services/swapService';
 import { walletService } from '../services/walletService';
-import { CONTRACTS } from '../types';
+import { CONTRACTS, WOCT_TOKEN } from '../types';
 import { recordTx } from '../services/txHistory';
 import CreatePoolForm from '../components/CreatePoolForm';
 import ReserveIndicator from '../components/ReserveIndicator';
@@ -44,6 +44,7 @@ interface PoolDisplay {
 
 type AddLiquidityStep =
   | { type: 'idle' }
+  | { type: 'wrapping' }
   | { type: 'granting_a' }
   | { type: 'granting_b' }
   | { type: 'adding_liquidity' }
@@ -53,6 +54,7 @@ type AddLiquidityStep =
 type RemoveLiquidityStep =
   | { type: 'idle' }
   | { type: 'removing' }
+  | { type: 'unwrapping' }
   | { type: 'done'; txHash: string }
   | { type: 'error'; message: string };
 
@@ -514,12 +516,19 @@ function LiquidityTab() {
   const [rewardTokenDecimals, setRewardTokenDecimals] = useState(6);
   const [claimableReward, setClaimableReward] = useState('0');
   const [claimingReward, setClaimingReward] = useState(false);
+  const [useNativeOCT, setUseNativeOCT] = useState(false);
+  const [octBalance, setOctBalance] = useState('0');
 
   const pool = pools[selectedPoolIdx];
   const mountedRef = useRef(true);
   const poolSearchRef = useRef<HTMLInputElement>(null);
   const addSubmittingRef = useRef(false);
   const removeSubmittingRef = useRef(false);
+
+  // Which side of the pool (if any) is WOCT — only those pools support native OCT wrap/unwrap
+  const woctSide = pool
+    ? pool.tokenA.address === WOCT_TOKEN.address ? 'A' : pool.tokenB.address === WOCT_TOKEN.address ? 'B' : null
+    : null;
 
   useEffect(() => {
     if (showPoolSelect) {
@@ -579,13 +588,14 @@ function LiquidityTab() {
     let cancelled = false;
     (async () => {
       try {
-        const [reserves, totalLpVal, lpBal, positionsData, balanceA, balanceB] = await Promise.all([
+        const [reserves, totalLpVal, lpBal, positionsData, balanceA, balanceB, octBal] = await Promise.all([
           rpc.getReserves(pool.address),
           rpc.getTotalLpSupply(pool.address),
           rpc.getLpBalance(pool.address, walletAddress),
           rpc.getPositions(pool.address, walletAddress),
           rpc.getTokenBalance(pool.tokenA.address, walletAddress),
           rpc.getTokenBalance(pool.tokenB.address, walletAddress),
+          rpc.getBalance(walletAddress),
         ]);
         if (!cancelled && mountedRef.current) {
           setReserveA(reserves.reserveA);
@@ -595,6 +605,7 @@ function LiquidityTab() {
           setPositions(positionsData);
           setTokenABalance(balanceA);
           setTokenBBalance(balanceB);
+          setOctBalance(octBal.balance_raw || '0');
         }
 
         try {
@@ -632,11 +643,12 @@ function LiquidityTab() {
       if (!pool || !isConnected || !walletAddress) return;
       (async () => {
         try {
-          const [reserves, totalLpVal, lpBal, positionsData] = await Promise.all([
+          const [reserves, totalLpVal, lpBal, positionsData, octBal] = await Promise.all([
             rpc.getReserves(pool.address),
             rpc.getTotalLpSupply(pool.address),
             rpc.getLpBalance(pool.address, walletAddress),
             rpc.getPositions(pool.address, walletAddress),
+            rpc.getBalance(walletAddress),
           ]);
           if (mountedRef.current) {
             setReserveA(reserves.reserveA);
@@ -644,6 +656,7 @@ function LiquidityTab() {
             setTotalLP(totalLpVal);
             setLpBalance(lpBal);
             setPositions(positionsData);
+            setOctBalance(octBal.balance_raw || '0');
           }
         } catch { /* noop */ }
       })();
@@ -685,13 +698,23 @@ function LiquidityTab() {
         return;
       }
 
-      if (amountAInt > BigInt(tokenABalance)) {
+      // [OCT-NATIVE] When the pool has a WOCT side and the user opted for native
+      // OCT, the WOCT amount is funded by wrapping OCT → WOCT (deposit) first.
+      const woctAmountInt = woctSide === 'A' ? amountAInt : woctSide === 'B' ? amountBInt : 0n;
+      const useWrap = useNativeOCT && woctSide !== null && woctAmountInt > 0n;
+
+      if (amountAInt > BigInt(tokenABalance) && !(useWrap && woctSide === 'A')) {
         safeSetStep({ type: 'error', message: `Insufficient ${pool.tokenA.symbol} balance` });
         addSubmittingRef.current = false;
         return;
       }
-      if (amountBInt > BigInt(tokenBBalance)) {
+      if (amountBInt > BigInt(tokenBBalance) && !(useWrap && woctSide === 'B')) {
         safeSetStep({ type: 'error', message: `Insufficient ${pool.tokenB.symbol} balance` });
+        addSubmittingRef.current = false;
+        return;
+      }
+      if (useWrap && woctAmountInt > BigInt(octBalance)) {
+        safeSetStep({ type: 'error', message: 'Insufficient OCT balance' });
         addSubmittingRef.current = false;
         return;
       }
@@ -711,6 +734,21 @@ function LiquidityTab() {
           return;
         }
         lockBlocks = days * 1440;
+      }
+
+      // [OCT-NATIVE] Wrap OCT → WOCT before granting (WOCT.deposit is payable,
+      // receives the native OCT via the tx value).
+      if (useWrap) {
+        safeSetStep({ type: 'wrapping' });
+        const wrapHash = await walletService.callContract({
+          contract: WOCT_TOKEN.address,
+          method: 'deposit',
+          params: [],
+          amount: woctAmountInt.toString(),
+          rpc,
+        });
+        await rpc.waitForReceipt(wrapHash);
+        recordTx({ hash: wrapHash, type: 'wrap', summary: 'Wrap OCT to WOCT for liquidity', timestamp: Date.now(), status: 'success' });
       }
 
       safeSetStep({ type: 'granting_a' });
@@ -781,6 +819,9 @@ function LiquidityTab() {
         throw new Error(`Position #${selectedPosition.id} is still locked (unlocks in ${selectedPosition.lockTime ?? 0} blocks)`);
       }
 
+      // [OCT-NATIVE] Snapshot WOCT balance before removal to unwrap only the delta
+      const woctBefore = woctSide !== null ? BigInt(await rpc.getTokenBalance(WOCT_TOKEN.address, walletAddress)) : 0n;
+
       const removeHash = await walletService.callContract({
         contract: pool.address,
         method: 'remove_liquidity',
@@ -788,6 +829,33 @@ function LiquidityTab() {
         rpc,
       });
       await rpc.waitForReceipt(removeHash);
+
+      // [OCT-NATIVE] Auto-unwrap the WOCT proceeds back to native OCT
+      if (woctSide !== null) {
+        const woctAfter = BigInt(await rpc.getTokenBalance(WOCT_TOKEN.address, walletAddress));
+        const delta = woctAfter - woctBefore;
+        if (delta > 0n) {
+          setRemoveStep({ type: 'unwrapping' });
+          const withdrawHash = await walletService.callContract({
+            contract: WOCT_TOKEN.address,
+            method: 'withdraw',
+            params: [delta.toString()],
+            rpc,
+          });
+          await rpc.waitForReceipt(withdrawHash);
+          // [V7-CRIT-10] Pull pattern: withdraw records a pending claim; the
+          // native OCT is only transferred by claim_withdrawal().
+          const claimHash = await walletService.callContract({
+            contract: WOCT_TOKEN.address,
+            method: 'claim_withdrawal',
+            params: [],
+            rpc,
+          });
+          await rpc.waitForReceipt(claimHash);
+          recordTx({ hash: withdrawHash, type: 'unwrap', summary: 'Unwrap WOCT to OCT', timestamp: Date.now(), status: 'success' });
+        }
+      }
+
       setRemoveStep({ type: 'done', txHash: removeHash });
       addToast('success', 'Liquidity removed successfully');
       recordTx({ hash: removeHash, type: 'remove_liquidity', summary: 'Remove liquidity from ' + pool.address, timestamp: Date.now(), status: 'success' });
@@ -827,6 +895,8 @@ function LiquidityTab() {
     try {
       let successCount = 0;
       let lastHash = '';
+      // [OCT-NATIVE] Snapshot WOCT balance before closing to unwrap only the delta
+      const woctBefore = woctSide !== null ? BigInt(await rpc.getTokenBalance(WOCT_TOKEN.address, walletAddress)) : 0n;
       // Loop: each call closes exactly one unlocked position.
       for (let i = 0; i < unlockedCount; i++) {
         const epochInfo = await rpc.call<{ epoch_id: number }>('epoch_current');
@@ -840,6 +910,30 @@ function LiquidityTab() {
         await rpc.waitForReceipt(hash);
         lastHash = hash;
         successCount += 1;
+      }
+      // [OCT-NATIVE] Auto-unwrap the WOCT proceeds back to native OCT
+      if (woctSide !== null) {
+        const woctAfter = BigInt(await rpc.getTokenBalance(WOCT_TOKEN.address, walletAddress));
+        const delta = woctAfter - woctBefore;
+        if (delta > 0n) {
+          setRemoveStep({ type: 'unwrapping' });
+          const withdrawHash = await walletService.callContract({
+            contract: WOCT_TOKEN.address,
+            method: 'withdraw',
+            params: [delta.toString()],
+            rpc,
+          });
+          await rpc.waitForReceipt(withdrawHash);
+          // [V7-CRIT-10] Pull pattern: native OCT is only transferred by claim_withdrawal().
+          const claimHash = await walletService.callContract({
+            contract: WOCT_TOKEN.address,
+            method: 'claim_withdrawal',
+            params: [],
+            rpc,
+          });
+          await rpc.waitForReceipt(claimHash);
+          recordTx({ hash: withdrawHash, type: 'unwrap', summary: 'Unwrap WOCT to OCT', timestamp: Date.now(), status: 'success' });
+        }
       }
       setRemoveStep({ type: 'done', txHash: lastHash });
       addToast('success', `Closed ${successCount} position${successCount > 1 ? 's' : ''}`);
@@ -958,6 +1052,10 @@ function LiquidityTab() {
     );
   }
 
+  const nativeOCTActive = useNativeOCT && woctSide !== null;
+  const aBalanceForPct = nativeOCTActive && woctSide === 'A' ? octBalance : tokenABalance;
+  const bBalanceForPct = nativeOCTActive && woctSide === 'B' ? octBalance : tokenBBalance;
+
   return (
     <div className="page-surface mx-auto w-full max-w-5xl pt-1 sm:pt-3 space-y-5">
       <div className="page-heading">
@@ -1017,10 +1115,27 @@ function LiquidityTab() {
 
         {tab === 'add' && (
           <div className="space-y-4">
+            {nativeOCTActive && (
+              <div className="flex items-center justify-between bg-[var(--app-panel-soft)] rounded-xl px-4 py-3">
+                <div>
+                  <div className="text-sm font-semibold text-[var(--app-text)]">Pakai OCT native</div>
+                  <div className="text-xs text-[var(--app-muted)]">
+                    Auto wrap ke {pool.tokenA.symbol === 'WOCT' ? pool.tokenA.symbol : pool.tokenB.symbol} saat add, hasil remove di-unwrap otomatis ke OCT
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={useNativeOCT}
+                  onChange={e => setUseNativeOCT(e.target.checked)}
+                  className="w-4 h-4 accent-[var(--app-blue)]"
+                />
+              </div>
+            )}
+
             <div>
               <div className="flex justify-between text-xs text-[var(--app-muted)] mb-1">
                 <span>{pool.tokenA.symbol} Amount</span>
-                <span>Balance: {formatUnits(tokenABalance, pool.tokenA.decimals)}</span>
+                <span>Balance: {nativeOCTActive && woctSide === 'A' ? `${formatUnits(octBalance, 6)} OCT` : formatUnits(tokenABalance, pool.tokenA.decimals)}</span>
               </div>
               <input
                 type="number"
@@ -1035,7 +1150,7 @@ function LiquidityTab() {
                     key={pct}
                     onClick={() => {
                       const pctNum = Number(pct);
-                      const bal = BigInt(tokenABalance);
+                      const bal = BigInt(aBalanceForPct);
                       const amt = (bal * BigInt(pctNum)) / 100n;
                       const amtStr = formatUnits(amt.toString(), pool.tokenA.decimals);
                       handleAmountAChange(amtStr);
@@ -1051,7 +1166,7 @@ function LiquidityTab() {
             <div>
               <div className="flex justify-between text-xs text-[var(--app-muted)] mb-1">
                 <span>{pool.tokenB.symbol} Amount</span>
-                <span>Balance: {formatUnits(tokenBBalance, pool.tokenB.decimals)}</span>
+                <span>Balance: {nativeOCTActive && woctSide === 'B' ? `${formatUnits(octBalance, 6)} OCT` : formatUnits(tokenBBalance, pool.tokenB.decimals)}</span>
               </div>
               <input
                 type="number"
@@ -1066,7 +1181,7 @@ function LiquidityTab() {
                     key={pct}
                     onClick={() => {
                       const pctNum = Number(pct);
-                      const bal = BigInt(tokenBBalance);
+                      const bal = BigInt(bBalanceForPct);
                       const amt = (bal * BigInt(pctNum)) / 100n;
                       const amtStr = formatUnits(amt.toString(), pool.tokenB.decimals);
                       setAmountB(amtStr);
@@ -1106,10 +1221,10 @@ function LiquidityTab() {
 
             <button
               onClick={handleAddLiquidity}
-              disabled={!amountA || !amountB || addStep.type === 'granting_a' || addStep.type === 'granting_b' || addStep.type === 'adding_liquidity'}
+              disabled={!amountA || !amountB || addStep.type === 'wrapping' || addStep.type === 'granting_a' || addStep.type === 'granting_b' || addStep.type === 'adding_liquidity'}
               className="w-full py-3 bg-[var(--app-blue)] hover:bg-[var(--app-blue-2)] text-white font-bold rounded-xl transition-all disabled:opacity-50"
             >
-              {addStep.type === 'granting_a' ? 'Approving A...' : addStep.type === 'granting_b' ? 'Approving B...' : addStep.type === 'adding_liquidity' ? 'Adding...' : 'Add Liquidity'}
+              {addStep.type === 'wrapping' ? 'Wrapping OCT → WOCT...' : addStep.type === 'granting_a' ? 'Approving A...' : addStep.type === 'granting_b' ? 'Approving B...' : addStep.type === 'adding_liquidity' ? 'Adding...' : 'Add Liquidity'}
             </button>
 
             {addStep.type === 'error' && (
@@ -1126,6 +1241,11 @@ function LiquidityTab() {
               <span className="font-medium text-[var(--app-text)]">ℹ How removal works:</span> Each
               <span className="font-mono"> remove_liquidity </span> call closes <span className="font-medium">one</span> full position.
               For partial removal, add liquidity as multiple positions and remove one. Positions that are still locked cannot be removed.
+              {woctSide !== null && (
+                <div className="mt-1.5 text-green-400">
+                  ✓ Hasil WOCT dari remove otomatis di-unwrap ke OCT native.
+                </div>
+              )}
             </div>
 
             {positions.length > 0 && (
@@ -1135,7 +1255,7 @@ function LiquidityTab() {
                 </span>
                 <button
                   onClick={handleCloseAllUnlocked}
-                  disabled={closingAll || positions.filter(p => p.unlocked).length === 0 || removeStep.type === 'removing'}
+                  disabled={closingAll || positions.filter(p => p.unlocked).length === 0 || removeStep.type === 'removing' || removeStep.type === 'unwrapping'}
                   className="px-3 py-1.5 bg-orange-600/80 hover:bg-orange-600 text-white font-semibold rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed text-xs"
                 >
                   {closingAll ? 'Closing…' : 'Close all unlocked'}
@@ -1184,10 +1304,10 @@ function LiquidityTab() {
 
                 <button
                   onClick={handleRemoveLiquidity}
-                  disabled={removeStep.type === 'removing' || !selectedPosition.unlocked}
+                  disabled={removeStep.type === 'removing' || removeStep.type === 'unwrapping' || !selectedPosition.unlocked}
                   className="w-full py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {removeStep.type === 'removing' ? 'Removing...' : selectedPosition.unlocked ? 'Remove Liquidity' : 'Locked — cannot remove'}
+                  {removeStep.type === 'removing' ? 'Removing...' : removeStep.type === 'unwrapping' ? 'Unwrapping to OCT...' : selectedPosition.unlocked ? 'Remove Liquidity' : 'Locked — cannot remove'}
                 </button>
               </>
             )}
