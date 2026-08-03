@@ -5,6 +5,14 @@ import { OctraRpc } from './octraRpc';
 const _feeCache = new Map<string, { ou: string; ts: number }>();
 const FEE_CACHE_TTL = 30_000; // 30s
 
+// [FIX-POPUP] Hard ceiling for any interactive wallet popup (sign/deposit/grant/etc).
+// The 0xio SDK's default interactive timeout is 180s — far too long to leave a user
+// staring at a "sign..." spinner when the extension's popup never actually surfaced
+// (a known symptom of cold-extension races / locked windows / MV3 service-worker
+// restarts). Racing the popup submission against this ceiling lets the UI surface a
+// clear, actionable error much sooner instead of hanging silently.
+const WALLET_POPUP_TIMEOUT_MS = 60_000;
+
 async function fetchRecommendedOu(rpc: OctraRpc, opType: string): Promise<string> {
   const now = Date.now();
   const cached = _feeCache.get(opType);
@@ -20,23 +28,133 @@ async function fetchRecommendedOu(rpc: OctraRpc, opType: string): Promise<string
 }
 
 export class WalletService {
-  private sdk: ZeroXIOWallet;
+  // [FIX-POPUP] Lazy SDK construction — the 0xio SDK's OctraProviderAdapter
+  // attaches `provider.on('accountsChanged'/'connect'/'disconnect'/…)` only at
+  // `adapter.listen()` time, and `adapter.listen()` is invoked synchronously by
+  // the `ExtensionCommunicator` constructor. If the SDK is constructed while
+  // `window.octra` is still null (the very common case — the page bundle runs
+  // before the extension's content script has injected window.octra), those
+  // event listeners are never attached AND the SDK never re-attaches them later.
+  // Consequence: account-switch / extension-lock events never reach the app, and
+  // interactive `provider.request('octra_sendContractTransaction', …)` popups can
+  // hang for the SDK's 180s interactive timeout without any error surfacing.
+  //   The fix is to defer `new ZeroXIOWallet(…)` until `window.octra?.isOctra` is
+  // confirmed present (either at the first call that needs the SDK, or via the
+  // `octraWalletReady` / `octra#initialized` window events the extension
+  // broadcasts once it is ready). This makes the adapter's `provider.on(…)`
+  // listeners attach to a real provider every time.
+  private _sdk: ZeroXIOWallet | null = null;
+  private _providerReady = false;
+  private _readinessListenersInstalled = false;
   private rpc!: OctraRpc;
   private _address = '';
   private _balance = '';
   private _publicKey = '';
   // [V7-PASS10] CRITICAL-2: global per-address submit mutex.
-  // Prevents 2 browser tabs from racing on the same nonce.
+  // NOTE: despite the per-address framing, _submitLock is a single global FIFO
+  // queue — only ONE submit (any address) is in flight at a time across the
+  // whole app. Two wallet tabs on the same user race here, which is the
+  // intended nonce-protection behaviour. Don't be fooled by the "per-address"
+  // wording: there is exactly one shared lock.
   private _submitLock: Promise<void> = Promise.resolve();
   private _inFlightSubmit: { address: string; nonce: number } | null = null;
 
   constructor() {
-    this.sdk = new ZeroXIOWallet({
+    this.installReadinessListeners();
+  }
+
+  // [FIX-POPUP] Listen once for the extension's readiness broadcasts so the SDK
+  // is built the moment window.octra becomes available, EVEN IF the first
+  // `callContract` hasn't been made yet — ensuring provider.on(...) listeners
+  // attach as early as possible.
+  private installReadinessListeners(): void {
+    if (typeof window === 'undefined') return;
+    if (this._readinessListenersInstalled) return;
+    this._readinessListenersInstalled = true;
+    // If the extension injected window.octra before this module loaded, we're
+    // already good — set ready so the first ensureSdk() builds the SDK thruthfully.
+    if ((window as unknown as { octra?: { isOctra?: boolean } }).octra?.isOctra) {
+      this._providerReady = true;
+    }
+    const onReady = () => {
+      this._providerReady = true;
+      // If the SDK was already constructed against a null provider, tear it down
+      // and rebuild so the adapter's provider.on(...) listeners attach this time.
+      if (this._sdk) {
+        try { this._sdk.cleanup(); } catch { /* best-effort */ }
+        this._sdk = null;
+        this.initSdk();
+      } else {
+        this.initSdk();
+      }
+    };
+    try { window.addEventListener('octraWalletReady', onReady); } catch { /* noop */ }
+    try { window.addEventListener('octra#initialized', onReady); } catch { /* noop */ }
+    try { window.addEventListener('0xioWalletReady', onReady); } catch { /* noop */ }
+    try { window.addEventListener('wallet0xioReady', onReady); } catch { /* noop */ }
+  }
+
+  // [FIX-POPUP] Returns true once window.octra is detected (or readiness fires).
+  // Resolves even if event already passed (checks isOctra first then waits).
+  private async ensureProviderReady(timeoutMs = 10_000): Promise<void> {
+    this.installReadinessListeners();
+    if ((window as unknown as { octra?: { isOctra?: boolean } }).octra?.isOctra) {
+      this._providerReady = true;
+    }
+    if (this._providerReady) return;
+    await new Promise<void>((resolve, reject) => {
+      let done = false;
+      const timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        cleanup();
+        reject(new Error('Octra wallet extension not detected — please install/enable it and reload'));
+      }, timeoutMs);
+      const cleanup = () => {
+        clearTimeout(timer);
+        try { window.removeEventListener('octraWalletReady', onReady); } catch { /* noop */ }
+        try { window.removeEventListener('octra#initialized', onReady); } catch { /* noop */ }
+        try { window.removeEventListener('0xioWalletReady', onReady); } catch { /* noop */ }
+        try { window.removeEventListener('wallet0xioReady', onReady); } catch { /* noop */ }
+      };
+      const onReady = () => {
+        if (done) return;
+        done = true;
+        this._providerReady = true;
+        cleanup();
+        resolve();
+      };
+      window.addEventListener('octraWalletReady', onReady);
+      window.addEventListener('octra#initialized', onReady);
+      window.addEventListener('0xioWalletReady', onReady);
+      window.addEventListener('wallet0xioReady', onReady);
+    });
+  }
+
+  // [FIX-POPUP] Actually create the SDK. Safe to call multiple times — subsequent
+  // calls are no-ops.
+  private initSdk(): void {
+    if (this._sdk) return;
+    this._sdk = new ZeroXIOWallet({
       appName: 'EverestSwap',
       adapter: OctraProviderAdapter,
       requiredPermissions: ['read_balance', 'send_transactions', 'read_public_key'],
     });
     this.setupAccountChangeListener();
+  }
+
+  private ensureSdk(): ZeroXIOWallet {
+    if (!this._sdk) {
+      // Build on demand if the provider is already present (fast path). Otherwise
+      // this returns a null-provider SDK; callers should gate on
+      // ensureProviderReady() first if they need event listeners attached.
+      this.initSdk();
+    }
+    return this._sdk as ZeroXIOWallet;
+  }
+
+  private get sdk(): ZeroXIOWallet {
+    return this.ensureSdk();
   }
 
   setRpc(rpc: OctraRpc): void {
@@ -87,9 +205,12 @@ export class WalletService {
     } catch { /* noop */ }
   }
 
-  // [V7-PASS10] CRITICAL-2: Acquire the per-address submit lock.
-  // Returns a release function. The mutex is keyed by the address passed in,
-  // so different addresses can submit concurrently but the same address is serialized.
+  // [V7-PASS10] CRITICAL-2: Acquire the global submit lock.
+  // Returns a release function. Despite taking `address`, the underlying
+  // implementation is a SINGLE global FIFO queue (see the constructor docstring)
+  // — only one submit of ANY address is in flight at a time. This is the nonce
+  // protection intended by the audit; do not "fix" it into per-address
+  // concurrency or duplicate nonce submits ensue.
   async acquireSubmitLock(address: string): Promise<() => void> {
     // Wait for the current lock holder
     let release!: () => void;
@@ -138,6 +259,10 @@ export class WalletService {
   }
 
   async connect(): Promise<string> {
+    // [FIX-POPUP] Wait for the extension to be present before touching the SDK.
+    // Without this, sdk.initialize() races the content-script injection and the
+    // adapter's event listeners never attach.
+    await this.ensureProviderReady(15_000);
     try {
       await this.sdk.initialize();
     } catch {
@@ -175,8 +300,12 @@ export class WalletService {
   async signMessage(message: string): Promise<{ signature: string; publicKey?: string }> {
     const octra = (window as unknown as { octra: { request: (opts: { method: string; params?: unknown }) => Promise<unknown> } }).octra;
     if (!octra) throw new Error('0xio wallet not found');
+    // [FIX-POPUP] Signing is interactive too — race against the popup ceiling so
+    // a silent extension does not strand a deploy in mid-sign forever.
+    const wrapped = (method: string, params: unknown) =>
+      this.racePopup(Promise.resolve(octra.request({ method, params })), 'Wallet tidak merespons saat sign — pastikan popup tidak tertutup');
     try {
-      const result = await octra.request({ method: 'octra_signMessage', params: [message] });
+      const result = await wrapped('octra_signMessage', [message]);
       if (typeof result === 'string') return { signature: result };
       if (result && typeof result === 'object') {
         const sig = (result as Record<string, unknown>).signature;
@@ -185,11 +314,11 @@ export class WalletService {
           return { signature: sig, publicKey: typeof publicKey === 'string' ? publicKey : undefined };
         }
       }
-    } catch { /* noop */ }
+    } catch { /* fallthrough to alt method */ }
     try {
-      const result = await octra.request({ method: 'octra_sign', params: { message } });
+      const result = await wrapped('octra_sign', { message });
       if (typeof result === 'string') return { signature: result };
-    } catch { /* noop */ }
+    } catch { /* fallthrough to throw below */ }
     throw new Error('Signing rejected or method not supported by wallet');
   }
 
@@ -255,13 +384,22 @@ export class WalletService {
     ou?: string | number;
     rpc?: OctraRpc;
   }): Promise<string> {
+    // [FIX-POPUP] If the extension became available before this call but readiness
+    // events were missed, fail-fast here with a clear message instead of letting
+    // the SDK block on a 180s interactive request that never resolves.
+    await this.ensureProviderReady(8_000);
     if (!params.ou && params.rpc) {
       params.ou = await fetchRecommendedOu(params.rpc, 'call');
     }
     const sdkParams = { contract: params.contract, method: params.method, params: params.params, amount: params.amount, ou: params.ou };
 
     const submit = async (): Promise<string> => {
-      const result = await this.sdk.callContract(sdkParams);
+      // [FIX-POPUP] Race the popup against the ceiling so the user gets an
+      // actionable error instead of an invisible 180s hang.
+      const result = await this.racePopup(
+        this.sdk.callContract(sdkParams),
+        'Wallet extension tidak merespons — pastikan popup tidak tertutup/terkunci',
+      );
       const resultObj = result && typeof result === 'object' ? (result as Record<string, unknown>) : {};
       const txHash = typeof resultObj.hash === 'string' ? resultObj.hash
         : typeof resultObj.txHash === 'string' ? resultObj.txHash
@@ -286,6 +424,23 @@ export class WalletService {
       }
       throw e;
     }
+  }
+
+  // [FIX-POPUP] Race any interactive wallet promise against a visible timeout.
+  // The first to settle wins; on timeout we reject with an actionable message.
+  private racePopup<T>(p: Promise<T>, timeoutMsg: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      let settled = false;
+      const t = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        reject(new Error(timeoutMsg));
+      }, WALLET_POPUP_TIMEOUT_MS);
+      p.then(
+        (v) => { if (!settled) { settled = true; clearTimeout(t); resolve(v); } },
+        (e) => { if (!settled) { settled = true; clearTimeout(t); reject(e); } },
+      );
+    });
   }
 
   // [FIX] Use SDK's signTransaction to fix "invalid signature" error on deploy.

@@ -274,14 +274,16 @@ function LaunchTokenPage() {
       // Pre-approve factory on WOCT (factory pulls WOCT for liquidity)
       setStep({ type: 'granting_woct' });
       const woctRaw = BigInt(Math.round(parseFloat(config.liqWoctAmount) * 1_000_000)).toString();
-      await walletService.callContract({
+      const grantHash = await walletService.callContract({
         contract: woctAddr,
         method: 'grant',
         params: [factoryAddr, woctRaw],
         rpc,
       });
-      // Wait a beat for the grant to land
-      await new Promise(r => setTimeout(r, 500));
+      // [FIX] Wait for the grant to actually land on chain before submitting
+      // factory.launch(), which pulls WOCT. A 500 ms setTimeout was a race —
+      // launch would revert on missing allowance whenever the chain lagged.
+      await rpc.waitForReceipt(grantHash, 120);
 
       // Get current epoch for deadline
       const epochInfo = await rpc.call<{ epoch_id: number }>('epoch_current');

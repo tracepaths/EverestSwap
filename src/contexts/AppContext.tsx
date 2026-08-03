@@ -46,13 +46,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return saved === 'light' || saved === 'blue' || saved === 'dark' ? saved : 'dark';
   });
   const [rpc] = useState(() => new OctraRpc());
-  walletService.setRpc(rpc);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [isWalletInstalled, setIsWalletInstalled] = useState(false);
   const isConnecting = useRef(false);
 
+  // [FIX-POPUP] setRpc is a side effect — run it in an effect, not the render
+  // body, so React rules hold and StrictMode double-render does not double-fire.
+  useEffect(() => { walletService.setRpc(rpc); }, [rpc]);
+
   useEffect(() => {
-    setIsWalletInstalled(!!(window as unknown as { octra?: { isOctra?: boolean } }).octra?.isOctra);
+    // [FIX-POPUP] Re-evaluate isWalletInstalled reactively — the extension can
+    // inject window.octra after this mount, so listening for its readiness
+    // broadcasts (instead of a one-shot check) keeps the "wallet installed"
+    // indicator honest and unblocks the walletService lazy SDK init too.
+    const check = () => setIsWalletInstalled(!!(window as unknown as { octra?: { isOctra?: boolean } }).octra?.isOctra);
+    check();
+    const onReady = () => check();
+    window.addEventListener('octraWalletReady', onReady);
+    window.addEventListener('octra#initialized', onReady);
+    window.addEventListener('0xioWalletReady', onReady);
+    window.addEventListener('wallet0xioReady', onReady);
+    return () => {
+      window.removeEventListener('octraWalletReady', onReady);
+      window.removeEventListener('octra#initialized', onReady);
+      window.removeEventListener('0xioWalletReady', onReady);
+      window.removeEventListener('wallet0xioReady', onReady);
+    };
   }, []);
 
   // [V7-FIX] Auto-expire stuck pending toasts after 60s. Convert to error state

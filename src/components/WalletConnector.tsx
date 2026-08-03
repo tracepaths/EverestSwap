@@ -68,10 +68,12 @@ function WalletConnector() {
                 </div>
               )}
               <button
-                onClick={() => {
+                onClick={async () => {
                   // [V7-FIX] Wrap disconnect in try/catch — if user uninstalled
                   // the extension or the call fails, still close the dropdown.
-                  try { disconnect(); } catch { /* noop */ }
+                  // [FIX] disconnect() is async — must be awaited or failures are
+                  // silently swallowed and the UI lies about being disconnected.
+                  try { await disconnect(); } catch { /* noop */ }
                   setDropdownOpen(false);
                 }}
                 className="w-full text-left px-4 py-2.5 text-base text-[var(--app-danger)] hover:bg-[var(--app-panel)] transition-colors"
