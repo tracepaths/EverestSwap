@@ -343,6 +343,10 @@ function LaunchTokenPage() {
           deadline,
           lockDuration,
         ],
+        // [V12] launch() spawns TWO contracts (Token + SwapPool) and seeds
+        // liquidity — the heaviest call in the app. Send a generous ou so the
+        // effort budget is never the limiting factor.
+        ou: '600000',
         rpc,
       });
 

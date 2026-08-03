@@ -81,6 +81,11 @@ export async function submitCreatePool(
       args.tokenA, args.tokenB, args.feeNum, args.feeDen, args.maxRatio,
       args.liqA || '0', args.liqB || '0', args.minLp, deadline, args.lockDuration,
     ],
+    // [V12] create() spawns a SwapPool contract and seeds liquidity — measured
+    // at ~27k effort on devnet, far above a plain call. The node charges the
+    // base call fee regardless, but sending a deploy-sized ou keeps headroom if
+    // a node ever enforces the ou ceiling for spawning calls.
+    ou: '400000',
     rpc,
   });
   await rpc.waitForReceipt(createHash, 120);
