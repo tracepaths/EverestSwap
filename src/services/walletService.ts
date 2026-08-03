@@ -1,4 +1,4 @@
-import { ZeroXIOWallet, OctraProviderAdapter, type TransactionHistory, type ContractParams } from '@0xio/sdk';
+import { ZeroXIOWallet, type TransactionHistory, type ContractParams } from '@0xio/sdk';
 import { OctraRpc } from './octraRpc';
 
 // [V7-FIX] Fee cache: avoid repeated RPC calls for the same op_type
@@ -46,24 +46,23 @@ async function fetchRecommendedOu(rpc: OctraRpc, opType: string): Promise<string
 }
 
 export class WalletService {
-  // [FIX-POPUP] Lazy SDK construction — the 0xio SDK's OctraProviderAdapter
-  // attaches `provider.on('accountsChanged'/'connect'/'disconnect'/…)` only at
-  // `adapter.listen()` time, and `adapter.listen()` is invoked synchronously by
-  // the `ExtensionCommunicator` constructor. If the SDK is constructed while
-  // `window.octra` is still null (the very common case — the page bundle runs
-  // before the extension's content script has injected window.octra), those
-  // event listeners are never attached AND the SDK never re-attaches them later.
-  // Consequence: account-switch / extension-lock events never reach the app, and
-  // interactive `provider.request('octra_sendContractTransaction', …)` popups can
-  // hang for the SDK's 180s interactive timeout without any error surfacing.
-  //   The fix is to defer `new ZeroXIOWallet(…)` until `window.octra?.isOctra` is
-  // confirmed present (either at the first call that needs the SDK, or via the
-  // `octraWalletReady` / `octra#initialized` window events the extension
-  // broadcasts once it is ready). This makes the adapter's `provider.on(…)`
-  // listeners attach to a real provider every time.
-  private _sdk: ZeroXIOWallet | null = null;
-  private _providerReady = false;
-  private _readinessListenersInstalled = false;
+  // [FIX-POPUP-REWRITE] Follows the README quick-start pattern exactly.
+  // Earlier fixes forced `adapter: OctraProviderAdapter`, but per the SDK docs:
+  //   "ZeroXIOAdapter — detected via window.wallet0xio / window.ZeroXIOWallet
+  //    (postMessage bridge). Priority when the 0xio extension is installed."
+  // Forcing OctraProviderAdapter against the 0xio extension routes popups
+  // through `window.octra.request('octra_sendContractTransaction', ...)` which
+  // the extension does not surface as a popup — this is the most likely reason
+  // popups never appear. We now omit `adapter` and let the SDK auto-detect
+  // (ZeroXIOAdapter wins when the 0xio extension is present). This matches the
+  // official Quick Start:
+  //   const wallet = new ZeroXIOWallet({ appName, requiredPermissions });
+  // We also drop the custom readiness-event/rebuild machinery: the SDK's own
+  // `initialize()` polls for extension availability (listenForReady) and attaches
+  // provider listeners when the adapter eventually fires `0xioWalletReady` /
+  // `wallet0xioReady`, both of which are still emitted by v2.7.0. Rebuilding the
+  // SDK ourselves only re-introduced races (cleanup() aborts in-flight popups).
+  private sdk: ZeroXIOWallet;
   private rpc!: OctraRpc;
   private _address = '';
   private _balance = '';
@@ -78,108 +77,18 @@ export class WalletService {
   private _inFlightSubmit: { address: string; nonce: number } | null = null;
 
   constructor() {
-    this.installReadinessListeners();
-  }
-
-  // [FIX-POPUP] Listen once for the extension's readiness broadcasts so the SDK
-  // is built the moment window.octra becomes available, EVEN IF the first
-  // `callContract` hasn't been made yet — ensuring provider.on(...) listeners
-  // attach as early as possible.
-  private installReadinessListeners(): void {
-    if (typeof window === 'undefined') return;
-    if (this._readinessListenersInstalled) return;
-    this._readinessListenersInstalled = true;
-    // If the extension injected window.octra before this module loaded, we're
-    // already good — set ready so the first ensureSdk() builds the SDK thruthfully.
-    if ((window as unknown as { octra?: { isOctra?: boolean } }).octra?.isOctra) {
-      this._providerReady = true;
-    }
-    const onReady = () => {
-      const wasReady = this._providerReady;
-      this._providerReady = true;
-      // [FIX-POPUP] Only construct the SDK here the FIRST time the provider
-      // becomes ready. We must NOT cleanup()+rebuild an existing SDK on a later
-      // readiness event: SDK.cleanup() rejects every in-flight request with
-      // "SDK cleanup called" (SDK index.esm.js:907-930) and removeAllListeners
-      // drops our accountChanged/extensionLocked handlers. The previous version
-      // of this fix called cleanup()+rebuild on every readiness event — if a
-      // readiness broadcast landed while a grant popup was mid-flight (a real
-      // possibility because the extension can fire octraWalletReady again on
-      // focus/visibility), the grant was silently aborted and the modal hung
-      // on "Granting allowances". Popup delivery does not rely on the missing
-      // provider.on(...) listeners (postRequest re-resolves window.octra each
-      // time), so we accept slightly-late-arriving events without rebuilding.
-      if (!wasReady && !this._sdk) {
-        this.initSdk();
-      }
-    };
-    try { window.addEventListener('octraWalletReady', onReady); } catch { /* noop */ }
-    try { window.addEventListener('octra#initialized', onReady); } catch { /* noop */ }
-    try { window.addEventListener('0xioWalletReady', onReady); } catch { /* noop */ }
-    try { window.addEventListener('wallet0xioReady', onReady); } catch { /* noop */ }
-  }
-
-  // [FIX-POPUP] Returns true once window.octra is detected (or readiness fires).
-  // Resolves even if event already passed (checks isOctra first then waits).
-  private async ensureProviderReady(timeoutMs = 10_000): Promise<void> {
-    this.installReadinessListeners();
-    if ((window as unknown as { octra?: { isOctra?: boolean } }).octra?.isOctra) {
-      this._providerReady = true;
-    }
-    if (this._providerReady) return;
-    await new Promise<void>((resolve, reject) => {
-      let done = false;
-      const timer = setTimeout(() => {
-        if (done) return;
-        done = true;
-        cleanup();
-        reject(new Error('Octra wallet extension not detected — please install/enable it and reload'));
-      }, timeoutMs);
-      const cleanup = () => {
-        clearTimeout(timer);
-        try { window.removeEventListener('octraWalletReady', onReady); } catch { /* noop */ }
-        try { window.removeEventListener('octra#initialized', onReady); } catch { /* noop */ }
-        try { window.removeEventListener('0xioWalletReady', onReady); } catch { /* noop */ }
-        try { window.removeEventListener('wallet0xioReady', onReady); } catch { /* noop */ }
-      };
-      const onReady = () => {
-        if (done) return;
-        done = true;
-        this._providerReady = true;
-        cleanup();
-        resolve();
-      };
-      window.addEventListener('octraWalletReady', onReady);
-      window.addEventListener('octra#initialized', onReady);
-      window.addEventListener('0xioWalletReady', onReady);
-      window.addEventListener('wallet0xioReady', onReady);
-    });
-  }
-
-  // [FIX-POPUP] Actually create the SDK. Safe to call multiple times — subsequent
-  // calls are no-ops.
-  private initSdk(): void {
-    if (this._sdk) return;
-    this._sdk = new ZeroXIOWallet({
+    this.sdk = new ZeroXIOWallet({
       appName: 'EverestSwap',
-      adapter: OctraProviderAdapter,
       requiredPermissions: ['read_balance', 'send_transactions', 'read_public_key'],
     });
     this.setupAccountChangeListener();
-  }
-
-  private ensureSdk(): ZeroXIOWallet {
-    if (!this._sdk) {
-      // Build on demand if the provider is already present (fast path). Otherwise
-      // this returns a null-provider SDK; callers should gate on
-      // ensureProviderReady() first if they need event listeners attached.
-      this.initSdk();
+    // Best-effort fire-and-forget initialize — the SDK's initialize() polls for
+    // extension availability and is the canonical readiness signal; calling it
+    // early means the first connect()/callContract() sees a primed SDK. Errors
+    // (extension not yet installed) are tolerated: connect() will retry.
+    if (typeof window !== 'undefined') {
+      this.sdk.initialize().catch(() => { /* extension not ready yet */ });
     }
-    return this._sdk as ZeroXIOWallet;
-  }
-
-  private get sdk(): ZeroXIOWallet {
-    return this.ensureSdk();
   }
 
   setRpc(rpc: OctraRpc): void {
@@ -284,10 +193,6 @@ export class WalletService {
   }
 
   async connect(): Promise<string> {
-    // [FIX-POPUP] Wait for the extension to be present before touching the SDK.
-    // Without this, sdk.initialize() races the content-script injection and the
-    // adapter's event listeners never attach.
-    await this.ensureProviderReady(15_000);
     try {
       await this.sdk.initialize();
     } catch {
@@ -421,10 +326,6 @@ export class WalletService {
     ou?: string | number;
     rpc?: OctraRpc;
   }): Promise<string> {
-    // [FIX-POPUP] If the extension became available before this call but readiness
-    // events were missed, fail-fast here with a clear message instead of letting
-    // the SDK block on a 180s interactive request that never resolves.
-    await this.ensureProviderReady(8_000);
     if (!params.ou && params.rpc) {
       params.ou = await fetchRecommendedOu(params.rpc, 'call');
     }

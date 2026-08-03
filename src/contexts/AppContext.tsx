@@ -55,22 +55,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => { walletService.setRpc(rpc); }, [rpc]);
 
   useEffect(() => {
-    // [FIX-POPUP] Re-evaluate isWalletInstalled reactively — the extension can
-    // inject window.octra after this mount, so listening for its readiness
-    // broadcasts (instead of a one-shot check) keeps the "wallet installed"
-    // indicator honest and unblocks the walletService lazy SDK init too.
-    const check = () => setIsWalletInstalled(!!(window as unknown as { octra?: { isOctra?: boolean } }).octra?.isOctra);
+    // [FIX-POPUP-REWRITE] Re-evaluate isWalletInstalled reactively. The 0xio
+    // extension is detected either by window.wallet0xio / window.ZeroXIOWallet
+    // (ZeroXIOAdapter, postMessage bridge — the path the SDK prioritizes) or by
+    // window.octra.isOctra (OctraProviderAdapter, RFC-O-1). Without reactive
+    // checking, a slow content-script inject leaves the "wallet installed" dot
+    // false forever. We listen for the SDK's still-valid readiness broadcasts
+    // (0xioWalletReady / wallet0xioReady) — octraWalletReady was removed in
+    // SDK v2.7.0 per the changelog, so we don't listen for it here.
+    const check = () => {
+      const w = window as unknown as {
+        octra?: { isOctra?: boolean };
+        wallet0xio?: unknown;
+        ZeroXIOWallet?: unknown;
+      };
+      setIsWalletInstalled(!!(w.octra?.isOctra || w.wallet0xio || w.ZeroXIOWallet));
+    };
     check();
     const onReady = () => check();
-    window.addEventListener('octraWalletReady', onReady);
-    window.addEventListener('octra#initialized', onReady);
     window.addEventListener('0xioWalletReady', onReady);
     window.addEventListener('wallet0xioReady', onReady);
+    window.addEventListener('octraWalletReady', onReady);
     return () => {
-      window.removeEventListener('octraWalletReady', onReady);
-      window.removeEventListener('octra#initialized', onReady);
       window.removeEventListener('0xioWalletReady', onReady);
       window.removeEventListener('wallet0xioReady', onReady);
+      window.removeEventListener('octraWalletReady', onReady);
     };
   }, []);
 
