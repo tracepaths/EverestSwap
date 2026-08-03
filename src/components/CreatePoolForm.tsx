@@ -4,8 +4,8 @@ import type { OctraRpc } from '../services/octraRpc';
 import { CONTRACTS, WOCT_TOKEN } from '../types';
 import { formatUnits, parseUnits, sanitizeNumericInput, parseRawBalance } from '../services/swapService';
 import { walletService } from '../services/walletService';
+import { submitCreatePool } from '../services/createPool';
 import TokenSelectModal from './TokenSelectModal';
-import LoadingModal from './LoadingModal';
 
 interface TokenMeta {
   symbol: string;
@@ -207,60 +207,19 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
       const minLp = hasLiq ? 1 : 0;
       const lockDuration = 0;
 
-      // [FIX] Sequential grants (not Promise.all) — the Octra wallet extension
-      // only surfaces one signature popup at a time. Issuing two grant requests
-      // in parallel caused the second popup to never appear (the first SDK
-      // call would hang waiting for a popup the extension had queued behind
-      // itself), leaving the modal stuck on "Granting allowances" forever
-      // without any error in the console. Mirroring handleAddLiquidity's
-      // sequential grant-A → waitForReceipt → grant-B → waitForReceipt pattern
-      // also lets us abort early if the user rejects the first popup.
-      if (hasLiq && BigInt(liqA!) > 0n) {
-        const grantAHash = await walletService.callContract({
-          contract: tokenA, method: 'grant', params: [factoryAddr, liqA!], rpc,
-        });
-        await rpc.waitForReceipt(grantAHash, 120);
-      }
-      if (hasLiq && BigInt(liqB!) > 0n) {
-        const grantBHash = await walletService.callContract({
-          contract: tokenB, method: 'grant', params: [factoryAddr, liqB!], rpc,
-        });
-        await rpc.waitForReceipt(grantBHash, 120);
-      }
-      // NOTE: No WOCT grant needed here — SwapFactory.create() only pulls
-      // token_a and token_b (WOCT grant only applies to factory.launch()).
-
-      // Call factory.create() — single transaction
-      safeSetStep({ type: 'creating' });
-
-      // Get current epoch for deadline
-      const epochInfo = await rpc.call<{ epoch_id: number }>('epoch_current');
-      const currentEpoch = epochInfo.epoch_id || 0;
-      const deadline = currentEpoch + 300;
-
-      const createHash = await walletService.callContract({
-        contract: factoryAddr,
-        method: 'create',
-        params: [
-          tokenA, tokenB, feeNum, feeDen, maxRatio,
-          liqA || '0', liqB || '0', minLp, deadline, lockDuration,
-        ],
-        rpc,
-      });
-
-      await rpc.waitForReceipt(createHash, 120);
-
-      // Read pool address from factory
-      // [FIX] Previously called `get_pool_by_index` which is NOT a factory method.
-      // Use the canonical `get_pool(tokenA, tokenB)` view instead — it is defined
-      // on SwapFactory and is the exact pool we just registered.
-      let poolAddress = '';
-      try {
-        poolAddress = await rpc.getPoolAddress(factoryAddr, tokenA, tokenB);
-      } catch { /* best-effort */ }
+      // [FIX-POPUP] Delegate to the pure helper so the grant sequence is
+      // unit-tested. Grants remain STRICTLY sequential — see submitCreatePool.
+      const onStep = (s: 'granting_a' | 'granting_b' | 'creating') => {
+        safeSetStep(s === 'granting_a' ? { type: 'pre_approving' } : s === 'granting_b' ? { type: 'pre_approving' } : { type: 'creating' });
+      };
+      const { createHash, poolAddress } = await submitCreatePool(
+        { factoryAddr, tokenA, tokenB, feeNum, feeDen, maxRatio, liqA, liqB, minLp, lockDuration },
+        { rpc, onStep },
+      );
+      void createHash;
 
       if (mountedRef.current) {
-        setStep({ type: 'done', poolAddress });
+        setStep({ type: 'done', poolAddress: poolAddress || '' });
         rpc.clearCache();
         onPoolCreated();
       }
@@ -345,14 +304,65 @@ function CreatePoolForm({ rpc, isConnected, onPoolCreated, connect, walletAddres
 
   return (
     <>
-    <LoadingModal
-      isOpen={step.type !== 'idle' && step.type !== 'error' && step.type !== 'done'}
-      title="Creating Pool"
-      steps={stepDefs}
-      currentStep={step.type}
-      error={step.type === 'error' ? step.message : undefined}
-      onCancel={reset}
-    />
+    {/* [FIX-POPUP] Inline progress banner instead of a portal Modal overlay.
+        A full-screen z-[9998] backdrop modal previously covered the page while
+        waiting on the wallet extension's signature popup. Multiple users
+        reported the popup never appearing from "1. Granting allowances"; while
+        we cannot fix the extension's popup surfacing, removing the overlay
+        eliminates any chance the modal is interfering (focus-stealing / overlay
+        interception / extension popup that renders relative to the page).
+        The inline banner still shows progress and a Cancel button. */}
+    {(step.type === 'pre_approving' || step.type === 'creating') && (
+      <div className="bg-[var(--app-panel)] rounded-2xl border border-[var(--app-border)] p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-base font-bold text-[var(--app-text)]">Creating Pool</h3>
+          <span className="text-xs font-mono text-[var(--app-muted)]">
+            {step.type === 'pre_approving' ? '1/2' : '2/2'}
+          </span>
+        </div>
+        <div className="h-2 bg-[var(--app-bg)] rounded-full overflow-hidden border border-[var(--app-border)]">
+          <div
+            className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)]"
+            style={{ width: step.type === 'pre_approving' ? '50%' : '100%' }}
+          />
+        </div>
+        <div className="space-y-1">
+          {stepDefs.map((def, idx) => {
+            const currentIdx = step.type === 'pre_approving' ? 0 : 1;
+            const isDone = idx < currentIdx;
+            const isCurrent = idx === currentIdx;
+            return (
+              <div
+                key={def.key}
+                className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                  isCurrent ? 'bg-[var(--app-blue)]/10 text-[var(--app-blue-3)]' :
+                  isDone ? 'text-[var(--app-success)]' :
+                  'text-[var(--app-muted)]'
+                }`}
+              >
+                {isDone ? (
+                  <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                ) : isCurrent ? (
+                  <div className="w-4 h-4 flex-shrink-0 border-2 border-[var(--app-blue)] border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <div className="w-4 h-4 flex-shrink-0 rounded-full border border-[var(--app-border)]" />
+                )}
+                <span className="font-medium">{idx + 1}. {def.label}</span>
+                {isCurrent && <span className="ml-auto text-[10px] text-[var(--app-muted)]">buka popup wallet…</span>}
+              </div>
+            );
+          })}
+        </div>
+        <button
+          onClick={reset}
+          className="w-full py-2.5 bg-[var(--app-panel-soft)] border border-[var(--app-border)] rounded-xl font-medium text-sm hover:bg-[var(--app-hover)] transition-colors"
+        >
+          Cancel
+        </button>
+      </div>
+    )}
     <div className="bg-[var(--app-panel)] backdrop-blur-xl rounded-2xl border border-[var(--app-border)] p-6 space-y-5">
       <div className="flex items-center gap-2">
         {([1, 2, 3] as const).map((s, idx) => (

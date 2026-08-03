@@ -13,6 +13,24 @@ const FEE_CACHE_TTL = 30_000; // 30s
 // clear, actionable error much sooner instead of hanging silently.
 const WALLET_POPUP_TIMEOUT_MS = 60_000;
 
+// [FIX-POPUP] Pure timeout race — exported for unit tests (which can't reach the
+// private method on the singleton due to module-load side effects). Resolves with
+// p's value if p settles before ms; otherwise rejects with Error(timeoutMsg).
+export function raceWithTimeout<T>(p: Promise<T>, ms: number, timeoutMsg: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const t = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(timeoutMsg));
+    }, ms);
+    p.then(
+      (v) => { if (!settled) { settled = true; clearTimeout(t); resolve(v); } },
+      (e) => { if (!settled) { settled = true; clearTimeout(t); reject(e); } },
+    );
+  });
+}
+
 async function fetchRecommendedOu(rpc: OctraRpc, opType: string): Promise<string> {
   const now = Date.now();
   const cached = _feeCache.get(opType);
@@ -77,14 +95,21 @@ export class WalletService {
       this._providerReady = true;
     }
     const onReady = () => {
+      const wasReady = this._providerReady;
       this._providerReady = true;
-      // If the SDK was already constructed against a null provider, tear it down
-      // and rebuild so the adapter's provider.on(...) listeners attach this time.
-      if (this._sdk) {
-        try { this._sdk.cleanup(); } catch { /* best-effort */ }
-        this._sdk = null;
-        this.initSdk();
-      } else {
+      // [FIX-POPUP] Only construct the SDK here the FIRST time the provider
+      // becomes ready. We must NOT cleanup()+rebuild an existing SDK on a later
+      // readiness event: SDK.cleanup() rejects every in-flight request with
+      // "SDK cleanup called" (SDK index.esm.js:907-930) and removeAllListeners
+      // drops our accountChanged/extensionLocked handlers. The previous version
+      // of this fix called cleanup()+rebuild on every readiness event — if a
+      // readiness broadcast landed while a grant popup was mid-flight (a real
+      // possibility because the extension can fire octraWalletReady again on
+      // focus/visibility), the grant was silently aborted and the modal hung
+      // on "Granting allowances". Popup delivery does not rely on the missing
+      // provider.on(...) listeners (postRequest re-resolves window.octra each
+      // time), so we accept slightly-late-arriving events without rebuilding.
+      if (!wasReady && !this._sdk) {
         this.initSdk();
       }
     };
@@ -376,6 +401,18 @@ export class WalletService {
       || /Wallet not connected|not connected|Call connect\(\) first/i.test(err?.message || '');
   }
 
+  // [FIX-POPUP] The 0xio SDK throws RATE_LIMIT_EXCEEDED ("Another approval
+  // popup is already open") when an interactive request fires before a prior
+  // popup's response drained. Most often the "prior popup" is a stray one from
+  // a previous tab/attempt that the extension still considers open. Rather
+  // than surface that cryptic message, we wait briefly for the SDK's
+  // _interactiveInFlight flag to release and retry exactly once.
+  private isPopupBlockedError(e: unknown): boolean {
+    const err = e as { code?: string; message?: string };
+    return err?.code === 'RATE_LIMIT_EXCEEDED'
+      || /another approval popup is already open|approval popup is already open/i.test(err?.message || '');
+  }
+
   async callContract(params: {
     contract: string;
     method: string;
@@ -422,6 +459,14 @@ export class WalletService {
         }
         throw new Error('Wallet connection lost. Please reconnect your wallet and try again.', { cause: e });
       }
+      // [FIX-POPUP] Retry once after a short wait if the SDK complains a prior
+      // popup is still open (RATE_LIMIT_EXCEEDED). This is the most common
+      // symptom when a stuck grant popup from a previous attempt is still
+      // registered as in-flight in the SDK's internal lock.
+      if (this.isPopupBlockedError(e)) {
+        await new Promise(r => setTimeout(r, 1500));
+        return await submit();
+      }
       throw e;
     }
   }
@@ -429,18 +474,7 @@ export class WalletService {
   // [FIX-POPUP] Race any interactive wallet promise against a visible timeout.
   // The first to settle wins; on timeout we reject with an actionable message.
   private racePopup<T>(p: Promise<T>, timeoutMsg: string): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      let settled = false;
-      const t = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        reject(new Error(timeoutMsg));
-      }, WALLET_POPUP_TIMEOUT_MS);
-      p.then(
-        (v) => { if (!settled) { settled = true; clearTimeout(t); resolve(v); } },
-        (e) => { if (!settled) { settled = true; clearTimeout(t); reject(e); } },
-      );
-    });
+    return raceWithTimeout(p, WALLET_POPUP_TIMEOUT_MS, timeoutMsg);
   }
 
   // [FIX] Use SDK's signTransaction to fix "invalid signature" error on deploy.
