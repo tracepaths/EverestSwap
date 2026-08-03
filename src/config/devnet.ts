@@ -51,8 +51,12 @@ export const CAT_TOKEN: TokenInfo = {
 };
 
 export const CONTRACTS = {
-  factory: import.meta.env.EVERESTSWAP_DEVNET_FACTORY_ADDRESS || 'octJbkjXrAqvZdg2JZVZTyQqpYB52HYkBPDmGMmEQBMgSFE',
-  pool: import.meta.env.EVERESTSWAP_DEVNET_POOL_ADDRESS || 'oct2ws6ug4Va8R8ctPvE76zyc8fgBJDTC4BgG4WjJXCBo8R',
+  // [SYNC] Fallback defaults aligned to deployments.json (current devnet deploy).
+  // .env (EVERESTSWAP_DEVNET_*) overrides these at build time; the hardcoded
+  // values only matter for a fresh clone with no .env — keep them matching the
+  // live deployment so such a build doesn't silently target stale contracts.
+  factory: import.meta.env.EVERESTSWAP_DEVNET_FACTORY_ADDRESS || 'oct292hPFPXmPKrkorYkXb1AXc52bTFQhvUr8vHLK8sePAg',
+  pool: import.meta.env.EVERESTSWAP_DEVNET_POOL_ADDRESS || 'octBvYxD1ne3mqusB1jVDovDpHYRaN1YJrdZMWuBBdSopfQ',
   router: import.meta.env.EVERESTSWAP_DEVNET_ROUTER_ADDRESS || 'octEtQJQDFC85tXtGpERHX69rNoo1GJA7EVUaLezANQxC8K',
   oes: import.meta.env.EVERESTSWAP_DEVNET_OES_ADDRESS || 'octGURUy7hQhXHVcP9bovbJnpoXqCv2gpWBrk6fqtXqJ2sC',
   woct: import.meta.env.EVERESTSWAP_DEVNET_WOCT_ADDRESS || 'oct4g33tzC2cJncL5RFr9TRiyk8yCNP1h2xaogiWJS5opNv',

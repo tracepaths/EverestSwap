@@ -462,6 +462,83 @@ export class OctraRpc {
     return { numerator: 3, denominator: 1000, percent: '0.30%' };
   }
 
+  // [V12] Read a single scalar field from a pool, preferring the view fn but
+  // falling back to the raw `storage` map the node returns on every
+  // contract_call. This matters because pools deployed from the OLD template
+  // have no get_owner()/is_active() getters at all — `owner` and `active` are
+  // bare storage fields there. Every contract_call response includes the full
+  // storage map (verified on devnet), so the fallback works for old pools too.
+  // Same pattern as getReserves()/getAllPools() already use.
+  private async readPoolField(
+    poolAddress: string,
+    viewFn: string,
+    storageKey: string,
+  ): Promise<string> {
+    try {
+      const raw: unknown = await this.contractView(poolAddress, viewFn, []);
+      if (raw && typeof raw === 'object') {
+        const obj = raw as Record<string, unknown>;
+        const result = obj.result;
+        if (result != null && typeof result !== 'object' && String(result) !== '') {
+          return String(result).trim();
+        }
+        const storage = obj.storage as Record<string, unknown> | undefined;
+        if (storage && storage[storageKey] != null) {
+          return String(storage[storageKey]).trim();
+        }
+      }
+      if (raw != null && typeof raw !== 'object') return String(raw).trim();
+    } catch {
+      // View fn missing (old template) — fall through to a storage-only probe.
+    }
+    // Fallback: any successful view call returns the whole storage map, so use a
+    // getter that definitely exists on every template version.
+    try {
+      const raw: unknown = await this.contractView(poolAddress, 'get_reserves', []);
+      if (raw && typeof raw === 'object') {
+        const storage = (raw as Record<string, unknown>).storage as Record<string, unknown> | undefined;
+        if (storage && storage[storageKey] != null) {
+          return String(storage[storageKey]).trim();
+        }
+      }
+    } catch { /* noop */ }
+    return '';
+  }
+
+  // [V12] Pool owner. Required to gate the Remove Pool action — SwapFactory's
+  // remove_pool() authorises on pool.get_owner(), so the UI must check the same
+  // thing or it offers a button that always reverts.
+  async getPoolOwner(poolAddress: string): Promise<string> {
+    return this.readPoolField(poolAddress, 'get_owner', 'owner');
+  }
+
+  // [V12] Pending owner. factory.create() only PROPOSES pool ownership to the
+  // creator (SwapPool.transfer_ownership sets pending_owner); the creator must
+  // call accept_ownership() to actually become owner. Without surfacing this the
+  // handoff never completes and remove_pool() stays unauthorised forever.
+  async getPoolPendingOwner(poolAddress: string): Promise<string> {
+    return this.readPoolField(poolAddress, 'get_pending_owner', 'pending_owner');
+  }
+
+  // [V12] Active flag — `active` is a bare storage field on the old template.
+  async getPoolActive(poolAddress: string): Promise<boolean> {
+    const v = await this.readPoolField(poolAddress, 'is_active', 'active');
+    if (v === '') return true; // default to active when unknown
+    return v === 'true' || v === '1';
+  }
+
+  // [V12] User-owned liquidity (excludes the burned minimum_liquidity). This is
+  // the correct "is the pool drained?" signal for removal — total_lp_supply()
+  // never returns to 0 once a pool was seeded (it retains the burned minimum),
+  // but total_liquidity does once all user positions are withdrawn. Falls back
+  // to storage `total_liquidity`, and finally to total_lp_supply for the OLD
+  // template that lacks the getter (those pools can't be removed anyway).
+  async getPoolUserLiquidity(poolAddress: string): Promise<string> {
+    const v = await this.readPoolField(poolAddress, 'get_total_liquidity', 'total_liquidity');
+    if (v !== '') return v;
+    try { return String(await this.getTotalLpSupply(poolAddress)); } catch { return '0'; }
+  }
+
   async getOesRewardsInfo(oesAddress: string): Promise<{ rewardsPerEpoch: number }> {
     try {
       const raw: unknown = await this.contractView(oesAddress, 'get_rewards_info', []);

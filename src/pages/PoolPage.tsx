@@ -10,7 +10,7 @@ import { recordTx } from '../services/txHistory';
 import CreatePoolForm from '../components/CreatePoolForm';
 import ReserveIndicator from '../components/ReserveIndicator';
 import RemovePoolModal from '../components/RemovePoolModal';
-import { formatAddress, isPoolRemovable, usePoolRemoval } from '../utils/poolUtils';
+import { formatAddress, canAcceptOwnership, canRemovePool, removeBlockedReason, usePoolRemoval } from '../utils/poolUtils';
 import type { MyPool, RemoveStep } from '../utils/poolUtils';
 import type { LpPosition } from '../services/octraRpc';
 
@@ -338,9 +338,21 @@ function MyPoolsList({ onPoolSelect }: { onPoolSelect: (address: string) => void
   const [selectedPool, setSelectedPool] = useState<MyPool | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
-  const { removePool } = usePoolRemoval(addToast, () => {
+  const { removePool, acceptOwnership } = usePoolRemoval(addToast, () => {
+    loadMyPools();
+  }, () => {
     loadMyPools();
   });
+  const [acceptingPool, setAcceptingPool] = useState<string | null>(null);
+
+  const handleAcceptOwnership = async (poolAddress: string) => {
+    setAcceptingPool(poolAddress);
+    try {
+      await acceptOwnership(poolAddress);
+    } finally {
+      setAcceptingPool(null);
+    }
+  };
 
   const handleRemove = async (confirmTextParam: string) => {
     if (!selectedPool) return { type: 'error' as const, message: 'No pool selected' };
@@ -455,20 +467,40 @@ function MyPoolsList({ onPoolSelect }: { onPoolSelect: (address: string) => void
                 >
                   View Details →
                 </button>
-                <button
-                  disabled={!isPoolRemovable(pool)}
-                  onClick={() => { setSelectedPool(pool); setShowConfirm(true); setRemoveStep({ type: 'idle' }); }}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${isPoolRemovable(pool)
-                    ? 'bg-red-600/90 hover:bg-red-600 text-white cursor-pointer shadow-lg shadow-red-900/30'
-                    : 'bg-[var(--app-panel-soft)] text-[var(--app-muted)] cursor-not-allowed opacity-50'
-                  }`}
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                  Remove Pool
-                </button>
+                <div className="flex items-center gap-2">
+                  {/* [V12] The factory only PROPOSES pool ownership to the creator.
+                      Until accept_ownership() runs, remove_pool() rejects them as
+                      "not pool owner or admin". Surface the missing step. */}
+                  {canAcceptOwnership(pool, walletAddress) && (
+                    <button
+                      disabled={acceptingPool === pool.address}
+                      onClick={() => handleAcceptOwnership(pool.address)}
+                      className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold bg-[var(--app-blue)] hover:bg-[var(--app-blue-2)] text-white transition-all disabled:opacity-50"
+                    >
+                      {acceptingPool === pool.address ? 'Accepting…' : 'Accept Ownership'}
+                    </button>
+                  )}
+                  <button
+                    disabled={!canRemovePool(pool, walletAddress)}
+                    title={removeBlockedReason(pool, walletAddress) ?? 'Remove this pool from the factory'}
+                    onClick={() => { setSelectedPool(pool); setShowConfirm(true); setRemoveStep({ type: 'idle' }); }}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${canRemovePool(pool, walletAddress)
+                      ? 'bg-red-600/90 hover:bg-red-600 text-white cursor-pointer shadow-lg shadow-red-900/30'
+                      : 'bg-[var(--app-panel-soft)] text-[var(--app-muted)] cursor-not-allowed opacity-50'
+                    }`}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                    Remove Pool
+                  </button>
+                </div>
               </div>
+              {removeBlockedReason(pool, walletAddress) && (
+                <p className="text-xs text-[var(--app-muted)] pt-1">
+                  {removeBlockedReason(pool, walletAddress)}
+                </p>
+              )}
             </div>
           ))
         )}
@@ -662,7 +694,7 @@ function LiquidityTab() {
       })();
     }, 10000);
 
-    return () => clearInterval(interval);
+    return () => { cancelled = true; clearInterval(interval); };
   }, [pool, isConnected, walletAddress, rpc]);
 
   const poolShare = useMemo(() => {
@@ -1198,10 +1230,10 @@ function LiquidityTab() {
             <div>
               <label className="text-xs text-[var(--app-muted)] font-medium mb-2 block">Lock Duration</label>
               <div className="flex flex-wrap gap-2">
-                {['unlocked', '30d', '6m', '1y', 'custom'].map(opt => (
+                {(['unlocked', '30d', '6m', '1y', 'custom'] as const).map(opt => (
                   <button
                     key={opt}
-                    onClick={() => { setLockOption(opt as any); setCustomLockDays(''); }}
+                    onClick={() => { setLockOption(opt); setCustomLockDays(''); }}
                     className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${lockOption === opt ? 'bg-[var(--app-blue)] text-white' : 'bg-[var(--app-panel-soft)] text-[var(--app-muted)] hover:bg-[var(--app-hover)]'}`}
                   >
                     {opt === 'unlocked' ? 'Unlocked' : opt === '30d' ? '30 Days' : opt === '6m' ? '6 Months' : opt === '1y' ? '1 Year' : 'Custom'}
@@ -1394,9 +1426,23 @@ function PoolDetails() {
   const [loadingPositions, setLoadingPositions] = useState(false);
   const [removeStep, setRemoveStep] = useState<RemoveStep>({ type: 'idle' });
   const [showConfirm, setShowConfirm] = useState(false);
-  const { removePool } = usePoolRemoval(addToast, () => {
+  const { removePool, acceptOwnership } = usePoolRemoval(addToast, () => {
     navigate('/pool/my-pools');
+  }, () => {
+    if (address) loadPool(address);
   });
+  const [accepting, setAccepting] = useState(false);
+
+  const handleAcceptOwnershipDetail = async () => {
+    if (!pool) return;
+    setAccepting(true);
+    try {
+      const res = await acceptOwnership(pool.address);
+      if (res.type === 'done' && address) await loadPool(address);
+    } finally {
+      setAccepting(false);
+    }
+  };
 
   const handleRemove = async (confirmTextParam: string) => {
     if (!pool) return { type: 'error' as const, message: 'No pool selected' };
@@ -1432,8 +1478,11 @@ function PoolDetails() {
       setLoadingPositions(true);
       try {
         const allPositions = await rpc.getPositions(address, walletAddress).catch(() => []);
+        // getPositions() already scopes to this pool address and filters by owner,
+        // but re-assert owner defensively. (Do NOT filter on a `pool` field —
+        // LpPosition has none, which previously made this filter always empty.)
         const userPositions = allPositions.filter(
-          (pos: any) => pos.pool === address && pos.owner.toLowerCase() === walletAddress.toLowerCase()
+          (pos) => pos.owner.toLowerCase() === walletAddress.toLowerCase()
         );
         if (!cancelled) setPositions(userPositions);
       } catch (err) {
@@ -1539,18 +1588,37 @@ function PoolDetails() {
         </div>
 
         <div className="pt-4 border-t border-[var(--app-border-soft)]">
+          {/* [V12] Ownership handoff step — the factory only proposed ownership
+              to the creator; they must accept before remove_pool() authorises. */}
+          {canAcceptOwnership(pool, walletAddress) && (
+            <div className="flex items-center justify-between mb-4 bg-[var(--app-blue)]/10 border border-[var(--app-blue)]/30 rounded-xl p-4">
+              <div>
+                <h3 className="font-bold text-[var(--app-text)]">Accept Pool Ownership</h3>
+                <p className="text-xs text-[var(--app-muted)] mt-1">
+                  This pool was created for you but ownership is still pending. Accept it to manage and remove the pool.
+                </p>
+              </div>
+              <button
+                disabled={accepting}
+                onClick={handleAcceptOwnershipDetail}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold bg-[var(--app-blue)] hover:bg-[var(--app-blue-2)] text-white transition-all disabled:opacity-50 whitespace-nowrap"
+              >
+                {accepting ? 'Accepting…' : 'Accept Ownership'}
+              </button>
+            </div>
+          )}
           <div className="flex items-center justify-between mb-4">
             <div>
               <h3 className="font-bold text-[var(--app-text)]">Pool Removal</h3>
               <p className="text-xs text-[var(--app-muted)] mt-1">
-                {!isPoolRemovable(pool) && 'Pool can only be removed after all liquidity positions have been withdrawn (zero reserves & zero LP). '}
-                {isPoolRemovable(pool) && 'Pool is empty and safe to remove.'}
+                {removeBlockedReason(pool, walletAddress) ?? 'Pool is empty and you own it — safe to remove.'}
               </p>
             </div>
             <button
-              disabled={!isPoolRemovable(pool)}
+              disabled={!canRemovePool(pool, walletAddress)}
+              title={removeBlockedReason(pool, walletAddress) ?? 'Remove this pool from the factory'}
               onClick={() => { setShowConfirm(true); setRemoveStep({ type: 'idle' }); }}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${isPoolRemovable(pool)
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${canRemovePool(pool, walletAddress)
                 ? 'bg-red-600/90 hover:bg-red-600 text-white cursor-pointer shadow-lg shadow-red-900/30'
                 : 'bg-[var(--app-panel-soft)] text-[var(--app-muted)] cursor-not-allowed opacity-50'
               }`}
