@@ -25,16 +25,38 @@ everestswap/
 - **Frontend**: `tracepaths/EverestSwap` (this repo)
 - **Backend**: `tracepaths/EverestSwapDEV` (contracts, scripts, deployment)
 
-## Contract Addresses (V9 — Devnet, Redeployed 2026-07-25)
+## Contract Addresses (V12.1 — Devnet, Redeployed 2026-08-04)
+
+Addresses live in `.env` (gitignored) with defaults in `src/config/devnet.ts`.
+Keep all three in sync when redeploying: `.env`, `.env.example`, `devnet.ts`.
 
 - OES: `octGURUy7hQhXHVcP9bovbJnpoXqCv2gpWBrk6fqtXqJ2sC` (redeployed 2026-07-25, owner: oct2mhQQYM3MmDwMxbcpvTCMgSVPxh47YUdZGn3aR1r13PK)
 - WOCT: `oct4g33tzC2cJncL5RFr9TRiyk8yCNP1h2xaogiWJS5opNv`
-- SwapPool: `oct2ws6ug4Va8R8ctPvE76zyc8fgBJDTC4BgG4WjJXCBo8R`
-- SwapFactory: `octJbkjXrAqvZdg2JZVZTyQqpYB52HYkBPDmGMmEQBMgSFE`
-- Router: `octEtQJQDFC85tXtGpERHX69rNoo1GJA7EVUaLezANQxC8K`
+- SwapPool (template): `oct9SgrzmX3tyaRMoTHEfEVJLLdhsQ2kSo7ba7iFUq2S1Rh`
+- SwapFactory: `octCSV1rFyXj3wWRvLuDZRTNNtnkv24v5FQ34xuAywVKqXu`
+- Router: `octEtQJQDFC85tXtGpERHX69rNoo1GJA7EVUaLezANQxC8K` (still bound to the OLD factory — repointing needs propose_factory + 24h timelock)
 - RewardPool: `octCfD5XbQwiPUH1CYcQZPJuSuNEbPTtix7LfJAepeGzSr3`
 - CAT: `octEw9XG14HA5f15mKLr3PYFbXyqMTLgDninhxrZUtyPvPe` (100B supply, 6 decimals, deployed 2026-07-27)
-- CAT_Pool: `octEuicdod5B7kfZa6JQsvEpu3yyTpKh9P6vhNRLotPyMz7` (WOCT/CAT, 1 OCT : 1000 CAT, registered on factory)
+- CAT_Pool: `octEuicdod5B7kfZa6JQsvEpu3yyTpKh9P6vhNRLotPyMz7` (WOCT/CAT — registered on the OLD factory, NOT carried over to V12)
+
+## Pool Ownership & Removal (V12)
+
+`factory.create()` only PROPOSES pool ownership to the creator
+(`pool.transfer_ownership` sets `pending_owner`). The creator stays a non-owner
+until they call `pool.accept_ownership()` themselves — until then
+`factory.remove_pool()` rejects them with "not pool owner or admin". PoolPage
+surfaces an **Accept Ownership** button whenever `pendingOwner === wallet`.
+
+Removal requires BOTH: caller is `pool.get_owner()` AND `get_total_liquidity() == 0`.
+Note `total_lp_supply()` never returns to 0 (the burned `minimum_liquidity`
+stays), so removability is judged on `total_liquidity` / `MyPool.userLiquidity`.
+
+`owner`, `active`, `fee_numerator`, `fee_denominator` are bare storage fields on
+SwapPool, not view fns. Read them via `rpc.getPoolOwner()` /
+`getPoolPendingOwner()` / `getPoolActive()` / `getPoolUserLiquidity()`, which try
+the V12 getter then fall back to the `storage` map returned by every
+`contract_call`. Calling `contractView(addr, 'owner')` directly returns
+"method not found" — that bug made "My Pools" permanently empty.
 
 ## Key Flows
 
