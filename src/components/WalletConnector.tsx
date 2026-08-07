@@ -3,12 +3,29 @@ import { useApp } from '../contexts/AppContext';
 import { truncateAddress } from '../services/swapService';
 // [V7-PASS9] M-13: import shared formatter
 import { formatOctBalance } from '../utils/format';
+import WalletPicker from './WalletPicker';
+import type { WalletKind } from '../services/walletService';
 
 function WalletConnector() {
-  const { isConnected, walletAddress, walletBalance, isWalletInstalled, connect, disconnect, refreshBalance, addToast } = useApp();
+  const {
+    isConnected,
+    walletAddress,
+    walletBalance,
+    walletKind,
+    has0xio,
+    connect,
+    disconnect,
+    refreshBalance,
+    addToast,
+    walletPickerOpen,
+    openWalletPicker,
+    closeWalletPicker,
+  } = useApp();
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [connecting, setConnecting] = useState(false);
+  const [connecting, setConnecting] = useState<WalletKind | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const walletLabel = walletKind === 'orion' ? 'Orion' : '0xio';
 
   // [V7-FIX] Refresh balance every 10s while connected so it stays current
   // after wraps, swaps, etc.
@@ -35,6 +52,20 @@ function WalletConnector() {
     };
   }, []);
 
+  const handleSelectWallet = async (kind: WalletKind) => {
+    setConnecting(kind);
+    try {
+      // Orion opens a popup, which browsers only allow from a user gesture.
+      // This runs directly in the click handler, so the gesture is preserved.
+      await connect(kind);
+      closeWalletPicker();
+    } catch (err) {
+      addToast('error', err instanceof Error ? err.message : 'Failed to connect wallet');
+    } finally {
+      setConnecting(null);
+    }
+  };
+
   if (isConnected) {
     return (
       <div className="relative" ref={dropdownRef}>
@@ -58,7 +89,7 @@ function WalletConnector() {
             />
             <div className="absolute right-0 mt-2 w-56 bg-[var(--app-dropdown-bg)] border border-[var(--app-border)] rounded-xl shadow-xl overflow-hidden z-50">
               <div className="px-4 py-3 border-b border-[var(--app-border)]">
-                <div className="text-base text-[var(--app-muted)]">Connected</div>
+                <div className="text-base text-[var(--app-muted)]">Connected · {walletLabel}</div>
                 <div className="text-base font-medium mt-0.5 font-mono">{truncateAddress(walletAddress, 10, 8)}</div>
               </div>
               {walletBalance && (
@@ -88,25 +119,25 @@ function WalletConnector() {
   }
 
   return (
-    <button
-      onClick={async () => {
-        setConnecting(true);
-        try {
-          await connect();
-        } catch (err) {
-          addToast('error', err instanceof Error ? err.message : 'Failed to connect wallet');
-        } finally {
-          setConnecting(false);
-        }
-      }}
-      disabled={connecting}
-      className="flex items-center gap-2 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:opacity-50 px-4 py-1.5 rounded-lg text-sm font-medium transition-colors"
-    >
-      {isWalletInstalled && (
-        <span className="w-2 h-2 rounded-full bg-green-400" />
-      )}
-      {connecting ? 'Connecting...' : 'Connect Wallet'}
-    </button>
+    <>
+      <button
+        onClick={openWalletPicker}
+        disabled={connecting !== null}
+        className="flex items-center gap-2 bg-gradient-to-r from-[var(--app-blue)] to-[var(--app-blue-2)] hover:from-[var(--app-blue-2)] hover:to-[var(--app-blue-3)] disabled:opacity-50 px-4 py-1.5 rounded-lg text-sm font-medium transition-colors"
+      >
+        {has0xio && (
+          <span className="w-2 h-2 rounded-full bg-green-400" />
+        )}
+        {connecting ? 'Connecting...' : 'Connect Wallet'}
+      </button>
+      <WalletPicker
+        open={walletPickerOpen}
+        onClose={closeWalletPicker}
+        onSelect={handleSelectWallet}
+        has0xio={has0xio}
+        connecting={connecting}
+      />
+    </>
   );
 }
 

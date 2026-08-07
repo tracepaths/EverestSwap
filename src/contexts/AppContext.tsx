@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { OctraRpc } from '../services/octraRpc';
-import { walletService } from '../services/walletService';
+import { walletService, type WalletKind } from '../services/walletService';
 import { assertMainnetConfigured } from '../config';
 import { setTokenCacheNetwork } from '../services/tokenCache';
 
@@ -21,7 +21,12 @@ interface AppContextType {
   theme: AppTheme;
   isConnected: boolean;
   isWalletInstalled: boolean;
-  connect: () => Promise<void>;
+  walletKind: WalletKind;
+  has0xio: boolean;
+  walletPickerOpen: boolean;
+  openWalletPicker: () => void;
+  closeWalletPicker: () => void;
+  connect: (kind?: WalletKind) => Promise<void>;
   disconnect: () => void;
   setNetwork: (network: 'devnet' | 'mainnet') => void;
   setTheme: (theme: AppTheme) => void;
@@ -48,6 +53,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [rpc] = useState(() => new OctraRpc());
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [isWalletInstalled, setIsWalletInstalled] = useState(false);
+  const [walletKind, setWalletKindState] = useState<WalletKind>(() => walletService.kind);
+  const [has0xio, setHas0xio] = useState(false);
+  const [walletPickerOpen, setWalletPickerOpen] = useState(false);
   const isConnecting = useRef(false);
 
   // [FIX-POPUP] setRpc is a side effect — run it in an effect, not the render
@@ -69,7 +77,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         wallet0xio?: unknown;
         ZeroXIOWallet?: unknown;
       };
-      setIsWalletInstalled(!!(w.octra?.isOctra || w.wallet0xio || w.ZeroXIOWallet));
+      const has = !!(w.octra?.isOctra || w.wallet0xio || w.ZeroXIOWallet);
+      setHas0xio(has);
+      // Orion is a popup web wallet, always "available" as long as popups are
+      // permitted, so the connect affordance should never be gated on it.
+      setIsWalletInstalled(has || walletService.kind === 'orion');
     };
     check();
     const onReady = () => check();
@@ -179,9 +191,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(i);
   }, [isConnected, walletAddress]);
 
-  const connect = useCallback(async () => {
+  const connect = useCallback(async (kind?: WalletKind) => {
     if (isConnecting.current) return;
     isConnecting.current = true;
+    // If a kind is supplied, persist it before connecting (Orion connect needs
+    // the gesture, so this runs directly in the WalletConnector click handler).
+    if (kind) {
+      walletService.setKind(kind);
+      setWalletKindState(kind);
+    }
     // [SECURITY] FM-1: If wallet already connected to the same address, no-op
     if (walletAddress !== '' && walletService.address === walletAddress) {
       isConnecting.current = false;
@@ -219,6 +237,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setWalletBalance('');
   }, []);
 
+  const openWalletPicker = useCallback(() => setWalletPickerOpen(true), []);
+  const closeWalletPicker = useCallback(() => setWalletPickerOpen(false), []);
+
   const setNetwork = useCallback((n: 'devnet' | 'mainnet') => {
     if (n === 'mainnet') {
       assertMainnetConfigured();
@@ -250,6 +271,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         theme,
         isConnected,
         isWalletInstalled,
+        walletKind,
+        has0xio,
+        walletPickerOpen,
+        openWalletPicker,
+        closeWalletPicker,
         connect,
         disconnect,
         setNetwork,

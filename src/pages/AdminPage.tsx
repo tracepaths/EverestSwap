@@ -20,7 +20,7 @@ interface PoolAdminInfo {
 }
 
 export default function AdminPage() {
-  const { rpc, isConnected, walletAddress, addToast, connect } = useApp();
+  const { rpc, isConnected, walletAddress, addToast, openWalletPicker } = useApp();
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
 
   // Anti-indexing meta tag enforcement
@@ -243,7 +243,7 @@ export default function AdminPage() {
               </span>
             ) : (
               <button
-                onClick={connect}
+                onClick={openWalletPicker}
                 className="text-xs font-bold text-[var(--app-blue-3)] hover:underline"
               >
                 Connect Wallet

@@ -1,5 +1,59 @@
 import { ZeroXIOWallet, type TransactionHistory, type ContractParams } from '@0xio/sdk';
 import { OctraRpc } from './octraRpc';
+import { ORION_WALLET_URL, NETWORK } from '../config';
+import { OrionWalletClient, clearOrionSessionHint } from './orionWallet';
+
+// ── Wallet provider selection ───────────────────────────────────────────────
+// EverestSwap supports two very different wallets:
+//   - 0xio: a browser extension injected at `window.octra`, which signs AND
+//     broadcasts (via the @0xio/sdk).
+//   - Orion: a web-app wallet reached via a popup + MessageChannel, which
+//     signs only and refuses to broadcast by design — the dApp submits the
+//     signed tx through its own RPC.
+// The active provider is chosen by the user and persisted so a reload restores
+// the same one.
+
+export type WalletKind = '0xio' | 'orion';
+
+const WALLET_KIND_KEY = 'everestswap_wallet_kind';
+
+let activeKind: WalletKind = readStoredKind();
+
+function readStoredKind(): WalletKind {
+  try {
+    return localStorage.getItem(WALLET_KIND_KEY) === 'orion' ? 'orion' : '0xio';
+  } catch {
+    return '0xio';
+  }
+}
+
+export function getWalletKind(): WalletKind {
+  return activeKind;
+}
+
+export function setWalletKind(kind: WalletKind): void {
+  activeKind = kind;
+  try {
+    localStorage.setItem(WALLET_KIND_KEY, kind);
+  } catch {
+    /* quota / private-mode */
+  }
+}
+
+/** Whether the 0xio extension is present, regardless of the active provider. */
+export function is0xioInstalled(): boolean {
+  try {
+    if (typeof window === 'undefined') return false;
+    const w = window as unknown as {
+      octra?: { isOctra?: boolean };
+      wallet0xio?: unknown;
+      ZeroXIOWallet?: unknown;
+    };
+    return !!(w.octra?.isOctra || w.wallet0xio || w.ZeroXIOWallet);
+  } catch {
+    return false;
+  }
+}
 
 // [V7-FIX] Fee cache: avoid repeated RPC calls for the same op_type
 const _feeCache = new Map<string, { ou: string; ts: number }>();
@@ -67,6 +121,9 @@ export class WalletService {
   private _address = '';
   private _balance = '';
   private _publicKey = '';
+  // Lazily-created Orion client; only instantiated when Orion is the active
+  // provider (see getOrion()). Null until the user picks Orion.
+  private _orion: OrionWalletClient | null = null;
   // [V7-PASS10] CRITICAL-2: global per-address submit mutex.
   // NOTE: despite the per-address framing, _submitLock is a single global FIFO
   // queue — only ONE submit (any address) is in flight at a time across the
@@ -93,6 +150,26 @@ export class WalletService {
 
   setRpc(rpc: OctraRpc): void {
     this.rpc = rpc;
+  }
+
+  // ── Wallet-kind accessors ──────────────────────────────────────────────────
+  get kind(): WalletKind {
+    return activeKind;
+  }
+
+  setKind(kind: WalletKind): void {
+    setWalletKind(kind);
+  }
+
+  /** Lazily create the Orion client the first time Orion is used. */
+  private getOrion(): OrionWalletClient {
+    if (!this._orion) this._orion = new OrionWalletClient(ORION_WALLET_URL, NETWORK);
+    return this._orion;
+  }
+
+  /** The live Orion client, or null when Orion is not the active provider. */
+  getOrionClient(): OrionWalletClient | null {
+    return activeKind === 'orion' ? this.getOrion() : null;
   }
 
   private setupAccountChangeListener(): void {
@@ -189,10 +266,31 @@ export class WalletService {
   }
 
   async isInstalled(): Promise<boolean> {
-    return !!(window as unknown as { octra?: { isOctra?: boolean } }).octra?.isOctra;
+    try {
+      if (typeof window === 'undefined') return false;
+      // Orion is a web app reached by popup, so there is nothing to detect on
+      // `window` — it is always "available" as long as popups are permitted.
+      if (activeKind === 'orion') return true;
+      return is0xioInstalled();
+    } catch {
+      return false;
+    }
   }
 
   async connect(): Promise<string> {
+    if (activeKind === 'orion') {
+      const orion = this.getOrion();
+      const result = await orion.connect();
+      const addr = result?.address;
+      if (typeof addr === 'string' && /^oct[1-9A-HJ-NP-Za-km-z]{20,}$/.test(addr)) {
+        this._address = addr;
+        if (result.publicKey) this._publicKey = result.publicKey;
+        const bal = await this.rpc.call<{ balance: string; balance_raw: string; nonce: number }>('octra_balance', [this._address]);
+        this._balance = bal?.balance || '0';
+        return this._address;
+      }
+      throw new Error('Orion Wallet returned no address');
+    }
     try {
       await this.sdk.initialize();
     } catch {
@@ -209,7 +307,22 @@ export class WalletService {
   }
 
   async disconnect(): Promise<void> {
-    await this.sdk.disconnect();
+    if (this._orion) {
+      try {
+        await this._orion.disconnect();
+      } catch {
+        /* Ignore disconnect errors */
+      }
+      this._orion = null;
+    }
+    clearOrionSessionHint();
+    if (typeof window !== 'undefined' && activeKind !== 'orion') {
+      try {
+        await this.sdk.disconnect();
+      } catch {
+        /* Ignore disconnect errors */
+      }
+    }
     this._address = '';
     this._balance = '';
     this._publicKey = '';
@@ -224,10 +337,21 @@ export class WalletService {
 
   async getTransactionHistory(page = 1, limit = 20): Promise<TransactionHistory> {
     if (!this._address) throw new Error('Not connected');
+    // Orion has no transaction history method; 0xio-only
+    if (activeKind === 'orion') {
+      throw new Error('Transaction history is not available for Orion Wallet');
+    }
     return this.sdk.getTransactionHistory(page, limit);
   }
 
   async signMessage(message: string): Promise<{ signature: string; publicKey?: string }> {
+    if (activeKind === 'orion') {
+      const orion = this.getOrion();
+      if (!orion.isConnected()) throw new Error('Orion Wallet is not connected');
+      const result = await orion.signMessage(message, 'raw');
+      if (!result?.signature) throw new Error('Signing rejected');
+      return { signature: result.signature, publicKey: result.publicKey };
+    }
     const octra = (window as unknown as { octra: { request: (opts: { method: string; params?: unknown }) => Promise<unknown> } }).octra;
     if (!octra) throw new Error('0xio wallet not found');
     // [FIX-POPUP] Signing is interactive too — race against the popup ceiling so
@@ -253,6 +377,10 @@ export class WalletService {
   }
 
   async getPublicKey(): Promise<string> {
+    if (activeKind === 'orion') {
+      const orion = this.getOrion();
+      return orion.getPublicKey() || '';
+    }
     if (this._publicKey) return this._publicKey;
     try {
       const info = this.sdk.getConnectionInfo();
@@ -329,6 +457,46 @@ export class WalletService {
     if (!params.ou && params.rpc) {
       params.ou = await fetchRecommendedOu(params.rpc, 'call');
     }
+
+    // ── Orion path: sign via the wallet popup, then submit through our RPC. ─
+    if (activeKind === 'orion') {
+      const orion = this.getOrion();
+      if (!orion.isConnected()) throw new Error('Orion Wallet is not connected');
+      // Proactively detect an expired session before the sign attempt. Without
+      // this check, the request goes out over a dead port and times out after
+      // 180s, surfacing as a confusing "Swap failed" toast instead of the
+      // actionable "Session expired" message.
+      if (!orion.isSessionAlive()) {
+        throw new Error('Orion Wallet session has expired. Please reconnect and try again.');
+      }
+      // Orion signs the exact ou we pass (it does not backfill a recommended
+      // fee like the 0xio SDK does). Callers such as vote/unvote invoke
+      // callContract without `ou` OR `rpc`, so resolve one here from any
+      // available RPC, falling back to a safe flat fee. Never forward an empty
+      // or "undefined" ou — the node would reject the tx.
+      let orionOu: string;
+      if (params.ou !== undefined && params.ou !== null && String(params.ou) !== '') {
+        orionOu = String(params.ou);
+      } else {
+        const feeRpc = params.rpc ?? this.rpc;
+        orionOu = feeRpc ? await fetchRecommendedOu(feeRpc, 'call') : '100000';
+      }
+      const signedResult = await orion.signContract({
+        program: params.contract,
+        method: params.method,
+        args: (params.params as unknown[]) || [],
+        amount: typeof params.amount === 'string' ? params.amount : String(params.amount ?? '0'),
+        ou: orionOu,
+      });
+      const signedTx = signedResult.signedTransaction;
+      const submitRpc = params.rpc ?? this.rpc;
+      if (!submitRpc) throw new Error('RPC not configured');
+      const res = await submitRpc.call<{ tx_hash?: string; hash?: string } | string>('octra_submit', [signedTx]);
+      const hash = typeof res === 'string' ? res : (res?.tx_hash || res?.hash || '');
+      if (!hash) throw new Error('Submit succeeded but no tx_hash returned');
+      return hash;
+    }
+
     const sdkParams = { contract: params.contract, method: params.method, params: params.params, amount: params.amount, ou: params.ou };
 
     const submit = async (): Promise<string> => {
@@ -392,6 +560,14 @@ export class WalletService {
       nonce?: number;
     }
   ): Promise<string> {
+    // [ORION] The canonical-JSON deploy path builds the tx by hand and signs
+    // through the 0xio provider. Orion has no deploy op in its protocol, so
+    // fail explicitly rather than signing with a wallet the user did not
+    // select. (No caller in EverestSwap currently reaches this — pool/token
+    // creation goes through factory.callContract.)
+    if (activeKind === 'orion') {
+      throw new Error('Contract deployment is not supported by Orion Wallet — switch to 0xio Wallet');
+    }
     const targetAddress = params.contractAddress ?? params.poolAddress;
     if (!targetAddress) throw new Error('contractAddress or poolAddress required');
     params = { ...params, contractAddress: targetAddress };

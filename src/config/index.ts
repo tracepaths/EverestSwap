@@ -31,6 +31,7 @@ import {
 const network = import.meta.env.EVERESTSWAP_NETWORK || 'devnet';
 const isMainnet = network === 'mainnet';
 
+export const NETWORK = network;
 export const RPC_URL: string = isMainnet ? MAIN_RPC_URL : DEV_RPC_URL;
 export const INDEXER_URL: string = isMainnet ? MAIN_INDEXER_URL : DEV_INDEXER_URL;
 export const DEPLOYER_PUBLIC_KEY: string = isMainnet ? MAIN_DPL_PUBKEY : DEV_DPL_PUBKEY;
@@ -56,3 +57,13 @@ export function buildExplorerTxUrl(hash: string): string {
 }
 
 export { MAINNET_CONFIGURED, assertMainnetConfigured };
+
+/**
+ * Orion Wallet `/connect` endpoint.
+ *
+ * Orion is a web-app wallet, so there is nothing to feature-detect on
+ * `window` — the dApp opens this URL in a popup and speaks the wallet protocol
+ * over a MessageChannel. Override with EVERESTSWAP_ORION_WALLET_URL.
+ */
+export const ORION_WALLET_URL: string =
+  import.meta.env.EVERESTSWAP_ORION_WALLET_URL || 'https://orionwallet.vercel.app/connect';
